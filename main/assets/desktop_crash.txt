@@ -1,0 +1,1 @@
+java.lang.NullPointerException: Cannot invoke "com.badlogic.gdx.scenes.scene2d.Stage.addActor(com.badlogic.gdx.scenes.scene2d.Actor)" because "this.stage" is null

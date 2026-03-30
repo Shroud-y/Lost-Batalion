@@ -7,8 +7,17 @@ import io.jababa.lost_batalion.LostBatalion;
 /** Launches the desktop (LWJGL3) application. */
 public class Lwjgl3Launcher {
     public static void main(String[] args) {
-        if (StartupHelper.startNewJvmIfRequired()) return; // This handles macOS support and helps on Windows.
-        createApplication();
+        try {
+            createApplication();
+        } catch (Throwable t) {
+            t.printStackTrace(); // Це виведе помилку червоним у консоль
+            try {
+                // Додатково запишемо у файл в корінь проекту
+                java.nio.file.Files.write(java.nio.file.Paths.get("desktop_crash.txt"),
+                    t.toString().getBytes());
+            } catch (Exception ignored) {}
+            System.exit(1);
+        }
     }
 
     private static Lwjgl3Application createApplication() {
