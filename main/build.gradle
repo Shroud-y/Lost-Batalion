@@ -66,4 +66,15 @@ subprojects {
   }
 }
 
+project(':android') {
+  apply plugin: 'com.android.application'
+  android {
+    compileSdk = 35 // або 34
+    compileOptions {
+      sourceCompatibility = JavaVersion.VERSION_17
+      targetCompatibility = JavaVersion.VERSION_17
+    }
+  }
+}
+
 eclipse.project.name = 'Lost Batalion' + '-parent'
