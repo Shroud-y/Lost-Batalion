@@ -26,14 +26,13 @@ public class PauseOverlay {
     }
 
     private void build(PauseListener listener) {
-
         Table backdrop = new Table();
         backdrop.setFillParent(true);
-        backdrop.setBackground(UIFactory.createColorDrawable(new Color(0f, 0f, 0f, 0.6f)));
+        backdrop.setBackground(UIFactory.createColorDrawable(new Color(0f, 0f, 0f, 0.65f)));
 
         Table menu = new Table();
         menu.setBackground(UIFactory.createColorDrawable(new Color(0.10f, 0.10f, 0.16f, 0.97f)));
-        menu.pad(24f);
+        menu.pad(36f);
 
         Label title = new Label("Paused", UIFactory.createScreenTitleStyle());
 
@@ -55,12 +54,12 @@ public class PauseOverlay {
             @Override public void changed(ChangeEvent e, Actor a) { listener.onExit(); }
         });
 
-        float bw = 240f, bh = 44f, sp = 10f;
-        menu.add(title).padBottom(20f).row();
-        menu.add(btnResume).size(bw, bh).padBottom(sp).row();
-        menu.add(btnLobby).size(bw, bh).padBottom(sp).row();
+        float bw = 320f, bh = 58f, sp = 14f;
+        menu.add(title).padBottom(28f).row();
+        menu.add(btnResume)  .size(bw, bh).padBottom(sp).row();
+        menu.add(btnLobby)   .size(bw, bh).padBottom(sp).row();
         menu.add(btnSettings).size(bw, bh).padBottom(sp).row();
-        menu.add(btnExit).size(bw, bh).row();
+        menu.add(btnExit)    .size(bw, bh).row();
 
         backdrop.add(menu);
         stage.addActor(backdrop);

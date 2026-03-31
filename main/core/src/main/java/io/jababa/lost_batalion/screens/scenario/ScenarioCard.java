@@ -10,11 +10,11 @@ public class ScenarioCard {
 
     public ScenarioCard(String id, String title, String description,
                         String texturePath, String maskPath) {
-        this.id          = id;
-        this.title       = title;
+        this.id = id;
+        this.title = title;
         this.description = description;
         this.texturePath = texturePath;
-        this.maskPath    = maskPath;
+        this.maskPath = maskPath;
     }
 
     public ScenarioCard(String id, String title, String description, String texturePath) {
