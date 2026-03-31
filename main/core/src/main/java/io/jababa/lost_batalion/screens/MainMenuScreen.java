@@ -14,9 +14,9 @@ import io.jababa.lost_batalion.ui.UIFactory;
  */
 public class MainMenuScreen extends BaseScreen {
 
-    private static final float BUTTON_WIDTH   = 280f;
-    private static final float BUTTON_HEIGHT  =  50f;
-    private static final float BUTTON_SPACING =  14f;
+    private static final float BUTTON_WIDTH = 280f;
+    private static final float BUTTON_HEIGHT =  50f;
+    private static final float BUTTON_SPACING = 14f;
 
     public MainMenuScreen(LostBatalion game) {
         super(game);
@@ -25,7 +25,7 @@ public class MainMenuScreen extends BaseScreen {
     @Override
     protected void buildUI() {
 
-        Label title    = new Label("LOST BATTALION", UIFactory.createTitleStyle());
+        Label title = new Label("LOST BATTALION", UIFactory.createTitleStyle());
         Label subtitle = new Label("Real-Time Strategy", UIFactory.createSubtitleStyle());
 
         TextButton btnScenario = createButton("Select Scenario");

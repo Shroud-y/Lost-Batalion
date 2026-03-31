@@ -15,24 +15,21 @@ import io.jababa.lost_batalion.screens.BaseScreen;
 import io.jababa.lost_batalion.screens.MainMenuScreen;
 import io.jababa.lost_batalion.ui.UIFactory;
 
-/**
- * Scenario selection screen
- */
 public class ScenarioScreen extends BaseScreen {
 
-    // Card dimensions in logical units (ExtendViewport base 900x580)
-    private static final float CARD_WIDTH  = 220f;
+    private static final float CARD_WIDTH = 220f;
     private static final float CARD_HEIGHT = 280f;
-    private static final float CARD_PAD    =  16f;
-    private static final float CARD_IMG_H  = 140f;
-    private static final float CARD_BTN_H  =  34f;
-    private static final float TOP_BAR_H   =  48f;
+    private static final float CARD_PAD = 16f;
+    private static final float CARD_IMG_H = 140f;
+    private static final float CARD_BTN_H = 34f;
+    private static final float TOP_BAR_H = 48f;
 
     private final Array<Texture> ownedTextures = new Array<>();
 
     public ScenarioScreen(LostBatalion game) {
         super(game);
     }
+
     private Array<ScenarioCard> buildScenarios() {
         Array<ScenarioCard> list = new Array<>();
 
@@ -40,13 +37,15 @@ public class ScenarioScreen extends BaseScreen {
             "zhovti_vody",
             "Zhovti Vody",
             "Coming soon...",
-            "scenarios/Zhovty_Vodu.png"
+            "scenarios/Zhovty_Vodu.png",
+            "scenarios/Zhovty_Vodu_mask.png"
         ));
 
         // list.add(new ScenarioCard("id", "Title", "Desc", "scenarios/file.png"));
 
         return list;
     }
+
 
     @Override
     protected void buildUI() {
@@ -67,7 +66,6 @@ public class ScenarioScreen extends BaseScreen {
         topBar.add(btnBack).width(90f).height(TOP_BAR_H).left();
         topBar.add(title).expandX().center();
         topBar.add().width(90f);
-
 
         Table grid = new Table();
         grid.top().left().pad(CARD_PAD);
@@ -116,7 +114,7 @@ public class ScenarioScreen extends BaseScreen {
         TextButton btnSelect = new TextButton("Select", UIFactory.createSmallButtonStyle());
         btnSelect.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent event, Actor actor) {
-                // TODO: game.setScreen(new GameScreen(game, card));
+                game.setScreen(new io.jababa.lost_batalion.screens.game.GameScreen(game, card));
             }
         });
 

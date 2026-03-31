@@ -30,7 +30,7 @@ public class LostBatalion extends Game {
             public boolean keyDown(int keycode) {
                 if (keycode == Input.Keys.F11) {
                     toggleFullscreen();
-                    return true; // подія оброблена, далі не передаємо
+                    return true;
                 }
                 return false;
             }
@@ -39,17 +39,17 @@ public class LostBatalion extends Game {
 
     private void toggleFullscreen() {
         if (Gdx.graphics.isFullscreen()) {
-            // Повернутись у режим вікна з попередніми розмірами
+
             Gdx.graphics.setWindowedMode(1280, 720);
         } else {
-            // Перейти у повноекранний режим з нативною роздільною здатністю монітора
+
             Graphics.DisplayMode displayMode = Gdx.graphics.getDisplayMode();
             Gdx.graphics.setFullscreenMode(displayMode);
         }
     }
 
     public void setScreenInputProcessor(com.badlogic.gdx.InputProcessor screenProcessor) {
-        // index 0 = globalInput, index 1 = екран (замінюємо або додаємо)
+
         if (inputMultiplexer.size() > 1) {
             inputMultiplexer.removeProcessor(1);
         }
