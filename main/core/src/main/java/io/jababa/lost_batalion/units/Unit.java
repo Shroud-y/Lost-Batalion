@@ -1,6 +1,5 @@
 package io.jababa.lost_batalion.units;
 
-
 import com.badlogic.gdx.math.Vector2;
 import io.jababa.lost_batalion.Team;
 
@@ -13,7 +12,7 @@ public abstract class Unit {
     public float damage;
     public float attackRange;
     public float attackCooldown;
-    private float attackTimer = 0f;
+    public float attackTimer = 0f;
 
     public  final Vector2 position = new Vector2();
     private final Vector2 target   = new Vector2();
@@ -22,9 +21,7 @@ public abstract class Unit {
     public boolean selected = false;
     public boolean alive = true;
 
-    protected Unit(Team team) {
-        this.team = team;
-    }
+    protected Unit(Team team) { this.team = team; }
 
     public void moveTo(float worldX, float worldY) {
         target.set(worldX, worldY);
@@ -52,7 +49,6 @@ public abstract class Unit {
 
     public boolean isMoving() { return moving; }
 
-
     public boolean takeDamage(float amount) {
         hp -= amount;
         if (hp <= 0) { hp = 0; alive = false; }
@@ -65,18 +61,14 @@ public abstract class Unit {
         attackTimer = attackCooldown;
         return true;
     }
+    public void stopMoving() {
+        target.set(position);
+        moving = false;
+    }
 
     public boolean canAttack() { return attackTimer <= 0; }
 
-
-
-    /** Розмір спрайту (візуальний, у пікселях карти). */
-    public abstract float getSize();
-
-
-    public float getHitRadius() {
-        return getSize() * 0.5f;
-    }
-
+    public abstract float  getSize();
+    public float getHitRadius() { return getSize() * 0.5f; }
     public abstract String getTexturePath();
 }

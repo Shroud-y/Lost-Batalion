@@ -5,12 +5,12 @@ import io.jababa.lost_batalion.Team;
 public class Infantry extends Unit {
 
     private static final float INF_HP = 100f;
-    private static final float INF_SPEED = 10f;
+    private static final float INF_SPEED = 20f;
     private static final float INF_DAMAGE = 15f;
     private static final float INF_RANGE = 40f;
     private static final float INF_COOLDOWN = 1.2f;
 
-    public static final float INF_SIZE = 8f;
+    public static final float INF_SIZE = 10f;
     public static final float INF_HIT_RADIUS = 8f;
 
     public Infantry(Team team, float x, float y) {

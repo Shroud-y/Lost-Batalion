@@ -1,0 +1,1 @@
+com.badlogic.gdx.utils.GdxRuntimeException: #iterator() cannot be used nested.

@@ -19,9 +19,8 @@ public class UnitRenderer {
     private static final float OUTLINE_PAD = 0f;
     private static final float OUTLINE_THICKNESS = 2f;
 
-
-    private static final float BAR_H     = 1f;
-    private static final float BAR_ABOVE = 1f;
+    private static final float BAR_W = 0.7f;
+    private static final float BAR_LEFT  = 0.5f;
 
     public UnitRenderer() {
         shapes = new ShapeRenderer();
@@ -84,13 +83,14 @@ public class UnitRenderer {
 
     private void drawHpBar(Unit u) {
         float size = u.getSize();
-        float barW = size;
-        float x    = u.position.x - size / 2f;
-        float y    = u.position.y + size / 2f + BAR_ABOVE;
+        float barH = size;
 
-        // Фон (темно-червоний)
+        float x = u.position.x - size / 2f - BAR_LEFT - BAR_W;
+        float y = u.position.y - size / 2f;
+
         shapes.setColor(0.3f, 0f, 0f, 0.85f);
-        shapes.rect(x, y, barW, BAR_H);
+        shapes.rect(x, y, BAR_W, barH);
+
 
         float ratio = u.hp / u.maxHp;
         if (ratio > 0.5f) {
@@ -100,7 +100,8 @@ public class UnitRenderer {
         } else {
             shapes.setColor(0.9f, 0.2f, 0.1f, 0.9f);
         }
-        shapes.rect(x, y, barW * ratio, BAR_H);
+
+        shapes.rect(x, y, BAR_W, barH * ratio);
     }
 
     private Texture getTexture(Unit u) {

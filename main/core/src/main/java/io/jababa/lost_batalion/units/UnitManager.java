@@ -14,7 +14,7 @@ public class UnitManager {
     public void spawnPlayerSquad(float centerX, float centerY) {
         float spacing = Infantry.INF_SIZE + 8f;
         addUnit(new Infantry(Team.PLAYER, centerX - spacing, centerY));
-        addUnit(new Infantry(Team.PLAYER, centerX,           centerY));
+        addUnit(new Infantry(Team.PLAYER, centerX, centerY));
         addUnit(new Infantry(Team.PLAYER, centerX + spacing, centerY));
     }
 
@@ -96,6 +96,32 @@ public class UnitManager {
             u.moveTo(tx, ty);
         }
     }
+
+    public void moveSelectedToLine(float x1, float y1, float x2, float y2,
+                                   float mapW, float mapH) {
+        int count = selectedUnits.size;
+        if (count == 0) return;
+
+        float dx  = x2 - x1;
+        float dy  = y2 - y1;
+        float len = (float) Math.sqrt(dx * dx + dy * dy);
+        if (len < 0.01f) return;
+
+        for (int i = 0; i < count; i++) {
+            Unit  u = selectedUnits.get(i);
+
+            float t  = count == 1 ? 0.5f : (float) i / (count - 1);
+            float tx = x1 + dx * t;
+            float ty = y1 + dy * t;
+
+            float half = u.getSize() * 0.5f;
+            tx = Math.max(half, Math.min(mapW - half, tx));
+            ty = Math.max(half, Math.min(mapH - half, ty));
+
+            u.moveTo(tx, ty);
+        }
+    }
+
 
     public Array<Unit> getAllUnits() { return allUnits; }
     public Array<Unit> getSelectedUnits() { return selectedUnits; }
