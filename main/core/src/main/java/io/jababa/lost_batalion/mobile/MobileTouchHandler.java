@@ -120,7 +120,7 @@ public class MobileTouchHandler extends InputAdapter {
         }
 
         if (!wasDragging && !wasLongPress) {
-            long    now   = System.currentTimeMillis();
+            long now = System.currentTimeMillis();
             Vector3 world = screen.getCamera().unproject(
                 new Vector3(screenX, screenY, 0));
 
@@ -133,12 +133,17 @@ public class MobileTouchHandler extends InputAdapter {
 
                 Unit enemy = screen.getCombatManager()
                     .tryGetEnemyAtPoint(world.x, world.y);
+
                 if (enemy != null) {
+
                     screen.getCombatManager().orderAttack(enemy);
                     screen.getMoveMarker().show(
                         enemy.position.x, enemy.position.y,
                         MoveMarker.MarkerType.ATTACK);
                 } else {
+
+                    screen.getCombatManager().cancelAttackOrders(screen.getUnitManager().getSelectedUnits());
+
                     screen.getUnitManager().moveSelectedTo(
                         world.x, world.y,
                         screen.getMapWidth(), screen.getMapHeight());
@@ -151,8 +156,8 @@ public class MobileTouchHandler extends InputAdapter {
             screen.getUnitManager().trySelectAtPoint(world.x, world.y);
 
             lastTapTime = now;
-            lastTapX    = screenX;
-            lastTapY    = screenY;
+            lastTapX = screenX;
+            lastTapY = screenY;
             return true;
         }
 
