@@ -43,7 +43,8 @@ public class MoveMarker {
     public boolean isActive() { return active; }
 
     public void draw(ShapeRenderer shapes) {
-        if (!active) return;
+
+        if (!active || type == MarkerType.ATTACK) return;
 
         float alpha, radius;
 
@@ -64,20 +65,12 @@ public class MoveMarker {
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
 
         shapes.begin(ShapeRenderer.ShapeType.Line);
-        if (type == MarkerType.ATTACK) {
-            shapes.setColor(1f, 0.15f, 0.15f, alpha * 0.7f);
-        } else {
-            shapes.setColor(1f, 1f, 1f, alpha * 0.7f);
-        }
+        shapes.setColor(1f, 1f, 1f, alpha * 0.7f);
         shapes.circle(x, y, radius + 2f, 16);
         shapes.end();
 
         shapes.begin(ShapeRenderer.ShapeType.Filled);
-        if (type == MarkerType.ATTACK) {
-            shapes.setColor(1f, 0.15f, 0.15f, alpha);
-        } else {
-            shapes.setColor(1f, 1f, 1f, alpha);
-        }
+        shapes.setColor(1f, 1f, 1f, alpha);
         shapes.circle(x, y, radius, 16);
         shapes.end();
 

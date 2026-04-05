@@ -2,17 +2,21 @@ package io.jababa.lost_batalion.units;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.audio.Sound;
+import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.Array;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.screens.effects.ShotEffect;
+import io.jababa.lost_batalion.screens.effects.TargetPopupManager;
 
 public class CombatManager {
 
     private static final int MAX_SHOTS = 64;
     private static final float LINE_SPACING = 12f;
     private static final float SPREAD_THRESHOLD = 3f;
+
+    private TargetPopupManager popupManager;
 
     private final UnitManager unitManager;
     private final Array<ShotEffect> shots = new Array<>();
@@ -29,11 +33,17 @@ public class CombatManager {
             if (Gdx.files.internal("sounds/shot.wav").exists())
                 shotSound = Gdx.audio.newSound(Gdx.files.internal("sounds/shot.wav"));
         } catch (Exception ignored) {}
+
+        popupManager = new TargetPopupManager("ui/target_icon.png");
     }
 
     public void orderAttack(Unit enemy) {
         Array<Unit> selected = unitManager.getSelectedUnits();
         if (selected.size == 0) return;
+
+        if (enemy != null && enemy.alive) {
+            popupManager.spawn(enemy.position.x, enemy.position.y + enemy.getSize() / 2f);
+        }
 
         for (int i = orders.size - 1; i >= 0; i--) {
             Unit att = orders.get(i).attacker;
@@ -60,32 +70,39 @@ public class CombatManager {
         }
         cx /= count; cy /= count;
 
-        float vx  = enemy.position.x - cx;
-        float vy  = enemy.position.y - cy;
+        float vx = enemy.position.x - cx;
+        float vy = enemy.position.y - cy;
         float len = (float) Math.sqrt(vx * vx + vy * vy);
         if (len < 0.01f) len = 1f;
         float nx = vx / len;
         float ny = vy / len;
-
         float px = -ny;
         float py =  nx;
 
-        float stopDist = units.get(0).attackRange * 0.85f;
+        Array<Unit> sortedUnits = new Array<>(units);
 
+
+        sortedUnits.sort((u1, u2) -> {
+
+            float proj1 = u1.position.x * px + u1.position.y * py;
+            float proj2 = u2.position.x * px + u2.position.y * py;
+            return Float.compare(proj1, proj2);
+        });
+
+        float stopDist = sortedUnits.get(0).attackRange * 0.85f;
         AttackGroup group = new AttackGroup(enemy);
 
         for (int i = 0; i < count; i++) {
-            Unit  u = units.get(i);
+
+            Unit u = sortedUnits.get(i);
+
             float offset = (i - (count - 1) / 2f) * LINE_SPACING;
+
+            float spreadX = cx + px * offset;
+            float spreadY = cy + py * offset;
 
             float finalX = enemy.position.x - nx * stopDist + px * offset;
             float finalY = enemy.position.y - ny * stopDist + py * offset;
-
-            float rel_x = u.position.x - cx;
-            float rel_y = u.position.y - cy;
-            float fwdComp = rel_x * nx + rel_y * ny;
-            float spreadX = cx + nx * fwdComp + px * offset;
-            float spreadY = cy + ny * fwdComp + py * offset;
 
             u.moveTo(spreadX, spreadY);
 
@@ -152,11 +169,12 @@ public class CombatManager {
 
     public void dispose() {
         if (shotSound != null) shotSound.dispose();
+        if (popupManager != null) popupManager.dispose();
     }
 
     private void processOrder(AttackOrder order) {
-        Unit  attacker    = order.attacker;
-        Unit  target      = order.target;
+        Unit attacker = order.attacker;
+        Unit target = order.target;
         float distToEnemy = attacker.position.dst(target.position);
 
         if (distToEnemy <= attacker.attackRange) {
@@ -166,27 +184,27 @@ public class CombatManager {
         }
 
         switch (order.group.phase) {
-
             case SPREAD:
 
                 float dSpread = attacker.position.dst(order.spreadX, order.spreadY);
                 if (dSpread > SPREAD_THRESHOLD) {
                     attacker.moveTo(order.spreadX, order.spreadY);
                 } else {
+
                     attacker.stopMoving();
                 }
                 break;
 
             case ADVANCE:
 
-                float vx  = target.position.x - attacker.position.x;
-                float vy  = target.position.y - attacker.position.y;
+                float vx = target.position.x - attacker.position.x;
+                float vy = target.position.y - attacker.position.y;
                 float len = (float) Math.sqrt(vx * vx + vy * vy);
                 if (len > 0.01f) {
                     float fnx = vx / len;
                     float fny = vy / len;
                     float fpx = -fny;
-                    float fpy =  fnx;
+                    float fpy = fnx;
 
                     float targetX = target.position.x
                         - fnx * attacker.attackRange * 0.85f
@@ -206,6 +224,7 @@ public class CombatManager {
         attacker.attack(target);
         spawnShot(attacker, target);
         playShot();
+
     }
 
     private Unit findNearestEnemy(Unit unit, Array<Unit> all) {
@@ -244,15 +263,12 @@ public class CombatManager {
     }
 
     private static class AttackGroup {
-
         enum Phase { SPREAD, ADVANCE }
-
         final Unit target;
         final Array<AttackOrder> orders = new Array<>();
         Phase phase = Phase.SPREAD;
 
         AttackGroup(Unit target) { this.target = target; }
-
         void addOrder(AttackOrder o) { orders.add(o); }
         void cleanup() {
             for (int i = orders.size - 1; i >= 0; i--) {
@@ -260,12 +276,9 @@ public class CombatManager {
                 if (!o.attacker.alive || !o.target.alive) orders.removeIndex(i);
             }
         }
-
         boolean isEmpty() { return orders.size == 0; }
-
         void update() {
             if (phase == Phase.ADVANCE) return;
-
             boolean allReady = true;
             for (int i = 0; i < orders.size; i++) {
                 AttackOrder o = orders.get(i);
@@ -273,7 +286,6 @@ public class CombatManager {
                 float d = o.attacker.position.dst(o.spreadX, o.spreadY);
                 if (d > 3f) { allReady = false; break; }
             }
-
             if (allReady) phase = Phase.ADVANCE;
         }
     }
@@ -297,7 +309,6 @@ public class CombatManager {
     }
 
     private static class AttackOrder {
-
         final Unit attacker;
         final Unit target;
         final float spreadX, spreadY;
@@ -305,10 +316,7 @@ public class CombatManager {
         final float perpOffset;
         final AttackGroup group;
 
-        AttackOrder(Unit a, Unit t,
-                    float sx, float sy,
-                    float fx, float fy,
-                    AttackGroup group) {
+        AttackOrder(Unit a, Unit t, float sx, float sy, float fx, float fy, AttackGroup group) {
             this.attacker = a;
             this.target = t;
             this.spreadX = sx; this.spreadY = sy;
@@ -328,5 +336,13 @@ public class CombatManager {
             float dfy = fy - t.position.y;
             this.perpOffset = dfx * px + dfy * py;
         }
+    }
+
+    public void updatePopups(float delta) {
+        popupManager.update(delta);
+    }
+
+    public void drawPopups(SpriteBatch batch) {
+        popupManager.draw(batch);
     }
 }
