@@ -5,6 +5,7 @@
     <option name="linkedExternalProjectsSettings">
       <GradleProjectSettings>
         <option name="externalProjectPath" value="$PROJECT_DIR$/main/core" />
+        <option name="gradleJvm" value="23" />
       </GradleProjectSettings>
     </option>
   </component>

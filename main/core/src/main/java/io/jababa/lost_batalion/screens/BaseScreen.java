@@ -8,6 +8,7 @@ import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import io.jababa.lost_batalion.LostBatalion;
 import io.jababa.lost_batalion.ui.UIFactory;
 
+
 /**
  * Базовий екран
  */
@@ -81,4 +82,6 @@ public abstract class BaseScreen implements Screen {
     public void dispose() {
         if (stage != null) stage.dispose();
     }
+
+
 }

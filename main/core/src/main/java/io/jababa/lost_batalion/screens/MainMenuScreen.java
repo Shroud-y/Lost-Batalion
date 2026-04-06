@@ -42,7 +42,7 @@ public class MainMenuScreen extends BaseScreen {
         btnSettings.addListener(new ChangeListener() {
             @Override
             public void changed(ChangeEvent event, Actor actor) {
-                // TODO: game.setScreen(new SettingsScreen(game));
+                game.setScreen(new SettingsScreen(game));
             }
         });
 

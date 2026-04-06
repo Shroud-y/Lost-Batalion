@@ -15,6 +15,8 @@ import com.badlogic.gdx.scenes.scene2d.utils.Drawable;
 import com.badlogic.gdx.scenes.scene2d.utils.NinePatchDrawable;
 import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
 import com.badlogic.gdx.utils.Array;
+import com.badlogic.gdx.scenes.scene2d.ui.Slider;
+import com.badlogic.gdx.scenes.scene2d.ui.CheckBox;
 
 public final class UIFactory {
 
@@ -194,7 +196,7 @@ public final class UIFactory {
     }
 
     private static int screenRelativeSize(float fraction) {
-        return Math.max(12, (int) (Gdx.graphics.getHeight() * fraction));
+        return Math.max(12, (int) (580 * fraction));
     }
 
     private static BitmapFont generateFont(int size, Color color) {
@@ -210,6 +212,31 @@ public final class UIFactory {
         gen.dispose();
         createdFonts.add(font);
         return font;
+    }
+
+    public static Slider.SliderStyle createSliderStyle() {
+        Slider.SliderStyle style = new Slider.SliderStyle();
+        // Створюємо текстури для повзунка "на льоту"
+        style.background = flatDrawable(new Color(0.2f, 0.2f, 0.2f, 1f));
+        style.background.setMinHeight(10);
+        style.knob = flatDrawable(COLOR_ACCENT);
+        style.knob.setMinWidth(20);
+        style.knob.setMinHeight(30);
+        return style;
+    }
+
+    public static CheckBox.CheckBoxStyle createCheckBoxStyle() {
+        CheckBox.CheckBoxStyle style = new CheckBox.CheckBoxStyle();
+        style.font = generateFont(20, COLOR_TEXT);
+        style.fontColor = COLOR_TEXT;
+        // Використовуємо прості кольорові квадрати для галочки
+        style.checkboxOff = flatDrawable(COLOR_BUTTON_IDLE);
+        style.checkboxOff.setMinWidth(30);
+        style.checkboxOff.setMinHeight(30);
+        style.checkboxOn = flatDrawable(COLOR_ACCENT);
+        style.checkboxOn.setMinWidth(30);
+        style.checkboxOn.setMinHeight(30);
+        return style;
     }
 
     private static float clamp(float v) {

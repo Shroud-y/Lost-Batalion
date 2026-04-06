@@ -56,6 +56,20 @@ public class LostBatalion extends Game {
         inputMultiplexer.addProcessor(screenProcessor);
     }
 
+    public class Settings {
+        private static final String PREFS_NAME = "lost_batalion_settings";
+
+        public static com.badlogic.gdx.Preferences getPrefs() {
+            return com.badlogic.gdx.Gdx.app.getPreferences(PREFS_NAME);
+        }
+
+        public static float getVolume() { return getPrefs().getFloat("volume", 1f); }
+        public static void setVolume(float val) { getPrefs().putFloat("volume", val).flush(); }
+
+        public static boolean isFullscreen() { return getPrefs().getBoolean("fullscreen", false); }
+        public static void setFullscreen(boolean val) { getPrefs().putBoolean("fullscreen", val).flush(); }
+    }
+
     @Override
     public void dispose() {
 
