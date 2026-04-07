@@ -28,6 +28,8 @@ import io.jababa.lost_batalion.terrain.TerrainMaskManager;
 import io.jababa.lost_batalion.terrain.TerrainType;
 import io.jababa.lost_batalion.ui.UIFactory;
 import io.jababa.lost_batalion.units.*;
+import io.jababa.lost_batalion.visibility.FogOfWarRenderer;
+import io.jababa.lost_batalion.visibility.VisibilitySystem;
 
 public class GameScreen implements Screen {
 
@@ -60,6 +62,10 @@ public class GameScreen implements Screen {
     private SpriteBatch panelBatch;
     private CurvedFormationCommand curvedFormation;
 
+    // ── Система видимості ──────────────────────────────────────────────────
+    private VisibilitySystem visibilitySystem;
+    private FogOfWarRenderer fogRenderer;
+
     private TextButton formationBtn;
     private boolean formationModeActive = false;
 
@@ -76,16 +82,16 @@ public class GameScreen implements Screen {
     private float mapWidth, mapHeight;
 
     public GameScreen(LostBatalion game, ScenarioCard scenario) {
-        this.game = game;
+        this.game     = game;
         this.scenario = scenario;
     }
 
     @Override
     public void show() {
-        batch  = new SpriteBatch();
-        uiBatch = new SpriteBatch();
+        batch      = new SpriteBatch();
+        uiBatch    = new SpriteBatch();
         panelBatch = new SpriteBatch();
-        shapes = new ShapeRenderer();
+        shapes     = new ShapeRenderer();
 
         if (scenario.texturePath != null && Gdx.files.internal(scenario.texturePath).exists()) {
             mapTexture = new Texture(Gdx.files.internal(scenario.texturePath));
@@ -101,13 +107,13 @@ public class GameScreen implements Screen {
         camera.update();
 
         String maskPath = buildMaskPath(scenario.maskPath, scenario.texturePath);
-        terrainMask = new TerrainMaskManager(maskPath);
+        terrainMask  = new TerrainMaskManager(maskPath);
         forestTooltip = new ForestTooltip("ui/forest_tooltip.png");
 
-        unitManager = new UnitManager();
-        unitRenderer = new UnitRenderer();
-        moveMarker = new MoveMarker();
-        formationDrag = new FormationDragHandler();
+        unitManager     = new UnitManager();
+        unitRenderer    = new UnitRenderer();
+        moveMarker      = new MoveMarker();
+        formationDrag   = new FormationDragHandler();
         curvedFormation = new CurvedFormationCommand();
 
         unitManager.spawnPlayerSquad(mapWidth / 2f, mapHeight / 2f);
@@ -115,17 +121,19 @@ public class GameScreen implements Screen {
         unitManager.addUnit(new Infantry(Team.ENEMY, mapWidth * 0.75f + Infantry.INF_SIZE + 8f, mapHeight * 0.6f));
         unitManager.addUnit(new Infantry(Team.ENEMY, mapWidth * 0.75f - Infantry.INF_SIZE - 8f, mapHeight * 0.6f));
 
-        combatManager  = new CombatManager(unitManager);
+        combatManager = new CombatManager(unitManager);
         selectionPanel = new SelectionPanel();
 
+        // ── Ініціалізація системи видимості ───────────────────────────────
+        visibilitySystem = new VisibilitySystem(terrainMask);
+        fogRenderer      = new FogOfWarRenderer(mapWidth, mapHeight);
+
         selectionPanel.setListener(() -> {
-            boolean nowActive = curvedFormation.isDrawing() || !selectionPanel.isVisible();
             if (curvedFormation.isDrawing()) {
                 curvedFormation.cancel();
                 selectionPanel.setFormationActive(false);
             } else {
                 selectionPanel.setFormationActive(true);
-
             }
         });
 
@@ -141,20 +149,16 @@ public class GameScreen implements Screen {
 
         mux.addProcessor(new InputAdapter() {
             @Override public boolean touchDown(int x, int y, int p, int b) {
-                if (!paused) return false;
-                return pauseStage.touchDown(x, y, p, b);
+                if (!paused) return false; return pauseStage.touchDown(x, y, p, b);
             }
             @Override public boolean touchUp(int x, int y, int p, int b) {
-                if (!paused) return false;
-                return pauseStage.touchUp(x, y, p, b);
+                if (!paused) return false; return pauseStage.touchUp(x, y, p, b);
             }
             @Override public boolean touchDragged(int x, int y, int p) {
-                if (!paused) return false;
-                return pauseStage.touchDragged(x, y, p);
+                if (!paused) return false; return pauseStage.touchDragged(x, y, p);
             }
             @Override public boolean mouseMoved(int x, int y) {
-                if (!paused) return false;
-                return pauseStage.mouseMoved(x, y);
+                if (!paused) return false; return pauseStage.mouseMoved(x, y);
             }
         });
 
@@ -214,19 +218,21 @@ public class GameScreen implements Screen {
             handleCameraMovement(delta);
 
             if (curvedFormation.isDrawing()) {
-
                 if (Gdx.input.isButtonPressed(com.badlogic.gdx.Input.Buttons.LEFT)) {
-                    Vector3 cur = camera.unproject(
-                        new Vector3(Gdx.input.getX(), Gdx.input.getY(), 0));
+                    Vector3 cur = camera.unproject(new Vector3(Gdx.input.getX(), Gdx.input.getY(), 0));
                     curvedFormation.tickCurrentCursor(cur.x, cur.y);
                 }
             }
+
             updateTerrainUnderCursor();
             unitManager.update(delta);
             moveMarker.update(delta);
             combatManager.update(delta);
             combatManager.updatePopups(delta);
             selectionPanel.update(delta, unitManager.getSelectedUnits());
+
+            // ── Оновлення видимості (до рендеру) ──────────────────────────
+            visibilitySystem.update(unitManager.getAllUnits());
 
             if (formationBtn != null) {
                 formationBtn.setVisible(unitManager.hasSelection());
@@ -244,6 +250,7 @@ public class GameScreen implements Screen {
         }
         camera.update();
 
+        // ── Рендер карти та юнітів ─────────────────────────────────────────
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
         if (mapTexture != null) batch.draw(mapTexture, 0, 0);
@@ -257,6 +264,7 @@ public class GameScreen implements Screen {
 
         combatManager.drawShots(shapes);
         formationDrag.draw(shapes);
+
         if (curvedFormation.isDrawing()) {
             batch.setProjectionMatrix(camera.combined);
             curvedFormation.draw(batch, camera.zoom);
@@ -265,6 +273,13 @@ public class GameScreen implements Screen {
         if (moveMarker.isActive()) moveMarker.draw(shapes);
         if (selecting && !paused && !clickConsumedByUnit) drawSelectionRect();
 
+        // ── Туман війни (поверх юнітів, до HUD) ───────────────────────────
+        if (!paused) {
+            shapes.setProjectionMatrix(camera.combined);
+            fogRenderer.render(shapes, camera, unitManager.getAllUnits());
+        }
+
+        // ── Курсорна підказка лісу ─────────────────────────────────────────
         if (!paused && currentTerrain == TerrainType.FOREST) {
             uiBatch.begin();
             forestTooltip.draw(uiBatch, cursorScreenX, cursorScreenY);
@@ -294,7 +309,7 @@ public class GameScreen implements Screen {
         if (applied && unitManager.hasSelection()) {
             unitManager.moveSelectedToLine(
                 formationDrag.getStartX(), formationDrag.getStartY(),
-                formationDrag.getEndX(), formationDrag.getEndY(),
+                formationDrag.getEndX(),   formationDrag.getEndY(),
                 mapWidth, mapHeight);
             float mx = (formationDrag.getStartX() + formationDrag.getEndX()) / 2f;
             float my = (formationDrag.getStartY() + formationDrag.getEndY()) / 2f;
@@ -311,23 +326,23 @@ public class GameScreen implements Screen {
         pauseStage.getViewport().update(width, height, true);
     }
 
-    @Override public void hide() { game.setScreenInputProcessor(new InputAdapter()); }
-    @Override public void pause() {}
+    @Override public void hide()   { game.setScreenInputProcessor(new InputAdapter()); }
+    @Override public void pause()  {}
     @Override public void resume() {}
 
     @Override
     public void dispose() {
-        if (batch != null) batch.dispose();
-        if (uiBatch != null) uiBatch.dispose();
-        if (panelBatch != null) panelBatch.dispose();
-        if (shapes != null) shapes.dispose();
-        if (mapTexture != null) mapTexture.dispose();
-        if (pauseStage != null) pauseStage.dispose();
-        if (hudStage != null) hudStage.dispose();
-        if (terrainMask != null) terrainMask.dispose();
-        if (forestTooltip != null) forestTooltip.dispose();
-        if (unitRenderer != null) unitRenderer.dispose();
-        if (combatManager != null) combatManager.dispose();
+        if (batch != null)          batch.dispose();
+        if (uiBatch != null)        uiBatch.dispose();
+        if (panelBatch != null)     panelBatch.dispose();
+        if (shapes != null)         shapes.dispose();
+        if (mapTexture != null)     mapTexture.dispose();
+        if (pauseStage != null)     pauseStage.dispose();
+        if (hudStage != null)       hudStage.dispose();
+        if (terrainMask != null)    terrainMask.dispose();
+        if (forestTooltip != null)  forestTooltip.dispose();
+        if (unitRenderer != null)   unitRenderer.dispose();
+        if (combatManager != null)  combatManager.dispose();
         if (selectionPanel != null) selectionPanel.dispose();
         if (curvedFormation != null) curvedFormation.dispose();
         UIFactory.disposeAll();
@@ -356,14 +371,10 @@ public class GameScreen implements Screen {
 
     private void handleCameraMovement(float delta) {
         float speed = CAM_SPEED * camera.zoom;
-        if (Gdx.input.isKeyPressed(Input.Keys.W) || Gdx.input.isKeyPressed(Input.Keys.UP))
-            camera.position.y += speed * delta;
-        if (Gdx.input.isKeyPressed(Input.Keys.S) || Gdx.input.isKeyPressed(Input.Keys.DOWN))
-            camera.position.y -= speed * delta;
-        if (Gdx.input.isKeyPressed(Input.Keys.A) || Gdx.input.isKeyPressed(Input.Keys.LEFT))
-            camera.position.x -= speed * delta;
-        if (Gdx.input.isKeyPressed(Input.Keys.D) || Gdx.input.isKeyPressed(Input.Keys.RIGHT))
-            camera.position.x += speed * delta;
+        if (Gdx.input.isKeyPressed(Input.Keys.W) || Gdx.input.isKeyPressed(Input.Keys.UP))    camera.position.y += speed * delta;
+        if (Gdx.input.isKeyPressed(Input.Keys.S) || Gdx.input.isKeyPressed(Input.Keys.DOWN))  camera.position.y -= speed * delta;
+        if (Gdx.input.isKeyPressed(Input.Keys.A) || Gdx.input.isKeyPressed(Input.Keys.LEFT))  camera.position.x -= speed * delta;
+        if (Gdx.input.isKeyPressed(Input.Keys.D) || Gdx.input.isKeyPressed(Input.Keys.RIGHT)) camera.position.x += speed * delta;
         clampCamera();
     }
 
@@ -423,8 +434,7 @@ public class GameScreen implements Screen {
 
             @Override public boolean scrolled(float amountX, float amountY) {
                 if (paused) return false;
-                camera.zoom = MathUtils.clamp(
-                    camera.zoom + amountY * ZOOM_STEP, ZOOM_MIN, ZOOM_MAX);
+                camera.zoom = MathUtils.clamp(camera.zoom + amountY * ZOOM_STEP, ZOOM_MIN, ZOOM_MAX);
                 camera.update();
                 return true;
             }
@@ -438,30 +448,19 @@ public class GameScreen implements Screen {
                     boolean wasActive = selectionPanel.isFormationActive();
                     selectionPanel.handleClick(screenX, screenH - screenY);
                     boolean nowActive = selectionPanel.isFormationActive();
-
-                    if (!wasActive && nowActive) {
-                        awaitingDrawStart = true;
-                        curvedFormation.cancel();
-                    }
-                    if (wasActive && !nowActive) {
-                        awaitingDrawStart = false;
-                        curvedFormation.cancel();
-                    }
+                    if (!wasActive && nowActive) { awaitingDrawStart = true; curvedFormation.cancel(); }
+                    if (wasActive && !nowActive)  { awaitingDrawStart = false; curvedFormation.cancel(); }
                     return true;
                 }
 
                 if (button == Input.Buttons.LEFT) {
                     Vector3 world = camera.unproject(new Vector3(screenX, screenY, 0));
-
                     if (awaitingDrawStart && selectionPanel.isFormationActive()) {
                         awaitingDrawStart = false;
                         curvedFormation.startDraw(world.x, world.y);
                         return true;
                     }
-
-                    if (curvedFormation.isDrawing()) {
-                        return true;
-                    }
+                    if (curvedFormation.isDrawing()) return true;
 
                     if (unitManager == null) return false;
                     clickConsumedByUnit = unitManager.trySelectAtPoint(world.x, world.y);
@@ -470,7 +469,6 @@ public class GameScreen implements Screen {
                 }
 
                 if (button == Input.Buttons.RIGHT) {
-
                     if (curvedFormation.isDrawing()) {
                         curvedFormation.cancel();
                         selectionPanel.setFormationActive(false);
@@ -486,13 +484,11 @@ public class GameScreen implements Screen {
 
             @Override
             public boolean touchDragged(int screenX, int screenY, int pointer) {
-
                 if (curvedFormation.isDrawing()) {
                     Vector3 world = camera.unproject(new Vector3(screenX, screenY, 0));
                     curvedFormation.addPoint(world.x, world.y);
                     return true;
                 }
-
                 if (selecting) {
                     Vector3 world = camera.unproject(new Vector3(screenX, screenY, 0));
                     updateSelection(world.x, world.y);
@@ -506,27 +502,19 @@ public class GameScreen implements Screen {
                 if (paused) return false;
 
                 if (button == Input.Buttons.LEFT) {
-
                     if (curvedFormation.isDrawing()) {
-                        boolean applied = curvedFormation.finishAndApply(
-                            unitManager, mapWidth, mapHeight);
+                        curvedFormation.finishAndApply(unitManager, mapWidth, mapHeight);
                         selectionPanel.setFormationActive(false);
                         awaitingDrawStart = false;
                         return true;
                     }
-
                     if (!selecting) return false;
                     Vector3 world = camera.unproject(new Vector3(screenX, screenY, 0));
                     selCurX = world.x; selCurY = world.y;
-                    float rx = Math.min(selStartX, selCurX);
-                    float ry = Math.min(selStartY, selCurY);
-                    float rw = Math.abs(selCurX - selStartX);
-                    float rh = Math.abs(selCurY - selStartY);
-                    if (rw > 6f && rh > 6f) {
-                        unitManager.selectInRect(rx, ry, rw, rh, true);
-                    } else if (!clickConsumedByUnit) {
-                        unitManager.clearSelection();
-                    }
+                    float rx = Math.min(selStartX, selCurX), ry = Math.min(selStartY, selCurY);
+                    float rw = Math.abs(selCurX - selStartX), rh = Math.abs(selCurY - selStartY);
+                    if (rw > 6f && rh > 6f) unitManager.selectInRect(rx, ry, rw, rh, true);
+                    else if (!clickConsumedByUnit) unitManager.clearSelection();
                     selecting = false;
                     return true;
                 }
@@ -548,8 +536,7 @@ public class GameScreen implements Screen {
                             Unit enemy = combatManager.tryGetEnemyAtPoint(world.x, world.y);
                             if (enemy != null) {
                                 combatManager.orderAttack(enemy);
-                                moveMarker.show(enemy.position.x, enemy.position.y,
-                                    MoveMarker.MarkerType.ATTACK);
+                                moveMarker.show(enemy.position.x, enemy.position.y, MoveMarker.MarkerType.ATTACK);
                             } else {
                                 combatManager.cancelAttackOrders(unitManager.getSelectedUnits());
                                 unitManager.moveSelectedTo(world.x, world.y, mapWidth, mapHeight);
@@ -572,12 +559,10 @@ public class GameScreen implements Screen {
 
     private void buildPauseOverlay() {
         pauseOverlay = new PauseOverlay(pauseStage, new PauseOverlay.PauseListener() {
-            @Override public void onResume() { paused = false; pauseStage.clear(); }
-            @Override public void onReturnToLobby() {
-                game.setScreen(new io.jababa.lost_batalion.screens.scenario.ScenarioScreen(game));
-            }
-            @Override public void onSettings() {}
-            @Override public void onExit() { Gdx.app.exit(); }
+            @Override public void onResume()        { paused = false; pauseStage.clear(); }
+            @Override public void onReturnToLobby() { game.setScreen(new io.jababa.lost_batalion.screens.scenario.ScenarioScreen(game)); }
+            @Override public void onSettings()      {}
+            @Override public void onExit()          { Gdx.app.exit(); }
         });
     }
 
@@ -602,14 +587,14 @@ public class GameScreen implements Screen {
     public void setClickConsumedByUnit(boolean val) { this.clickConsumedByUnit = val; }
     public void setZoom(float zoom) { camera.zoom = MathUtils.clamp(zoom, ZOOM_MIN, ZOOM_MAX); }
 
-    public boolean isPaused() { return paused; }
-    public boolean isSelecting() { return selecting; }
+    public boolean isPaused()       { return paused; }
+    public boolean isSelecting()    { return selecting; }
     public OrthographicCamera getCamera() { return camera; }
-    public UnitManager getUnitManager() { return unitManager; }
-    public MoveMarker getMoveMarker() { return moveMarker; }
-    public float getMapWidth() { return mapWidth; }
-    public float getMapHeight() { return mapHeight; }
-    public FormationDragHandler getFormationDrag() { return formationDrag; }
-    public CombatManager getCombatManager() { return combatManager; }
-    public CurvedFormationCommand getCurvedFormation(){ return curvedFormation; }
+    public UnitManager getUnitManager()   { return unitManager; }
+    public MoveMarker getMoveMarker()     { return moveMarker; }
+    public float getMapWidth()            { return mapWidth; }
+    public float getMapHeight()           { return mapHeight; }
+    public FormationDragHandler getFormationDrag()       { return formationDrag; }
+    public CombatManager getCombatManager()              { return combatManager; }
+    public CurvedFormationCommand getCurvedFormation()   { return curvedFormation; }
 }

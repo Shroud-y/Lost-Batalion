@@ -14,6 +14,25 @@ public abstract class Unit {
     public float attackCooldown;
     public float attackTimer = 0f;
 
+    /**
+     * Дальність зору в пікселях світу.
+     * Скільки може «бачити» цей юніт навколо себе.
+     */
+    public float sightRange = 120f;
+
+    /**
+     * Рейтинг скритності [0..1]: 0 = повністю видимий, 1 = майже невидимий.
+     * Ворог бачить цього юніта лише якщо:
+     *   distToEnemy < enemy.sightRange * (1 - this.stealthRating)
+     */
+    public float stealthRating = 0f;
+
+    /**
+     * Кешований результат: чи видимий цей юніт для PLAYER прямо зараз.
+     * Виставляє VisibilitySystem кожен кадр.
+     */
+    public boolean visibleToPlayer = true;
+
     public  final Vector2 position = new Vector2();
     private final Vector2 target   = new Vector2();
     private boolean moving = false;
@@ -61,6 +80,7 @@ public abstract class Unit {
         attackTimer = attackCooldown;
         return true;
     }
+
     public void stopMoving() {
         target.set(position);
         moving = false;
