@@ -1,1 +1,1 @@
-com.badlogic.gdx.utils.GdxRuntimeException: #iterator() cannot be used nested.
+java.lang.NullPointerException: Cannot invoke "io.jababa.lost_batalion.terrain.TerrainMaskManager.getTerrainAt(float, float)" because "this.terrainMask" is null

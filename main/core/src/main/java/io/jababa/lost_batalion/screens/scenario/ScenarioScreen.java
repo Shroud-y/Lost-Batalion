@@ -32,17 +32,14 @@ public class ScenarioScreen extends BaseScreen {
 
     private Array<ScenarioCard> buildScenarios() {
         Array<ScenarioCard> list = new Array<>();
-
         list.add(new ScenarioCard(
             "zhovti_vody",
             "Zhovti Vody",
             "Coming soon...",
             "scenarios/Zhovty_Vodu.png",
-            "scenarios/Zhovty_Vodu_mask.png"
+            "scenarios/Zhovty_Vodu_mask.png",        // маска лісу
+            "scenarios/Zhovty_Vodu_terrain_mask.png" // маска топографії
         ));
-
-        // list.add(new ScenarioCard("id", "Title", "Desc", "scenarios/file.png"));
-
         return list;
     }
 

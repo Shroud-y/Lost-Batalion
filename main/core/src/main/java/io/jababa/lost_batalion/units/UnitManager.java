@@ -61,7 +61,7 @@ public class UnitManager {
         if (replace) clearSelection();
         Rectangle rect = new Rectangle(rx, ry, rw, rh);
         for (Unit u : allUnits) {
-            if (u.team != Team.PLAYER || !u.alive) continue;
+            if (!u.alive) continue;
             if (rect.contains(u.position.x, u.position.y)) {
                 u.selected = true;
                 if (!selectedUnits.contains(u, true)) selectedUnits.add(u);
@@ -120,6 +120,27 @@ public class UnitManager {
 
             u.moveTo(tx, ty);
         }
+    }
+
+    /** Тимчасово для тестування — виділяє юніта будь-якої команди. */
+    public boolean trySelectAtPointAnyTeam(float x, float y) {
+        Unit found = null;
+        for (int i = 0; i < allUnits.size; i++) {
+            Unit u = allUnits.get(i);
+            if (u == null || !u.alive) continue;
+            float halfSize = u.getSize() / 2f;
+            if (x >= u.position.x - halfSize && x <= u.position.x + halfSize &&
+                y >= u.position.y - halfSize && y <= u.position.y + halfSize) {
+                found = u;
+            }
+        }
+        if (found != null) {
+            clearSelection();
+            found.selected = true;
+            if (!selectedUnits.contains(found, true)) selectedUnits.add(found);
+            return true;
+        }
+        return false;
     }
 
 

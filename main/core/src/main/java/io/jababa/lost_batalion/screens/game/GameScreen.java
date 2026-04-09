@@ -49,6 +49,7 @@ public class GameScreen implements Screen {
 
     private TerrainMaskManager terrainMask;
     private ForestTooltip forestTooltip;
+    private TerrainMaskManager terrainCombatMask; // маска топографії для бойових модифікаторів
     private TerrainType currentTerrain = TerrainType.NONE;
     private int cursorScreenX, cursorScreenY;
 
@@ -107,26 +108,38 @@ public class GameScreen implements Screen {
         camera.update();
 
         String maskPath = buildMaskPath(scenario.maskPath, scenario.texturePath);
-        terrainMask  = new TerrainMaskManager(maskPath);
+        terrainMask = new TerrainMaskManager(maskPath);
+        terrainCombatMask = new TerrainMaskManager(scenario.terrainMaskPath);
+
+        Gdx.app.log("TERRAIN", "maskPath=" + maskPath
+            + " exists=" + (maskPath != null && Gdx.files.internal(maskPath).exists()));
+        Gdx.app.log("TERRAIN", "terrainMaskPath=" + scenario.terrainMaskPath
+            + " exists=" + (scenario.terrainMaskPath != null && Gdx.files.internal(scenario.terrainMaskPath).exists()));
+        combatManager = new CombatManager(unitManager, terrainCombatMask);
         forestTooltip = new ForestTooltip("ui/forest_tooltip.png");
 
+        // 1. Спочатку всі менеджери
         unitManager     = new UnitManager();
         unitRenderer    = new UnitRenderer();
         moveMarker      = new MoveMarker();
         formationDrag   = new FormationDragHandler();
         curvedFormation = new CurvedFormationCommand();
 
+// 2. Спавн юнітів
         unitManager.spawnPlayerSquad(mapWidth / 2f, mapHeight / 2f);
+        unitManager.spawnPlayerSquad(mapWidth / 2f, mapHeight / 1.7f);
+        unitManager.spawnPlayerSquad(mapWidth / 2f, mapHeight / 1.5f);
         unitManager.addUnit(new Infantry(Team.ENEMY, mapWidth * 0.75f, mapHeight * 0.6f));
         unitManager.addUnit(new Infantry(Team.ENEMY, mapWidth * 0.75f + Infantry.INF_SIZE + 8f, mapHeight * 0.6f));
         unitManager.addUnit(new Infantry(Team.ENEMY, mapWidth * 0.75f - Infantry.INF_SIZE - 8f, mapHeight * 0.6f));
 
-        combatManager = new CombatManager(unitManager);
-        selectionPanel = new SelectionPanel();
+// 3. CombatManager ОДИН РАЗ з маскою
+        combatManager = new CombatManager(unitManager, terrainCombatMask);
 
-        // ── Ініціалізація системи видимості ───────────────────────────────
+// 4. Решта
+        selectionPanel = new SelectionPanel();
         visibilitySystem = new VisibilitySystem(terrainMask);
-        fogRenderer      = new FogOfWarRenderer(mapWidth, mapHeight);
+        fogRenderer = new FogOfWarRenderer(mapWidth, mapHeight);
 
         selectionPanel.setListener(() -> {
             if (curvedFormation.isDrawing()) {
@@ -345,6 +358,7 @@ public class GameScreen implements Screen {
         if (combatManager != null)  combatManager.dispose();
         if (selectionPanel != null) selectionPanel.dispose();
         if (curvedFormation != null) curvedFormation.dispose();
+        if (terrainCombatMask != null) terrainCombatMask.dispose();
         UIFactory.disposeAll();
     }
 
@@ -358,7 +372,11 @@ public class GameScreen implements Screen {
         cursorScreenX = Gdx.input.getX();
         cursorScreenY = Gdx.input.getY();
         Vector3 world = camera.unproject(new Vector3(cursorScreenX, cursorScreenY, 0));
-        currentTerrain = terrainMask.getTerrainAt(world.x, world.y);
+        if (terrainMask != null) {
+            currentTerrain = terrainMask.getTerrainAt(world.x, world.y);
+        } else {
+            currentTerrain = TerrainType.NONE;
+        }
     }
 
     private String buildMaskPath(String explicitMask, String texturePath) {
@@ -463,7 +481,7 @@ public class GameScreen implements Screen {
                     if (curvedFormation.isDrawing()) return true;
 
                     if (unitManager == null) return false;
-                    clickConsumedByUnit = unitManager.trySelectAtPoint(world.x, world.y);
+                    clickConsumedByUnit = unitManager.trySelectAtPointAnyTeam(world.x, world.y);
                     if (!clickConsumedByUnit) startSelecting(world.x, world.y);
                     return true;
                 }

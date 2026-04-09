@@ -16,6 +16,8 @@ public class LostBatalion extends Game {
     @Override
     public void create() {
 
+        Gdx.app.setLogLevel(Application.LOG_DEBUG);
+
         inputMultiplexer = new InputMultiplexer();
         inputMultiplexer.addProcessor(buildGlobalInput());
         Gdx.input.setInputProcessor(inputMultiplexer);
