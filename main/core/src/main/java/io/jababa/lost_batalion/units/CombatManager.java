@@ -210,31 +210,39 @@ public class CombatManager {
      */
     private void tryAttack(Unit attacker, Unit target) {
         if (!attacker.canAttack()) {
-            Gdx.app.log("COMBAT", "canAttack=false, timer=" + attacker.attackTimer);
+            // Gdx.app.log("COMBAT", "canAttack=false, timer=" + attacker.attackTimer);
             return;
         }
         float dist = attacker.position.dst(target.position);
         if (dist > attacker.attackRange) {
-            Gdx.app.log("COMBAT", "too far: dist=" + dist + " range=" + attacker.attackRange);
             return;
         }
 
         if (terrainMask != null) {
-            TerrainType atkTerrain = terrainMask.getTerrainAt(
-                attacker.position.x, attacker.position.y);
-            TerrainType defTerrain = terrainMask.getTerrainAt(
-                target.position.x, target.position.y);
-            float defMult = TerrainCombatModifier.getDefenseMultiplier(atkTerrain, defTerrain);
+            // 1. Отримуємо висоти обох юнітів (Маска №2)
+            TerrainType atkElev = terrainMask.getElevationAt(attacker.position.x, attacker.position.y);
+            TerrainType defElev = terrainMask.getElevationAt(target.position.x, target.position.y);
+
+            // 2. Перевіряємо, чи ціль у лісі (Маска №1)
+            boolean targetInForest = terrainMask.isForestAt(target.position.x, target.position.y);
+
+            // 3. Розраховуємо базовий множник від висот
+            float defMult = TerrainCombatModifier.getDefenseMultiplier(atkElev, defElev);
+
+            // 4. ДОДАЄМО бонус лісу, якщо він є (стакаємо)
+            // Якщо defenseMultiplier у тебе працює за логікою (>1 захищений, <1 вразливий)
+            if (targetInForest) {
+                defMult *= 1.5f; // Ліс дає +50% до захисту поверх висоти
+            }
 
             Gdx.app.log("COMBAT",
-                "ATK terrain=" + atkTerrain +
-                    " DEF terrain=" + defTerrain +
-                    " mult=" + defMult +
-                    " hp_before=" + target.hp);
+                "ATK elev=" + atkElev +
+                    " DEF elev=" + defElev +
+                    " IN_FOREST=" + targetInForest +
+                    " TOTAL_MULT=" + defMult);
 
             attacker.attackWithTerrain(target, defMult);
 
-            Gdx.app.log("COMBAT", "hp_after=" + target.hp);
         } else {
             Gdx.app.log("COMBAT", "terrainMask is NULL — plain attack");
             attacker.attack(target);

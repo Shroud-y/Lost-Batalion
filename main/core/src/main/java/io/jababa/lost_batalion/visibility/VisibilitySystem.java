@@ -103,16 +103,49 @@ public class VisibilitySystem {
     // ── Приватні методи ────────────────────────────────────────────────────
 
     /** Модифікатор зору для спостерігача залежно від його місцевості */
+    /** Модифікатор зору для спостерігача: ліс заважає, висота допомагає */
     private float sightMod(Unit observer) {
         if (terrain == null) return 1f;
-        TerrainType t = terrain.getTerrainAt(observer.position.x, observer.position.y);
-        return t == TerrainType.FOREST ? FOREST_SIGHT_PENALTY : 1f;
+
+        float x = observer.position.x;
+        float y = observer.position.y;
+
+        // 1. Штраф за ліс (якщо юніт у гущавині, він бачить гірше)
+        float penalty = terrain.isForestAt(x, y) ? FOREST_SIGHT_PENALTY : 1f;
+
+        // 2. Бонус за висоту (з пагорба видно набагато далі)
+        float elevationBonus = 1f;
+        TerrainType elevation = terrain.getElevationAt(x, y);
+
+        if (elevation == TerrainType.HIGHLANDS) {
+            elevationBonus = 1.35f; // +35% до дальності огляду
+        } else if (elevation == TerrainType.LOWLANDS) {
+            elevationBonus = 0.85f; // -15% у низині
+        }
+
+        return penalty * elevationBonus;
     }
 
-    /** Модифікатор скритності для цілі залежно від її місцевості */
+    /** Модифікатор скритності для цілі: ліс ховає, пагорб демаскує */
     private float stealthMod(Unit target) {
         if (terrain == null) return 1f;
-        TerrainType t = terrain.getTerrainAt(target.position.x, target.position.y);
-        return t == TerrainType.FOREST ? FOREST_STEALTH_BONUS : 1f;
+
+        float x = target.position.x;
+        float y = target.position.y;
+
+        // 1. Бонус від лісу (головний фактор маскування)
+        float forestBonus = terrain.isForestAt(x, y) ? FOREST_STEALTH_BONUS : 1f;
+
+        // 2. Штраф за висоту (юніта на пагорбі легше помітити здалеку)
+        float elevationPenalty = 1f;
+        TerrainType elevation = terrain.getElevationAt(x, y);
+
+        if (elevation == TerrainType.HIGHLANDS) {
+            elevationPenalty = 1.25f; // На пагорбі юніт на 25% помітніший
+        }
+
+        // Повертаємо підсумковий множник
+        // (Чим вище значення, тим важче помітити юніта у твоїй формулі VisibilitySystem)
+        return forestBonus / elevationPenalty;
     }
 }

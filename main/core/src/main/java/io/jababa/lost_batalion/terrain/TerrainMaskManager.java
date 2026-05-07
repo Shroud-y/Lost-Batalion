@@ -20,7 +20,7 @@ public class TerrainMaskManager {
     private static final int TOLERANCE = 20;
 
     // Кольори з технічного завдання
-    private static final int[] FOREST_RGB        = { 46,  88,  26};
+    private static final int[] FOREST_RGB        = { 93, 99, 0 };
     private static final int[] LOWLANDS_RGB       = { 87, 195, 113};
     private static final int[] PRE_LOWLANDS_RGB   = {  0, 224,  47};
     private static final int[] PLAINS_RGB         = {104, 144,  85};
@@ -38,22 +38,32 @@ public class TerrainMaskManager {
         }
     }
 
-    public TerrainType getTerrainAt(float worldX, float worldY) {
-        if (!loaded) return TerrainType.NONE;
+    // Додай ці методи замість старого getTerrainAt
+    public boolean isForestAt(float worldX, float worldY) {
+        if (!loaded) return false;
 
-        int px = (int) worldX;
-        int py = maskPixmap.getHeight() - 1 - (int) worldY;
+        // px/py розрахунок винесено в окремий метод для зручності
+        int pixel = getPixelFromMask(worldX, worldY);
+        if (pixel == 0) return false;
 
-        if (px < 0 || py < 0 || px >= maskPixmap.getWidth() || py >= maskPixmap.getHeight()) {
-            return TerrainType.NONE;
-        }
-
-        int pixel = maskPixmap.getPixel(px, py);
         int r = (pixel >> 24) & 0xFF;
         int g = (pixel >> 16) & 0xFF;
         int b = (pixel >>  8) & 0xFF;
 
-        if (matches(r, g, b, FOREST_RGB))        return TerrainType.FOREST;
+        return matches(r, g, b, FOREST_RGB);
+    }
+
+    public TerrainType getElevationAt(float worldX, float worldY) {
+        if (!loaded) return TerrainType.NONE;
+
+        int pixel = getPixelFromMask(worldX, worldY);
+        if (pixel == 0) return TerrainType.NONE;
+
+        int r = (pixel >> 24) & 0xFF;
+        int g = (pixel >> 16) & 0xFF;
+        int b = (pixel >>  8) & 0xFF;
+
+        // Перевіряємо тільки висоти. Ліс ігноруємо, бо він перевіряється окремим методом.
         if (matches(r, g, b, LOWLANDS_RGB))       return TerrainType.LOWLANDS;
         if (matches(r, g, b, PRE_LOWLANDS_RGB))   return TerrainType.PRE_LOWLANDS;
         if (matches(r, g, b, PLAINS_RGB))         return TerrainType.PLAINS;
@@ -62,6 +72,16 @@ public class TerrainMaskManager {
         if (matches(r, g, b, HIGHLANDS_RGB))      return TerrainType.HIGHLANDS;
 
         return TerrainType.NONE;
+    }
+
+    // Допоміжний метод для отримання пікселя (щоб не дублювати математику)
+    private int getPixelFromMask(float worldX, float worldY) {
+        int px = (int) worldX;
+        int py = maskPixmap.getHeight() - 1 - (int) worldY;
+        if (px < 0 || py < 0 || px >= maskPixmap.getWidth() || py >= maskPixmap.getHeight()) {
+            return 0;
+        }
+        return maskPixmap.getPixel(px, py);
     }
 
     private boolean matches(int r, int g, int b, int[] target) {

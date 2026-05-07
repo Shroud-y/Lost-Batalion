@@ -372,8 +372,20 @@ public class GameScreen implements Screen {
         cursorScreenX = Gdx.input.getX();
         cursorScreenY = Gdx.input.getY();
         Vector3 world = camera.unproject(new Vector3(cursorScreenX, cursorScreenY, 0));
+
         if (terrainMask != null) {
-            currentTerrain = terrainMask.getTerrainAt(world.x, world.y);
+            // 1. Перевіряємо ліс
+            boolean isForest = terrainMask.isForestAt(world.x, world.y);
+
+            // 2. Отримуємо висоту
+            TerrainType elevation = terrainMask.getElevationAt(world.x, world.y);
+
+            // 3. Логіка відображення: якщо є ліс — показуємо його, якщо ні — тип висоти
+            if (isForest) {
+                currentTerrain = TerrainType.FOREST;
+            } else {
+                currentTerrain = elevation;
+            }
         } else {
             currentTerrain = TerrainType.NONE;
         }
