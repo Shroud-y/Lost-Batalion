@@ -238,7 +238,7 @@ public class GameScreen implements Screen {
             }
 
             updateTerrainUnderCursor();
-            unitManager.update(delta);
+            unitManager.update(delta, terrainMask);
             moveMarker.update(delta);
             combatManager.update(delta);
             combatManager.updatePopups(delta);
@@ -493,7 +493,8 @@ public class GameScreen implements Screen {
                     if (curvedFormation.isDrawing()) return true;
 
                     if (unitManager == null) return false;
-                    clickConsumedByUnit = unitManager.trySelectAtPointAnyTeam(world.x, world.y);
+                    boolean shift = Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT) || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT);
+                    clickConsumedByUnit = unitManager.trySelectAtPointAnyTeam(world.x, world.y, shift);
                     if (!clickConsumedByUnit) startSelecting(world.x, world.y);
                     return true;
                 }
@@ -543,8 +544,12 @@ public class GameScreen implements Screen {
                     selCurX = world.x; selCurY = world.y;
                     float rx = Math.min(selStartX, selCurX), ry = Math.min(selStartY, selCurY);
                     float rw = Math.abs(selCurX - selStartX), rh = Math.abs(selCurY - selStartY);
-                    if (rw > 6f && rh > 6f) unitManager.selectInRect(rx, ry, rw, rh, true);
-                    else if (!clickConsumedByUnit) unitManager.clearSelection();
+                    boolean shift = Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT) || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT);
+                    if (rw > 6f && rh > 6f) {
+                        unitManager.selectInRect(rx, ry, rw, rh, shift);
+                    } else if (!clickConsumedByUnit && !shift) {
+                        unitManager.clearSelection();
+                    }
                     selecting = false;
                     return true;
                 }

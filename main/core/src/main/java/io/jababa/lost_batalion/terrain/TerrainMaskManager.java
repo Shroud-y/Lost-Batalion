@@ -21,6 +21,7 @@ public class TerrainMaskManager {
 
     // Кольори з технічного завдання
     private static final int[] FOREST_RGB        = { 93, 99, 0 };
+    private static final int[] RIVER_RGB = { 0, 83, 255 };
     private static final int[] LOWLANDS_RGB       = { 87, 195, 113};
     private static final int[] PRE_LOWLANDS_RGB   = {  0, 224,  47};
     private static final int[] PLAINS_RGB         = {104, 144,  85};
@@ -62,6 +63,8 @@ public class TerrainMaskManager {
         int r = (pixel >> 24) & 0xFF;
         int g = (pixel >> 16) & 0xFF;
         int b = (pixel >>  8) & 0xFF;
+
+        if (matches(r, g, b, RIVER_RGB)) return TerrainType.RIVER;
 
         // Перевіряємо тільки висоти. Ліс ігноруємо, бо він перевіряється окремим методом.
         if (matches(r, g, b, LOWLANDS_RGB))       return TerrainType.LOWLANDS;

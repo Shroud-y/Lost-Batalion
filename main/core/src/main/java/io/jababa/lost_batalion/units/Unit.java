@@ -40,9 +40,10 @@ public abstract class Unit {
         moving = true;
     }
 
-    public void update(float delta) {
+    public void update(float delta, float terrainSpeedMultiplier) {
 
         if (!alive) return;
+
         if (attackTimer > 0) {
             attackTimer -= delta;
             // Тимчасово:
@@ -58,7 +59,10 @@ public abstract class Unit {
                 position.set(target);
                 moving = false;
             } else {
-                float step = speed * delta;
+                // ВИКОРИСТОВУЄМО ПЕРЕДАНИЙ МНОЖНИК
+                float effectiveSpeed = this.speed * terrainSpeedMultiplier;
+                float step = effectiveSpeed * delta;
+
                 float nx = position.x + (target.x - position.x) / dist * step;
                 float ny = position.y + (target.y - position.y) / dist * step;
                 position.set(nx, ny);

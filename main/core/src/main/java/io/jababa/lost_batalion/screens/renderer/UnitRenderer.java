@@ -84,7 +84,7 @@ public class UnitRenderer {
 
         shapes.setColor(1f, 1f, 1f, 0.9f);
         shapes.rect(x, y, w, h);
-        shapes.rect(x - 1, y - 1, w + 2, h + 2);
+
     }
 
     private void drawHpBar(Unit u) {

@@ -15,6 +15,7 @@ package io.jababa.lost_batalion.terrain;
 public enum TerrainType {
     NONE,
     FOREST,
+    RIVER,
     LOWLANDS,       // 1а — нізіни
     PRE_LOWLANDS,   // 1б — перед нізіни
     PLAINS,         // 2а — рівнини
