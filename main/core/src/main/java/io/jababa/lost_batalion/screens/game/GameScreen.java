@@ -52,6 +52,7 @@ public class GameScreen implements Screen {
     private TerrainMaskManager terrainCombatMask; // маска топографії для бойових модифікаторів
     private TerrainType currentTerrain = TerrainType.NONE;
     private int cursorScreenX, cursorScreenY;
+    private float cursorWorldX, cursorWorldY;
 
     private UnitManager unitManager;
     private UnitRenderer unitRenderer;
@@ -139,7 +140,7 @@ public class GameScreen implements Screen {
 // 4. Решта
         selectionPanel = new SelectionPanel();
         visibilitySystem = new VisibilitySystem(terrainMask);
-        fogRenderer = new FogOfWarRenderer(mapWidth, mapHeight);
+        fogRenderer = new FogOfWarRenderer(mapWidth, mapHeight, terrainMask);
 
         selectionPanel.setListener(() -> {
             if (curvedFormation.isDrawing()) {
@@ -290,6 +291,10 @@ public class GameScreen implements Screen {
         if (!paused) {
             shapes.setProjectionMatrix(camera.combined);
             fogRenderer.render(shapes, camera, unitManager.getAllUnits());
+
+            boolean altHeld = Gdx.input.isKeyPressed(Input.Keys.ALT_LEFT)
+                           || Gdx.input.isKeyPressed(Input.Keys.ALT_RIGHT);
+            if (altHeld) fogRenderer.renderCursorSightOverlay(shapes, cursorWorldX, cursorWorldY);
         }
 
         // ── Курсорна підказка лісу ─────────────────────────────────────────
@@ -372,6 +377,8 @@ public class GameScreen implements Screen {
         cursorScreenX = Gdx.input.getX();
         cursorScreenY = Gdx.input.getY();
         Vector3 world = camera.unproject(new Vector3(cursorScreenX, cursorScreenY, 0));
+        cursorWorldX = world.x;
+        cursorWorldY = world.y;
 
         if (terrainMask != null) {
             // 1. Перевіряємо ліс

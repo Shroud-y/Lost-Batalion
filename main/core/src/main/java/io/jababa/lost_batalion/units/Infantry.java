@@ -16,13 +16,14 @@ public class Infantry extends Unit {
 
     public Infantry(Team team, float x, float y) {
         super(team);
-        this.maxHp        = INF_HP;
-        this.hp           = INF_HP;
-        this.speed        = INF_SPEED;
-        this.damage       = INF_DAMAGE;
-        this.defense      = INF_DEFENSE;
-        this.attackRange  = INF_RANGE;
+        this.maxHp          = INF_HP;
+        this.hp             = INF_HP;
+        this.speed          = INF_SPEED;
+        this.damage         = INF_DAMAGE;
+        this.defense        = INF_DEFENSE;
+        this.attackRange    = INF_RANGE;
         this.attackCooldown = INF_COOLDOWN;
+        this.stealthRating  = 0.20f;   // terrain multipliers (forest/lowlands) now matter
         this.position.set(x, y);
     }
 

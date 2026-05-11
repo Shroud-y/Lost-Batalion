@@ -3,34 +3,37 @@ package io.jababa.lost_batalion.visibility;
 import com.badlogic.gdx.utils.Array;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.terrain.TerrainMaskManager;
-import io.jababa.lost_batalion.terrain.TerrainType;
 import io.jababa.lost_batalion.units.Unit;
 
 /**
- * Система видимості / туман війни.
+ * Updates visibleToPlayer for all enemy units each frame.
  *
- * Алгоритм (виконується кожен кадр):
- *  1. Для кожного ВОРОЖОГО юніта обнуляємо visibleToPlayer = false.
- *  2. Для кожного ГРАВЦЕВОГО юніта перебираємо ворогів:
- *       effectiveSight = observer.sightRange * terrainSightMod(observer)
- *       effectiveStealth = target.stealthRating * terrainStealthMod(target)
- *       видимий якщо dist < effectiveSight * (1 - effectiveStealth)
- *  3. Якщо хоча б один ГРАВЦЕВИЙ юніт бачить ворога → visibleToPlayer = true.
+ * Detection formula:
+ *   effectiveSight   = observer.sightRange × sightMod(observer terrain)
+ *   effectiveStealth = min(target.stealthRating × losForestMod × elevationMod, 0.9)
+ *   detected if dist ≤ effectiveSight × (1 − effectiveStealth)
  *
- * Модифікатори місцевості (ліс):
- *   - Спостерігач у лісі: його дальність зору × FOREST_SIGHT_PENALTY   (0.55)
- *   - Ціль у лісі:        її скритність    × FOREST_STEALTH_BONUS      (1.8)
+ * Forest LOS (losForestMod):
+ *   target in forest           → × FOREST_STEALTH_BONUS  (1.8)  — target is hidden
+ *   forest on path to target   → × FOREST_LOS_BLOCK_MOD  (4.0)  — sight is blocked
+ *   (path check skips observer position, so observer's own forest handled by sightMod only)
+ *
+ * Observer terrain (sightMod):
+ *   forest × 0.55 | lowlands × 0.80 | pre-lowlands × 0.92
+ *   highlands × 1.30 | pre-highlands × 1.15
+ *
+ * Target elevation (elevationStealthMod):
+ *   highlands ÷ 1.30 (exposed on skyline) | lowlands × 1.20 (cover in valley)
  */
 public class VisibilitySystem {
 
-    /** Штраф до зору СПОСТЕРІГАЧА, якщо він сам у лісі */
     private static final float FOREST_SIGHT_PENALTY  = 0.55f;
+    private static final float FOREST_STEALTH_BONUS  = 1.8f;   // target standing in forest
+    private static final float FOREST_LOS_BLOCK_MOD  = 4.0f;   // forest on the LOS path
+    private static final float MAX_EFFECTIVE_STEALTH  = 0.90f;
 
-    /** Множник скритності ЦІЛІ, якщо вона у лісі */
-    private static final float FOREST_STEALTH_BONUS  = 1.8f;
-
-    /** Максимум скритності після всіх модифікаторів (не дозволяємо стати абсолютно невидимим) */
-    private static final float MAX_EFFECTIVE_STEALTH = 0.90f;
+    /** World units between consecutive ray-march samples. */
+    private static final float LOS_SAMPLE_STEP = 12f;
 
     private final TerrainMaskManager terrain;
 
@@ -38,22 +41,13 @@ public class VisibilitySystem {
         this.terrain = terrain;
     }
 
-    /**
-     * Оновлює поле visibleToPlayer для всіх ворогів.
-     * Викликати один раз на кадр перед рендером.
-     *
-     * @param allUnits усі юніти гри (і свої, і ворожі)
-     */
+    /** Call once per frame before rendering. */
     public void update(Array<Unit> allUnits) {
-        // 1. Скидаємо видимість усіх ворогів
         for (int i = 0; i < allUnits.size; i++) {
             Unit u = allUnits.get(i);
-            if (u.team != Team.PLAYER) {
-                u.visibleToPlayer = false;
-            }
+            if (u.team != Team.PLAYER) u.visibleToPlayer = false;
         }
 
-        // 2. Кожен юніт гравця «освітлює» ворогів у своєму радіусі
         for (int i = 0; i < allUnits.size; i++) {
             Unit observer = allUnits.get(i);
             if (observer.team != Team.PLAYER || !observer.alive) continue;
@@ -63,89 +57,102 @@ public class VisibilitySystem {
             for (int j = 0; j < allUnits.size; j++) {
                 Unit target = allUnits.get(j);
                 if (target.team == Team.PLAYER || !target.alive) continue;
-                if (target.visibleToPlayer) continue; // вже видимий — пропускаємо
-
-                float effectiveStealth = Math.min(
-                    target.stealthRating * stealthMod(target),
-                    MAX_EFFECTIVE_STEALTH
-                );
-
-                float detectionRange = effectiveSight * (1f - effectiveStealth);
+                if (target.visibleToPlayer) continue;
 
                 float dist = observer.position.dst(target.position);
-                if (dist <= detectionRange) {
-                    target.visibleToPlayer = true;
-                }
+                if (dist > effectiveSight) continue;   // outside sight range entirely
+
+                float stealthMul = losForestMod(observer, target)
+                                 * elevationStealthMod(target);
+                float effectiveStealth = Math.min(target.stealthRating * stealthMul, MAX_EFFECTIVE_STEALTH);
+                float detectionRange   = effectiveSight * (1f - effectiveStealth);
+
+                if (dist <= detectionRange) target.visibleToPlayer = true;
             }
         }
     }
 
-    /**
-     * Чи видна позиція world-координат хоча б одним ГРАВЦЕВИМ юнітом.
-     * Використовується FogOfWarRenderer для перевірки конкретної клітинки.
-     *
-     * @param wx, wy  world-координати точки
-     * @param allUnits усі юніти
-     * @return true якщо точка в зоні зору гравця
-     */
+    /** Whether a world point is lit by any player unit (used for fog tile checks). */
     public boolean isPointVisible(float wx, float wy, Array<Unit> allUnits) {
         for (int i = 0; i < allUnits.size; i++) {
             Unit observer = allUnits.get(i);
             if (observer.team != Team.PLAYER || !observer.alive) continue;
-
             float effectiveSight = observer.sightRange * sightMod(observer);
-            float dist = observer.position.dst(wx, wy);
-            if (dist <= effectiveSight) return true;
+            if (observer.position.dst(wx, wy) <= effectiveSight) return true;
         }
         return false;
     }
 
-    // ── Приватні методи ────────────────────────────────────────────────────
+    // ── Private helpers ────────────────────────────────────────────────────────
 
-    /** Модифікатор зору для спостерігача залежно від його місцевості */
-    /** Модифікатор зору для спостерігача: ліс заважає, висота допомагає */
     private float sightMod(Unit observer) {
         if (terrain == null) return 1f;
+        float x = observer.position.x, y = observer.position.y;
 
-        float x = observer.position.x;
-        float y = observer.position.y;
+        float mod = terrain.isForestAt(x, y) ? FOREST_SIGHT_PENALTY : 1f;
 
-        // 1. Штраф за ліс (якщо юніт у гущавині, він бачить гірше)
-        float penalty = terrain.isForestAt(x, y) ? FOREST_SIGHT_PENALTY : 1f;
-
-        // 2. Бонус за висоту (з пагорба видно набагато далі)
-        float elevationBonus = 1f;
-        TerrainType elevation = terrain.getElevationAt(x, y);
-
-        if (elevation == TerrainType.HIGHLANDS) {
-            elevationBonus = 1.35f; // +35% до дальності огляду
-        } else if (elevation == TerrainType.LOWLANDS) {
-            elevationBonus = 0.85f; // -15% у низині
+        switch (terrain.getElevationAt(x, y)) {
+            case HIGHLANDS:     mod *= 1.30f; break;
+            case PRE_HIGHLANDS: mod *= 1.15f; break;
+            case PRE_LOWLANDS:  mod *= 0.92f; break;
+            case LOWLANDS:      mod *= 0.80f; break;
+            default: break;
         }
-
-        return penalty * elevationBonus;
+        return mod;
     }
 
-    /** Модифікатор скритності для цілі: ліс ховає, пагорб демаскує */
-    private float stealthMod(Unit target) {
+    /**
+     * Forest concealment multiplier for stealthRating.
+     * Checks whether the target is in forest, and — separately — whether any
+     * forest lies on the path between the observer and the target.
+     * The path check starts one sample-step away from the observer so the
+     * observer's own forest position is handled solely by sightMod, not doubled.
+     */
+    private float losForestMod(Unit observer, Unit target) {
         if (terrain == null) return 1f;
 
-        float x = target.position.x;
-        float y = target.position.y;
+        float tx = target.position.x, ty = target.position.y;
 
-        // 1. Бонус від лісу (головний фактор маскування)
-        float forestBonus = terrain.isForestAt(x, y) ? FOREST_STEALTH_BONUS : 1f;
+        if (terrain.isForestAt(tx, ty)) return FOREST_STEALTH_BONUS;
 
-        // 2. Штраф за висоту (юніта на пагорбі легше помітити здалеку)
-        float elevationPenalty = 1f;
-        TerrainType elevation = terrain.getElevationAt(x, y);
+        if (hasForestOnPath(observer.position.x, observer.position.y, tx, ty))
+            return FOREST_LOS_BLOCK_MOD;
 
-        if (elevation == TerrainType.HIGHLANDS) {
-            elevationPenalty = 1.25f; // На пагорбі юніт на 25% помітніший
+        return 1f;
+    }
+
+    /** Target elevation: high ground exposes a unit, low ground gives cover. */
+    private float elevationStealthMod(Unit target) {
+        if (terrain == null) return 1f;
+        switch (terrain.getElevationAt(target.position.x, target.position.y)) {
+            case HIGHLANDS:     return 1f / 1.30f;
+            case PRE_HIGHLANDS: return 1f / 1.15f;
+            case PRE_LOWLANDS:  return 1.08f;
+            case LOWLANDS:      return 1.20f;
+            default:            return 1f;
         }
+    }
 
-        // Повертаємо підсумковий множник
-        // (Чим вище значення, тим важче помітити юніта у твоїй формулі VisibilitySystem)
-        return forestBonus / elevationPenalty;
+    /**
+     * Returns true if any sample point on the straight-line path from (x1,y1)
+     * to (x2,y2) falls inside forest terrain.
+     *
+     * Sampling starts one LOS_SAMPLE_STEP away from the origin so the origin's
+     * own terrain doesn't contribute (already handled by sightMod). Sampling
+     * stops before the destination (its terrain is checked separately by
+     * losForestMod via isForestAt).
+     */
+    private boolean hasForestOnPath(float x1, float y1, float x2, float y2) {
+        float dx   = x2 - x1;
+        float dy   = y2 - y1;
+        float dist = (float) Math.sqrt(dx * dx + dy * dy);
+
+        if (dist <= LOS_SAMPLE_STEP) return false;
+
+        float stepT = LOS_SAMPLE_STEP / dist;
+        for (float t = stepT; t < 1.0f; t += stepT) {
+            if (terrain.isForestAt(x1 + dx * t, y1 + dy * t)) return true;
+        }
+        return false;
     }
 }
