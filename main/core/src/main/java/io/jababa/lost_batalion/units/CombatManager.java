@@ -49,7 +49,6 @@ public class CombatManager {
     public void orderAttack(Unit enemy) {
         Array<Unit> selected = unitManager.getSelectedUnits();
         if (selected.size == 0) return;
-        // if (enemy != null && !enemy.visibleToPlayer) return; // тимчасово вимкнути
 
         if (enemy != null && enemy.alive)
             popupManager.spawn(enemy.position.x, enemy.position.y + enemy.getSize() / 2f);
@@ -63,7 +62,14 @@ public class CombatManager {
         for (int i = groups.size - 1; i >= 0; i--)
             if (groups.get(i).isEmpty()) groups.removeIndex(i);
 
-        formLineAndOrder(selected, enemy);
+        // [НОВЕ] Фільтруємо артилерію — вона не отримує звичайних наказів атаки
+        Array<Unit> attackers = new Array<>();
+        for (int i = 0; i < selected.size; i++) {
+            Unit u = selected.get(i);
+            if (!(u instanceof Artillery)) attackers.add(u);
+        }
+
+        if (attackers.size > 0) formLineAndOrder(attackers, enemy);
     }
 
     public void cancelAttackOrders(Array<Unit> units) {
@@ -100,6 +106,10 @@ public class CombatManager {
         for (int i = 0; i < all.size; i++) {
             Unit u = all.get(i);
             if (!u.alive || hasManualOrder(u)) continue;
+
+            // [НОВЕ] Артилерія не атакує автоматично
+            if (u instanceof Artillery) continue;
+
             Unit nearest = findNearestVisibleEnemy(u, all);
             if (nearest != null) tryAttack(u, nearest);
         }
@@ -176,6 +186,10 @@ public class CombatManager {
 
     private void processOrder(AttackOrder order) {
         Unit attacker = order.att, target = order.target;
+
+        // [НОВЕ] Артилерія ніколи не отримує processOrder (захист від edge-case)
+        if (attacker instanceof Artillery) return;
+
         if (attacker.position.dst(target.position) <= attacker.attackRange) {
             attacker.stopMoving();
             tryAttack(attacker, target);
@@ -205,35 +219,22 @@ public class CombatManager {
 
     /**
      * Атака з урахуванням місцевості.
-     * Якщо terrainMask є — рахуємо TerrainCombatModifier і застосовуємо.
-     * Якщо немає — звичайна атака.
+     * [НОВЕ] Артилерія не може атакувати через цей метод.
      */
     private void tryAttack(Unit attacker, Unit target) {
-        if (!attacker.canAttack()) {
-            // Gdx.app.log("COMBAT", "canAttack=false, timer=" + attacker.attackTimer);
-            return;
-        }
+        // [НОВЕ] Артилерія не стріляє напряму
+        if (attacker instanceof Artillery) return;
+
+        if (!attacker.canAttack()) return;
         float dist = attacker.position.dst(target.position);
-        if (dist > attacker.attackRange) {
-            return;
-        }
+        if (dist > attacker.attackRange) return;
 
         if (terrainMask != null) {
-            // 1. Отримуємо висоти обох юнітів (Маска №2)
             TerrainType atkElev = terrainMask.getElevationAt(attacker.position.x, attacker.position.y);
             TerrainType defElev = terrainMask.getElevationAt(target.position.x, target.position.y);
-
-            // 2. Перевіряємо, чи ціль у лісі (Маска №1)
             boolean targetInForest = terrainMask.isForestAt(target.position.x, target.position.y);
-
-            // 3. Розраховуємо базовий множник від висот
             float defMult = TerrainCombatModifier.getDefenseMultiplier(atkElev, defElev);
-
-            // 4. ДОДАЄМО бонус лісу, якщо він є (стакаємо)
-            // Якщо defenseMultiplier у тебе працює за логікою (>1 захищений, <1 вразливий)
-            if (targetInForest) {
-                defMult *= 1.5f; // Ліс дає +50% до захисту поверх висоти
-            }
+            if (targetInForest) defMult *= 1.5f;
 
             Gdx.app.log("COMBAT",
                 "ATK elev=" + atkElev +
@@ -242,9 +243,7 @@ public class CombatManager {
                     " TOTAL_MULT=" + defMult);
 
             attacker.attackWithTerrain(target, defMult);
-
         } else {
-            Gdx.app.log("COMBAT", "terrainMask is NULL — plain attack");
             attacker.attack(target);
         }
 
@@ -258,8 +257,6 @@ public class CombatManager {
         for (int i = 0; i < all.size; i++) {
             Unit other = all.get(i);
             if (!other.alive || other.team == unit.team) continue;
-            // Тимчасово вимкнути фільтр видимості для тестування:
-            // if (unit.team == Team.PLAYER && !other.visibleToPlayer) continue;
             float d = unit.position.dst(other.position);
             if (d <= minDist) { minDist = d; nearest = other; }
         }
@@ -316,6 +313,5 @@ public class CombatManager {
             float nx=vx/len,ny=vy/len,px=-ny,py=nx;
             perpOffset = (fx-t.position.x)*px + (fy-t.position.y)*py;
         }
-        // att використовується напряму через поле
     }
 }
