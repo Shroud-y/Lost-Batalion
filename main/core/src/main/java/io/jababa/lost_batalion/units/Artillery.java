@@ -5,10 +5,10 @@ import io.jababa.lost_batalion.Team;
 /**
  * Артилерійський юніт.
  *
- * - НЕ атакує як звичайний юніт.
- * - Має унікальну команду "Артилерійський вогонь" через ArtilleryStrikeCommand.
+ * - Автоматично обстрілює всіх ворогів у радіусі STRIKE_RANGE (AoE-снаряд).
+ * - Якщо гравець виділив артилерію і клікнув ПКМ по ворогу — б'є саме по ньому
+ *   (manualTarget), поки той живий і в радіусі; інакше повертається до авто-цілі.
  * - Менший розмір спрайту та хітбоксу (32px).
- * - Контрольований радіус дії (STRIKE_RANGE = 350px).
  */
 public class Artillery extends Unit {
 
@@ -18,8 +18,8 @@ public class Artillery extends Unit {
     public static final float ART_DEFENSE         = 5f;
 
     // ── Параметри пострілу ────────────────────────────────────────────────
-    /** Максимальна дальність вибору цілі. Гравець не може натиснути далі. */
-    public static final float STRIKE_RANGE         = 350f;
+    /** Максимальна дальність обстрілу (auto + manual). Зменшена. */
+    public static final float STRIKE_RANGE         = 220f;
     /** Час прицілювання до пострілу (секунди). */
     public static final float STRIKE_AIM_TIME      = 3.0f;
     /** Радіус вибуху (AoE). */
@@ -31,8 +31,15 @@ public class Artillery extends Unit {
     /** Час перезарядки між пострілами (секунди). */
     public static final float STRIKE_RELOAD_TIME   = 8f;
 
-    /** Таймер перезарядки. Керується ArtilleryStrikeCommand. */
+    /** Таймер перезарядки. Керується CombatManager. */
     public float reloadTimer = 0f;
+    /** Таймер прицілювання по поточній цілі. Керується CombatManager. */
+    public float aimTimer = 0f;
+    /**
+     * Ручна ціль (виставляється ПКМ по ворогу поки артилерія виділена).
+     * Поки жива і в радіусі — має пріоритет над авто-ціллю.
+     */
+    public Unit manualTarget = null;
 
     public Artillery(Team team, float x, float y) {
         super(team);

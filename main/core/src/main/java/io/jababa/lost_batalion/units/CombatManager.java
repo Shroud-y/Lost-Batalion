@@ -2,11 +2,14 @@ package io.jababa.lost_batalion.units;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.audio.Sound;
+import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.Array;
 import io.jababa.lost_batalion.Team;
+import io.jababa.lost_batalion.screens.effects.ArtilleryStrikeEffect;
 import io.jababa.lost_batalion.screens.effects.ShotEffect;
 import io.jababa.lost_batalion.screens.effects.TargetPopupManager;
 import io.jababa.lost_batalion.terrain.TerrainCombatModifier;
@@ -25,6 +28,9 @@ public class CombatManager {
     private final Array<ShotEffect>  shots  = new Array<>();
     private final Array<AttackOrder> orders = new Array<>();
     private final Array<AttackGroup> groups = new Array<>();
+
+    /** Активні артснаряди/вибухи (візуал + AoE-урон при прильоті). */
+    private final Array<ArtilleryStrikeEffect> artEffects = new Array<>();
 
     private TargetPopupManager popupManager;
     private Sound              shotSound;
@@ -62,11 +68,16 @@ public class CombatManager {
         for (int i = groups.size - 1; i >= 0; i--)
             if (groups.get(i).isEmpty()) groups.removeIndex(i);
 
-        // [НОВЕ] Фільтруємо артилерію — вона не отримує звичайних наказів атаки
+        // Артилерія не шикується в лінію — їй виставляємо ручну ціль (ПКМ по ворогу).
         Array<Unit> attackers = new Array<>();
         for (int i = 0; i < selected.size; i++) {
             Unit u = selected.get(i);
-            if (!(u instanceof Artillery)) attackers.add(u);
+            if (u instanceof Artillery) {
+                if (enemy != null && enemy.alive && enemy.team != u.team)
+                    ((Artillery) u).manualTarget = enemy;
+            } else {
+                attackers.add(u);
+            }
         }
 
         if (attackers.size > 0) formLineAndOrder(attackers, enemy);
@@ -88,6 +99,13 @@ public class CombatManager {
 
         for (int i = 0; i < shots.size; i++) shots.get(i).update(delta);
 
+        // Артснаряди у польоті / вибухи (урон наноситься колбеком при прильоті)
+        for (int i = artEffects.size - 1; i >= 0; i--) {
+            ArtilleryStrikeEffect eff = artEffects.get(i);
+            eff.update(delta);
+            if (!eff.active) artEffects.removeIndex(i);
+        }
+
         for (int i = groups.size - 1; i >= 0; i--) {
             AttackGroup g = groups.get(i);
             g.cleanup();
@@ -105,11 +123,12 @@ public class CombatManager {
 
         for (int i = 0; i < all.size; i++) {
             Unit u = all.get(i);
-            if (!u.alive || hasManualOrder(u)) continue;
+            if (!u.alive) continue;
 
-            // [НОВЕ] Артилерія не атакує автоматично
-            if (u instanceof Artillery) continue;
+            // Артилерія має власну логіку: авто-обстріл + ручна ціль
+            if (u instanceof Artillery) { updateArtillery((Artillery) u, all, delta); continue; }
 
+            if (hasManualOrder(u)) continue;
             Unit nearest = findNearestVisibleEnemy(u, all);
             if (nearest != null) tryAttack(u, nearest);
         }
@@ -145,6 +164,8 @@ public class CombatManager {
     public void dispose() {
         if (shotSound    != null) shotSound.dispose();
         if (popupManager != null) popupManager.dispose();
+        artEffects.clear();
+        ArtilleryStrikeEffect.disposeAssets();
     }
 
     // ── Приватне ─────────────────────────────────────────────────────────
@@ -261,6 +282,135 @@ public class CombatManager {
             if (d <= minDist) { minDist = d; nearest = other; }
         }
         return nearest;
+    }
+
+    // ── Артилерія ────────────────────────────────────────────────────────
+
+    /**
+     * Одна артустановка за кадр: обирає ціль (ручну або авто), прицілюється
+     * STRIKE_AIM_TIME секунд, стріляє AoE-снарядом, іде на перезарядку.
+     */
+    private void updateArtillery(Artillery art, Array<Unit> all, float delta) {
+        Unit target = null;
+
+        // 1. Ручна ціль має пріоритет — поки жива й у радіусі
+        Unit manual = art.manualTarget;
+        if (manual != null && manual.alive
+            && art.position.dst(manual.position) <= Artillery.STRIKE_RANGE) {
+            target = manual;
+        } else {
+            art.manualTarget = null; // ціль мертва/поза радіусом — скидаємо
+            target = findNearestArtilleryTarget(art, all);
+        }
+
+        if (target == null || !art.isReady()) { art.aimTimer = 0f; return; }
+
+        art.aimTimer += delta;
+        if (art.aimTimer >= Artillery.STRIKE_AIM_TIME) {
+            fireArtillery(art, target);
+            art.aimTimer = 0f;
+        }
+    }
+
+    /** Найближчий живий ворог у радіусі обстрілу. */
+    private Unit findNearestArtilleryTarget(Artillery art, Array<Unit> all) {
+        Unit nearest = null;
+        float minDist = Artillery.STRIKE_RANGE;
+        for (int i = 0; i < all.size; i++) {
+            Unit other = all.get(i);
+            if (!other.alive || other.team == art.team) continue;
+            float d = art.position.dst(other.position);
+            if (d <= minDist) { minDist = d; nearest = other; }
+        }
+        return nearest;
+    }
+
+    private void fireArtillery(Artillery art, Unit target) {
+        ArtilleryStrikeEffect.loadAssets();
+
+        float angle  = MathUtils.random(0f, MathUtils.PI2);
+        float spread = MathUtils.random(0f, Artillery.STRIKE_SPREAD);
+        final float impX = target.position.x + MathUtils.cos(angle) * spread;
+        final float impY = target.position.y + MathUtils.sin(angle) * spread;
+
+        ArtilleryStrikeEffect eff = new ArtilleryStrikeEffect();
+        eff.show(
+            art.position.x, art.position.y,
+            impX, impY,
+            Artillery.STRIKE_SPLASH_RADIUS,
+            (cx, cy, splashR) -> applyArtilleryAoe(cx, cy, splashR, Artillery.STRIKE_DAMAGE)
+        );
+        artEffects.add(eff);
+
+        art.startReload();
+        playShot();
+    }
+
+    /** AoE-урон у момент імпакту. Б'є всіх у радіусі (включно з союзниками). */
+    private void applyArtilleryAoe(float cx, float cy, float radius, float baseDamage) {
+        Array<Unit> all = unitManager.getAllUnits();
+        for (int i = 0; i < all.size; i++) {
+            Unit u = all.get(i);
+            if (!u.alive) continue;
+            float dist = u.position.dst(cx, cy);
+            if (dist > radius) continue;
+            float falloff = 1f - (dist / radius);
+            u.takeDamage(baseDamage * falloff);
+        }
+    }
+
+    /** Рендер снарядів/вибухів. batch і shapes мають camera.combined як projection. */
+    public void drawArtilleryEffects(SpriteBatch batch, ShapeRenderer shapes) {
+        for (int i = 0; i < artEffects.size; i++) {
+            ArtilleryStrikeEffect eff = artEffects.get(i);
+            if (eff.active) eff.draw(batch, shapes);
+        }
+    }
+
+    /**
+     * Білий індикатор заряджання пострілу над кожною артилерією що прицілюється.
+     * Заповнюється від 0 до 1 за STRIKE_AIM_TIME, наприкінці мигає.
+     * shapes має camera.combined як projection.
+     */
+    public void drawArtilleryAim(ShapeRenderer shapes) {
+        Array<Unit> all = unitManager.getAllUnits();
+
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+
+        for (int i = 0; i < all.size; i++) {
+            Unit u = all.get(i);
+            if (!(u instanceof Artillery) || !u.alive) continue;
+            Artillery art = (Artillery) u;
+            if (art.aimTimer <= 0f) continue;
+
+            float progress = Math.min(art.aimTimer / Artillery.STRIKE_AIM_TIME, 1f);
+            float pulse    = (float) Math.abs(Math.sin(art.aimTimer * 7f));
+
+            float cx   = art.position.x;
+            float cy   = art.position.y + art.getSize() / 2f + 6f;
+            float barW = art.getSize() * 1.2f;
+            float barH = 5f;
+            float bx   = cx - barW / 2f;
+
+            shapes.begin(ShapeRenderer.ShapeType.Filled);
+            // Фон
+            shapes.setColor(0.1f, 0.1f, 0.1f, 0.80f);
+            shapes.rect(bx, cy, barW, barH);
+            // Заповнення — біле, в кінці мигає
+            float fillA = progress < 1f ? 0.95f : 0.95f * pulse;
+            shapes.setColor(1f, 1f, 1f, fillA);
+            shapes.rect(bx, cy, barW * progress, barH);
+            shapes.end();
+
+            // Рамка
+            shapes.begin(ShapeRenderer.ShapeType.Line);
+            shapes.setColor(1f, 1f, 1f, 0.45f);
+            shapes.rect(bx, cy, barW, barH);
+            shapes.end();
+        }
+
+        Gdx.gl.glDisable(GL20.GL_BLEND);
     }
 
     private boolean hasManualOrder(Unit u) {

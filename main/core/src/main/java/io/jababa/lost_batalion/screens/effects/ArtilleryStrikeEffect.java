@@ -42,8 +42,8 @@ public class ArtilleryStrikeEffect {
     private static final float EXPLOSION_SIZE_MULT = 3.2f;
 
     // ── Spritesheet налаштування (відредагуй під свій файл) ──────────────
-    private static final int   SHEET_COLS = 9;   // кількість кадрів у рядку
-    private static final int   SHEET_ROWS = 10;   // кількість рядків
+    private static final int   SHEET_COLS = 8;   // кількість кадрів у рядку (640px кожен)
+    private static final int   SHEET_ROWS = 10;  // кількість рядків (426px кожен)
     private static final float ANIM_FPS   = 16f; // кадрів/сек
 
     // ── Стан ─────────────────────────────────────────────────────────────

@@ -46,7 +46,6 @@ public class SelectionPanel {
 
     public interface CommandListener {
         void onCurvedFormation();
-        void onArtilleryFire();
     }
     private CommandListener listener;
 
@@ -155,14 +154,6 @@ public class SelectionPanel {
             0.22f, 0.22f, 0.30f,   // inactive bg
             0.85f, 0.85f, 0.85f);  // active (білуватий)
 
-        // Кнопка артилерії (лише якщо є)
-        if (hasArtillery) {
-            float artX = cx + CMD_SIZE + CMD_PAD;
-            drawCmdButton(batch, cmdArtillery, artX, cy, artilleryActive,
-                0.30f, 0.16f, 0.10f,   // inactive bg (темно-теракотовий)
-                0.90f, 0.90f, 0.90f);  // active (білий)
-        }
-
         batch.end();
     }
 
@@ -183,15 +174,6 @@ public class SelectionPanel {
             formationActive = !formationActive;
             if (listener != null) listener.onCurvedFormation();
             return true;
-        }
-
-        if (hasArtillery) {
-            float artX = cx + CMD_SIZE + CMD_PAD;
-            if (hitBtn(sx, syFromBottom, artX, cy)) {
-                artilleryActive = !artilleryActive;
-                if (listener != null) listener.onArtilleryFire();
-                return true;
-            }
         }
 
         return true;

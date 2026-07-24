@@ -19,7 +19,6 @@ import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
 import io.jababa.lost_batalion.LostBatalion;
 import io.jababa.lost_batalion.Team;
-import io.jababa.lost_batalion.commands.ArtilleryStrikeCommand;
 import io.jababa.lost_batalion.commands.CurvedFormationCommand;
 import io.jababa.lost_batalion.mobile.GameInputHandler;
 import io.jababa.lost_batalion.mobile.MobileTouchHandler;
@@ -65,7 +64,6 @@ public class GameScreen implements Screen {
     private SelectionPanel selectionPanel;
     private SpriteBatch panelBatch;
     private CurvedFormationCommand curvedFormation;
-    private ArtilleryStrikeCommand artilleryCmd;
 
     private VisibilitySystem visibilitySystem;
     private FogOfWarRenderer fogRenderer;
@@ -118,7 +116,6 @@ public class GameScreen implements Screen {
         moveMarker      = new MoveMarker();
         formationDrag   = new FormationDragHandler();
         curvedFormation = new CurvedFormationCommand();
-        artilleryCmd    = new ArtilleryStrikeCommand();
 
         // Спавн піхоти
         unitManager.spawnPlayerSquad(mapWidth / 2f, mapHeight / 2f);
@@ -148,20 +145,6 @@ public class GameScreen implements Screen {
                     selectionPanel.setFormationActive(false);
                 } else {
                     selectionPanel.setFormationActive(true);
-                }
-            }
-
-            @Override
-            public void onArtilleryFire() {
-                if (artilleryCmd.isActive()) {
-                    artilleryCmd.cancel();
-                    selectionPanel.setArtilleryActive(false);
-                } else {
-                    Array<Artillery> cannons = getSelectedArtillery();
-                    if (cannons.size > 0) {
-                        artilleryCmd.beginTargeting(cannons);
-                        selectionPanel.setArtilleryActive(true);
-                    }
                 }
             }
         });
@@ -235,23 +218,12 @@ public class GameScreen implements Screen {
                 curvedFormation.tickCurrentCursor(cur.x, cur.y);
             }
 
-            // Оновлення курсора артилерії
-            if (artilleryCmd.isTargeting()) {
-                Vector3 cur = camera.unproject(new Vector3(Gdx.input.getX(), Gdx.input.getY(), 0));
-                artilleryCmd.updateCursor(cur.x, cur.y);
-            }
-
             updateTerrainUnderCursor();
             unitManager.update(delta, terrainMask);
             moveMarker.update(delta);
             combatManager.update(delta);
             combatManager.updatePopups(delta);
             selectionPanel.update(delta, unitManager.getSelectedUnits());
-
-            artilleryCmd.update(delta, unitManager);
-
-            // Скидаємо кнопку коли команда завершена
-            if (artilleryCmd.isIdle()) selectionPanel.setArtilleryActive(false);
 
             visibilitySystem.update(unitManager.getAllUnits());
 
@@ -294,11 +266,12 @@ public class GameScreen implements Screen {
         if (moveMarker.isActive()) moveMarker.draw(shapes);
         if (selecting && !paused && !clickConsumedByUnit) drawSelectionRect();
 
-        // Артилерійська команда (прицілювання + ефекти)
-        if (!paused && artilleryCmd.isActive()) {
+        // Артилерія: снаряди в польоті + вибухи + індикатор заряджання
+        if (!paused) {
             batch.setProjectionMatrix(camera.combined);
             shapes.setProjectionMatrix(camera.combined);
-            artilleryCmd.draw(batch, shapes);
+            combatManager.drawArtilleryEffects(batch, shapes);
+            combatManager.drawArtilleryAim(shapes);
         }
 
         // Туман війни
@@ -343,7 +316,6 @@ public class GameScreen implements Screen {
     public FormationDragHandler getFormationDrag()     { return formationDrag; }
     public CombatManager getCombatManager()            { return combatManager; }
     public CurvedFormationCommand getCurvedFormation() { return curvedFormation; }
-    public ArtilleryStrikeCommand getArtilleryCmd()   { return artilleryCmd; }
 
     public void applyFormationLine() {
         boolean applied = formationDrag.onRmbUp();
@@ -399,19 +371,11 @@ public class GameScreen implements Screen {
         if (combatManager   != null) combatManager.dispose();
         if (selectionPanel  != null) selectionPanel.dispose();
         if (curvedFormation != null) curvedFormation.dispose();
-        if (artilleryCmd    != null) artilleryCmd.dispose();
         if (terrainCombatMask != null) terrainCombatMask.dispose();
         UIFactory.disposeAll();
     }
 
     // ── Утиліти ───────────────────────────────────────────────────────────
-
-    private Array<Artillery> getSelectedArtillery() {
-        Array<Artillery> res = new Array<>();
-        for (Unit u : unitManager.getSelectedUnits())
-            if (u instanceof Artillery) res.add((Artillery) u);
-        return res;
-    }
 
     private boolean clickOnPanel(int sx, int sy) {
         return selectionPanel.containsScreenPoint(sx, Gdx.graphics.getHeight() - sy);
@@ -483,7 +447,6 @@ public class GameScreen implements Screen {
         return new InputAdapter() {
             @Override public boolean keyDown(int k) {
                 if (k == Input.Keys.ESCAPE) {
-                    if (artilleryCmd.isActive()) { artilleryCmd.cancel(); selectionPanel.setArtilleryActive(false); return true; }
                     togglePause(); return true;
                 }
                 return false;
@@ -497,7 +460,6 @@ public class GameScreen implements Screen {
 
             @Override public boolean keyDown(int k) {
                 if (k == Input.Keys.ESCAPE) {
-                    if (artilleryCmd.isActive()) { artilleryCmd.cancel(); selectionPanel.setArtilleryActive(false); return true; }
                     if (curvedFormation.isDrawing()) { curvedFormation.cancel(); selectionPanel.setFormationActive(false); awaitingDrawStart=false; return true; }
                     togglePause(); return true;
                 }
@@ -515,14 +477,6 @@ public class GameScreen implements Screen {
                 if (paused) return false;
 
                 if (btn == Input.Buttons.LEFT) {
-                    // Якщо артилерія в TARGETING — фіксуємо ціль (крім кліку по панелі)
-                    if (artilleryCmd.isTargeting() && !clickOnPanel(sx, sy)) {
-                        Vector3 w = camera.unproject(new Vector3(sx, sy, 0));
-                        boolean accepted = artilleryCmd.setTarget(w.x, w.y);
-                        // Якщо поза range — нічого не робимо (можна додати звук/flash)
-                        return true;
-                    }
-
                     // Клік по панелі
                     if (clickOnPanel(sx, sy)) {
                         int sh = Gdx.graphics.getHeight();
@@ -547,7 +501,6 @@ public class GameScreen implements Screen {
                 }
 
                 if (btn == Input.Buttons.RIGHT) {
-                    if (artilleryCmd.isActive()) { artilleryCmd.cancel(); selectionPanel.setArtilleryActive(false); return true; }
                     if (curvedFormation.isDrawing()) { curvedFormation.cancel(); selectionPanel.setFormationActive(false); awaitingDrawStart=false; return true; }
                     Vector3 w = camera.unproject(new Vector3(sx, sy, 0));
                     formationDrag.onRmbDown(w.x, w.y); return true;
@@ -589,7 +542,6 @@ public class GameScreen implements Screen {
                 }
 
                 if (btn == Input.Buttons.RIGHT) {
-                    if (artilleryCmd.isActive()) return true;
                     Vector3 w = camera.unproject(new Vector3(sx,sy,0));
                     boolean wasForm = formationDrag.onRmbUp();
                     if (unitManager.hasSelection()) {
