@@ -133,8 +133,8 @@ public class GameScreen implements Screen {
 
         combatManager    = new CombatManager(unitManager, terrainCombatMask);
         selectionPanel   = new SelectionPanel();
-        visibilitySystem = new VisibilitySystem(terrainMask);
-        fogRenderer      = new FogOfWarRenderer(mapWidth, mapHeight, terrainMask);
+        visibilitySystem = new VisibilitySystem(terrainMask, terrainCombatMask);
+        fogRenderer      = new FogOfWarRenderer(mapWidth, mapHeight, terrainMask, terrainCombatMask);
         forestTooltip    = new ForestTooltip("ui/forest_tooltip.png");
 
         selectionPanel.setListener(new SelectionPanel.CommandListener() {

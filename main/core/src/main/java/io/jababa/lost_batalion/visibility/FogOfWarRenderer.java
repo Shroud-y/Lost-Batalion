@@ -31,16 +31,21 @@ public class FogOfWarRenderer {
     private static final int   CIRCLE_SEGMENTS  = 48;
 
     // Must stay in sync with VisibilitySystem
-    private static final float FOREST_SIGHT_PENALTY = 0.55f;
+    private static final float FOREST_SIGHT_PENALTY   = 0.55f;
+    private static final float ELEVATION_BLOCK_MARGIN = 1.0f;
 
     private final float mapWidth;
     private final float mapHeight;
-    private final TerrainMaskManager terrain;
+    private final TerrainMaskManager forestMask;
+    private final TerrainMaskManager elevationMask;
 
-    public FogOfWarRenderer(float mapWidth, float mapHeight, TerrainMaskManager terrain) {
-        this.mapWidth  = mapWidth;
-        this.mapHeight = mapHeight;
-        this.terrain   = terrain;
+    public FogOfWarRenderer(float mapWidth, float mapHeight,
+                            TerrainMaskManager forestMask,
+                            TerrainMaskManager elevationMask) {
+        this.mapWidth      = mapWidth;
+        this.mapHeight     = mapHeight;
+        this.forestMask    = forestMask;
+        this.elevationMask = elevationMask;
     }
 
     /**
@@ -104,10 +109,17 @@ public class FogOfWarRenderer {
      * Renders a cursor-centred line-of-sight overlay when Alt is held.
      *
      * Casts 720 rays from the cursor. Each ray marches in 6-px steps and stops
-     * the first time it enters a forest pixel or leaves the map. The resulting
-     * "visibility fan" is stamped into the stencil buffer; then:
+     * the first time it enters a forest pixel, is occluded by rising terrain
+     * (a hill crest), or leaves the map. The resulting "visibility fan" is
+     * stamped into the stencil buffer; then:
      *   - blocked areas (stencil == 0) receive a dark overlay
      *   - visible areas (stencil == 1) receive a faint green tint
+     *
+     * Elevation occlusion mirrors VisibilitySystem: a point is hidden only when a
+     * crest already passed on the ray is taller than BOTH the cursor and that
+     * point (by ELEVATION_BLOCK_MARGIN). Same-height or lower terrain never
+     * blocks, so high ground sees across and down freely; only a ridge taller
+     * than the observer hides what lies behind it.
      *
      * Requires an 8-bit stencil buffer (set in Lwjgl3Launcher).
      */
@@ -119,6 +131,8 @@ public class FogOfWarRenderer {
         float[] epx = new float[RAY_COUNT];
         float[] epy = new float[RAY_COUNT];
 
+        float hCursor = elevationHeightAt(cx, cy);   // observer ground height
+
         for (int i = 0; i < RAY_COUNT; i++) {
             double angle = 2.0 * Math.PI * i / RAY_COUNT;
             float  dx    = (float) Math.cos(angle);
@@ -127,11 +141,23 @@ public class FogOfWarRenderer {
             epx[i] = cx;
             epy[i] = cy;
 
+            float maxCrest = -Float.MAX_VALUE;       // tallest terrain passed so far
+
             for (float d = STEP; d <= MAX_DIST; d += STEP) {
                 float wx = cx + dx * d;
                 float wy = cy + dy * d;
                 if (wx < 0 || wx >= mapWidth || wy < 0 || wy >= mapHeight) break;
-                if (terrain != null && terrain.isForestAt(wx, wy)) break;
+                if (forestMask != null && forestMask.isForestAt(wx, wy)) break;
+
+                // Elevation occlusion: hidden if an earlier crest towers over both
+                // the cursor and this point by more than the margin.
+                if (elevationMask != null) {
+                    float hGround = elevationHeightAt(wx, wy);
+                    float ceiling = Math.max(hCursor, hGround) + ELEVATION_BLOCK_MARGIN;
+                    if (maxCrest > ceiling) break;
+                    if (hGround > maxCrest) maxCrest = hGround;
+                }
+
                 epx[i] = wx;
                 epy[i] = wy;
             }
@@ -233,21 +259,37 @@ public class FogOfWarRenderer {
      * Mirrors VisibilitySystem.sightMod so the visual circle matches detection.
      */
     private float computeEffectiveSight(Unit observer) {
-        if (terrain == null) return observer.sightRange;
-
         float x = observer.position.x;
         float y = observer.position.y;
 
-        float mod = terrain.isForestAt(x, y) ? FOREST_SIGHT_PENALTY : 1f;
+        float mod = (forestMask != null && forestMask.isForestAt(x, y))
+            ? FOREST_SIGHT_PENALTY : 1f;
 
-        switch (terrain.getElevationAt(x, y)) {
-            case HIGHLANDS:     mod *= 1.30f; break;
-            case PRE_HIGHLANDS: mod *= 1.15f; break;
-            case PRE_LOWLANDS:  mod *= 0.92f; break;
-            case LOWLANDS:      mod *= 0.80f; break;
-            default: break;
+        if (elevationMask != null) {
+            switch (elevationMask.getElevationAt(x, y)) {
+                case HIGHLANDS:     mod *= 1.30f; break;
+                case PRE_HIGHLANDS: mod *= 1.15f; break;
+                case PRE_LOWLANDS:  mod *= 0.92f; break;
+                case LOWLANDS:      mod *= 0.80f; break;
+                default: break;
+            }
         }
 
         return observer.sightRange * mod;
+    }
+
+    /** Numeric height per elevation tier. Keep in sync with VisibilitySystem. */
+    private float elevationHeightAt(float x, float y) {
+        if (elevationMask == null) return 3f;
+        switch (elevationMask.getElevationAt(x, y)) {
+            case RIVER:         return 0f;
+            case LOWLANDS:      return 1f;
+            case PRE_LOWLANDS:  return 2f;
+            case PLAINS:
+            case PLAINS_ALT:    return 3f;
+            case PRE_HIGHLANDS: return 4f;
+            case HIGHLANDS:     return 5f;
+            default:            return 3f;   // NONE/FOREST → plains-level baseline
+        }
     }
 }
