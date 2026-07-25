@@ -13,7 +13,7 @@ import io.jababa.lost_batalion.screens.effects.ArtilleryStrikeEffect;
 import io.jababa.lost_batalion.screens.effects.ShotEffect;
 import io.jababa.lost_batalion.screens.effects.TargetPopupManager;
 import io.jababa.lost_batalion.terrain.TerrainCombatModifier;
-import io.jababa.lost_batalion.terrain.TerrainMaskManager;
+import io.jababa.lost_batalion.terrain.TerrainQuery;
 import io.jababa.lost_batalion.terrain.TerrainType;
 
 public class CombatManager {
@@ -22,8 +22,8 @@ public class CombatManager {
     private static final float LINE_SPACING     = 12f;
     private static final float SPREAD_THRESHOLD =  3f;
 
-    private final UnitManager        unitManager;
-    private final TerrainMaskManager terrainMask;
+    private final UnitManager  unitManager;
+    private final TerrainQuery terrain;
 
     private final Array<ShotEffect>  shots  = new Array<>();
     private final Array<AttackOrder> orders = new Array<>();
@@ -40,9 +40,9 @@ public class CombatManager {
         this(unitManager, null);
     }
 
-    public CombatManager(UnitManager unitManager, TerrainMaskManager terrainMask) {
+    public CombatManager(UnitManager unitManager, TerrainQuery terrain) {
         this.unitManager = unitManager;
-        this.terrainMask = terrainMask;
+        this.terrain     = terrain;
 
         for (int i = 0; i < MAX_SHOTS; i++) shots.add(new ShotEffect());
         try {
@@ -250,10 +250,10 @@ public class CombatManager {
         float dist = attacker.position.dst(target.position);
         if (dist > attacker.attackRange) return;
 
-        if (terrainMask != null) {
-            TerrainType atkElev = terrainMask.getElevationAt(attacker.position.x, attacker.position.y);
-            TerrainType defElev = terrainMask.getElevationAt(target.position.x, target.position.y);
-            boolean targetInForest = terrainMask.isForestAt(target.position.x, target.position.y);
+        if (terrain != null) {
+            TerrainType atkElev = terrain.elevation(attacker.position.x, attacker.position.y);
+            TerrainType defElev = terrain.elevation(target.position.x, target.position.y);
+            boolean targetInForest = terrain.isForest(target.position.x, target.position.y);
             float defMult = TerrainCombatModifier.getDefenseMultiplier(atkElev, defElev);
             if (targetInForest) defMult *= 1.5f;
 

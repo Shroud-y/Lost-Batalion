@@ -5,8 +5,7 @@ import com.badlogic.gdx.Input;
 import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.utils.Array;
 import io.jababa.lost_batalion.Team;
-import io.jababa.lost_batalion.terrain.TerrainMovementModifier;
-import io.jababa.lost_batalion.terrain.TerrainType;
+import io.jababa.lost_batalion.terrain.TerrainQuery;
 
 public class UnitManager {
 
@@ -22,15 +21,12 @@ public class UnitManager {
         addUnit(new Infantry(Team.PLAYER, centerX + spacing, centerY));
     }
 
-    // У UnitManager.java
-    public void update(float delta, io.jababa.lost_batalion.terrain.TerrainMaskManager mask) {
+    /** @param terrain спільний доступ до обох масок; null → місцевість ігнорується */
+    public void update(float delta, TerrainQuery terrain) {
         for (Unit u : allUnits) {
-            float multiplier = 1.0f;
-            if (mask != null) {
-                boolean isForest = mask.isForestAt(u.position.x, u.position.y);
-                TerrainType terrain = mask.getElevationAt(u.position.x, u.position.y);
-                multiplier = TerrainMovementModifier.getMultiplier(terrain, isForest);
-            }
+            float multiplier = terrain != null
+                ? terrain.movementMultiplier(u.position.x, u.position.y)
+                : 1.0f;
 
             // Тепер передаємо два аргументи
             u.update(delta, multiplier);

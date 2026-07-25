@@ -26,6 +26,7 @@ import io.jababa.lost_batalion.screens.renderer.UnitRenderer;
 import io.jababa.lost_batalion.screens.scenario.ScenarioCard;
 import io.jababa.lost_batalion.screens.ui.SelectionPanel;
 import io.jababa.lost_batalion.terrain.TerrainMaskManager;
+import io.jababa.lost_batalion.terrain.TerrainQuery;
 import io.jababa.lost_batalion.terrain.TerrainType;
 import io.jababa.lost_batalion.ui.UIFactory;
 import io.jababa.lost_batalion.units.*;
@@ -51,6 +52,8 @@ public class GameScreen implements Screen {
     private TerrainMaskManager terrainMask;
     private ForestTooltip forestTooltip;
     private TerrainMaskManager terrainCombatMask;
+    /** Спільний доступ до обох масок — усі підсистеми ходять через нього. */
+    private TerrainQuery terrain;
     private TerrainType currentTerrain = TerrainType.NONE;
     private int cursorScreenX, cursorScreenY;
     private float cursorWorldX, cursorWorldY;
@@ -108,8 +111,9 @@ public class GameScreen implements Screen {
         camera.update();
 
         String maskPath = buildMaskPath(scenario.maskPath, scenario.texturePath);
-        terrainMask      = new TerrainMaskManager(maskPath);
-        terrainCombatMask= new TerrainMaskManager(scenario.terrainMaskPath);
+        terrainMask      = new TerrainMaskManager(maskPath);                    // ліс + річки
+        terrainCombatMask= new TerrainMaskManager(scenario.terrainMaskPath);    // яруси висот
+        terrain          = new TerrainQuery(terrainMask, terrainCombatMask);
 
         unitManager     = new UnitManager();
         unitRenderer    = new UnitRenderer();
@@ -131,10 +135,10 @@ public class GameScreen implements Screen {
         unitManager.addUnit(new Infantry(Team.ENEMY, mapWidth * 0.75f + Infantry.INF_SIZE + 8f, mapHeight * 0.6f));
         unitManager.addUnit(new Infantry(Team.ENEMY, mapWidth * 0.75f - Infantry.INF_SIZE - 8f, mapHeight * 0.6f));
 
-        combatManager    = new CombatManager(unitManager, terrainCombatMask);
+        combatManager    = new CombatManager(unitManager, terrain);
         selectionPanel   = new SelectionPanel();
-        visibilitySystem = new VisibilitySystem(terrainMask, terrainCombatMask);
-        fogRenderer      = new FogOfWarRenderer(mapWidth, mapHeight, terrainMask, terrainCombatMask);
+        visibilitySystem = new VisibilitySystem(terrain);
+        fogRenderer      = new FogOfWarRenderer(mapWidth, mapHeight, terrain);
         forestTooltip    = new ForestTooltip("ui/forest_tooltip.png");
 
         selectionPanel.setListener(new SelectionPanel.CommandListener() {
@@ -219,7 +223,7 @@ public class GameScreen implements Screen {
             }
 
             updateTerrainUnderCursor();
-            unitManager.update(delta, terrainMask);
+            unitManager.update(delta, terrain);
             moveMarker.update(delta);
             combatManager.update(delta);
             combatManager.updatePopups(delta);
@@ -386,10 +390,10 @@ public class GameScreen implements Screen {
         cursorScreenY = Gdx.input.getY();
         Vector3 world = camera.unproject(new Vector3(cursorScreenX, cursorScreenY, 0));
         cursorWorldX = world.x; cursorWorldY = world.y;
-        if (terrainMask != null) {
-            boolean isForest = terrainMask.isForestAt(world.x, world.y);
-            TerrainType elev = terrainMask.getElevationAt(world.x, world.y);
-            currentTerrain   = isForest ? TerrainType.FOREST : elev;
+        if (terrain != null) {
+            currentTerrain = terrain.isForest(world.x, world.y)
+                ? TerrainType.FOREST
+                : terrain.elevation(world.x, world.y);
         } else currentTerrain = TerrainType.NONE;
     }
 

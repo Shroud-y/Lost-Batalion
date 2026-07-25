@@ -2,7 +2,7 @@ package io.jababa.lost_batalion.visibility;
 
 import com.badlogic.gdx.utils.Array;
 import io.jababa.lost_batalion.Team;
-import io.jababa.lost_batalion.terrain.TerrainMaskManager;
+import io.jababa.lost_batalion.terrain.TerrainQuery;
 import io.jababa.lost_batalion.terrain.TerrainType;
 import io.jababa.lost_batalion.units.Unit;
 
@@ -19,11 +19,9 @@ import io.jababa.lost_batalion.units.Unit;
  *   target hides the target completely — you see a unit ON a hill, but not one
  *   BEHIND it. See {@link #isSightBlockedByElevation}.
  *
- * Two masks are used:
- *   forestMask    — forest tiles (isForestAt): movement/stealth/LOS-forest.
- *   elevationMask — topography tiles (getElevationAt): elevation tiers + rivers.
- * They are separate PNGs per scenario; the forest mask carries no elevation data
- * and vice-versa, so elevation queries MUST go to elevationMask.
+ * All terrain access goes through {@link TerrainQuery}, which knows which of the
+ * scenario's two masks holds what (rivers live in the forest mask, height tiers
+ * in the topography mask).
  *
  * Forest LOS (losForestMod):
  *   target in forest           → × FOREST_STEALTH_BONUS  (1.8)  — target is hidden
@@ -47,25 +45,13 @@ public class VisibilitySystem {
     /** World units between consecutive ray-march samples. */
     private static final float LOS_SAMPLE_STEP = 12f;
 
-    /**
-     * How far (in elevation tiers) terrain must rise above the sight line before
-     * it blocks vision. Terrain higher than the interpolated observer→target
-     * line by more than this margin occludes the target.
-     *
-     * With the integer tier heights below and margin 1.0:
-     *   HIGHLANDS(5) blocks sight across PLAINS(3)   [diff 2 > 1 → blocked]
-     *   PRE_HIGHLANDS(4) gentle rise across PLAINS   [diff 1, not > 1 → visible]
-     *   a unit standing ON a hill stays visible (peak is the line endpoint).
-     * Lower the margin to make gentler slopes occlude.
-     */
-    private static final float ELEVATION_BLOCK_MARGIN = 1.0f;
+    /** @see TerrainQuery#ELEVATION_BLOCK_MARGIN — single source of truth. */
+    private static final float ELEVATION_BLOCK_MARGIN = TerrainQuery.ELEVATION_BLOCK_MARGIN;
 
-    private final TerrainMaskManager forestMask;
-    private final TerrainMaskManager elevationMask;
+    private final TerrainQuery terrain;
 
-    public VisibilitySystem(TerrainMaskManager forestMask, TerrainMaskManager elevationMask) {
-        this.forestMask    = forestMask;
-        this.elevationMask = elevationMask;
+    public VisibilitySystem(TerrainQuery terrain) {
+        this.terrain = terrain;
     }
 
     /** Call once per frame before rendering. */
@@ -119,8 +105,7 @@ public class VisibilitySystem {
     private float sightMod(Unit observer) {
         float x = observer.position.x, y = observer.position.y;
 
-        float mod = (forestMask != null && forestMask.isForestAt(x, y))
-            ? FOREST_SIGHT_PENALTY : 1f;
+        float mod = isForest(x, y) ? FOREST_SIGHT_PENALTY : 1f;
 
         switch (elevationAt(x, y)) {
             case HIGHLANDS:     mod *= 1.30f; break;
@@ -140,11 +125,11 @@ public class VisibilitySystem {
      * observer's own forest position is handled solely by sightMod, not doubled.
      */
     private float losForestMod(Unit observer, Unit target) {
-        if (forestMask == null) return 1f;
+        if (terrain == null) return 1f;
 
         float tx = target.position.x, ty = target.position.y;
 
-        if (forestMask.isForestAt(tx, ty)) return FOREST_STEALTH_BONUS;
+        if (terrain.isForest(tx, ty)) return FOREST_STEALTH_BONUS;
 
         if (hasForestOnPath(observer.position.x, observer.position.y, tx, ty))
             return FOREST_LOS_BLOCK_MOD;
@@ -173,7 +158,7 @@ public class VisibilitySystem {
      * losForestMod via isForestAt).
      */
     private boolean hasForestOnPath(float x1, float y1, float x2, float y2) {
-        if (forestMask == null) return false;
+        if (terrain == null) return false;
 
         float dx   = x2 - x1;
         float dy   = y2 - y1;
@@ -183,7 +168,7 @@ public class VisibilitySystem {
 
         float stepT = LOS_SAMPLE_STEP / dist;
         for (float t = stepT; t < 1.0f; t += stepT) {
-            if (forestMask.isForestAt(x1 + dx * t, y1 + dy * t)) return true;
+            if (terrain.isForest(x1 + dx * t, y1 + dy * t)) return true;
         }
         return false;
     }
@@ -204,7 +189,7 @@ public class VisibilitySystem {
      * the target) so standing on a peak never self-occludes.
      */
     private boolean isSightBlockedByElevation(Unit observer, Unit target) {
-        if (elevationMask == null) return false;
+        if (terrain == null) return false;
 
         float x1 = observer.position.x, y1 = observer.position.y;
         float x2 = target.position.x,   y2 = target.position.y;
@@ -214,33 +199,22 @@ public class VisibilitySystem {
         float dist = (float) Math.sqrt(dx * dx + dy * dy);
         if (dist <= LOS_SAMPLE_STEP) return false;
 
-        float hObs = elevationHeight(elevationAt(x1, y1));
-        float hTgt = elevationHeight(elevationAt(x2, y2));
+        float hObs = terrain.height(x1, y1);
+        float hTgt = terrain.height(x2, y2);
         float ceiling = Math.max(hObs, hTgt) + ELEVATION_BLOCK_MARGIN;
 
         float stepT = LOS_SAMPLE_STEP / dist;
         for (float t = stepT; t < 1.0f; t += stepT) {
-            float groundH = elevationHeight(elevationAt(x1 + dx * t, y1 + dy * t));
-            if (groundH > ceiling) return true;
+            if (terrain.height(x1 + dx * t, y1 + dy * t) > ceiling) return true;
         }
         return false;
     }
 
-    /** Numeric height per elevation tier (used only for LOS occlusion math). */
-    private float elevationHeight(TerrainType t) {
-        switch (t) {
-            case RIVER:         return 0f;
-            case LOWLANDS:      return 1f;
-            case PRE_LOWLANDS:  return 2f;
-            case PLAINS:
-            case PLAINS_ALT:    return 3f;
-            case PRE_HIGHLANDS: return 4f;
-            case HIGHLANDS:     return 5f;
-            default:            return 3f;   // NONE/FOREST → plains-level baseline
-        }
+    private boolean isForest(float x, float y) {
+        return terrain != null && terrain.isForest(x, y);
     }
 
     private TerrainType elevationAt(float x, float y) {
-        return elevationMask != null ? elevationMask.getElevationAt(x, y) : TerrainType.NONE;
+        return terrain != null ? terrain.elevation(x, y) : TerrainType.NONE;
     }
 }
