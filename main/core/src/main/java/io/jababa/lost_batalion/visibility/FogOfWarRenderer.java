@@ -86,15 +86,16 @@ public class FogOfWarRenderer {
     /**
      * Sample spacing inside a block that might stop the ray. 1 world unit = 1 mask
      * pixel, so this is the finest the masks can resolve — hit points are exact.
+     * Shared with VisibilitySystem so the overlay resolves detail at exactly the
+     * same granularity as real detection.
      */
-    private static final float FINE_STEP         = 1f;
+    private static final float FINE_STEP          = TerrainQuery.LOS_FINE_STEP;
     /**
      * Forest within this distance of the cursor does not stop a ray. Without it,
      * placing the cursor in a forest tile would collapse the whole fan to a point.
-     * Mirrors VisibilitySystem.hasForestOnPath, which likewise skips the
-     * observer's own tile and lets sightMod handle standing in forest.
+     * Same constant VisibilitySystem uses to exclude the observer's own tile.
      */
-    private static final float ORIGIN_FOREST_SKIP = 12f;
+    private static final float ORIGIN_FOREST_SKIP = TerrainQuery.LOS_ORIGIN_FOREST_SKIP;
     /** Cursor movement (world units) that invalidates the cached fan. */
     private static final float OVERLAY_CACHE_EPS  = 2f;
 

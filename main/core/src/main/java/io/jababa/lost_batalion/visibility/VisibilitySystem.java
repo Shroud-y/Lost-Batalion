@@ -42,8 +42,6 @@ public class VisibilitySystem {
     private static final float FOREST_LOS_BLOCK_MOD  = 4.0f;   // forest on the LOS path
     private static final float MAX_EFFECTIVE_STEALTH  = 0.90f;
 
-    /** World units between consecutive ray-march samples. */
-    private static final float LOS_SAMPLE_STEP = 12f;
 
     /** @see TerrainQuery#ELEVATION_BLOCK_MARGIN — single source of truth. */
     private static final float ELEVATION_BLOCK_MARGIN = TerrainQuery.ELEVATION_BLOCK_MARGIN;
@@ -121,7 +119,7 @@ public class VisibilitySystem {
      * Forest concealment multiplier for stealthRating.
      * Checks whether the target is in forest, and — separately — whether any
      * forest lies on the path between the observer and the target.
-     * The path check starts one sample-step away from the observer so the
+     * The path check starts LOS_ORIGIN_FOREST_SKIP away from the observer so the
      * observer's own forest position is handled solely by sightMod, not doubled.
      */
     private float losForestMod(Unit observer, Unit target) {
@@ -149,28 +147,17 @@ public class VisibilitySystem {
     }
 
     /**
-     * Returns true if any sample point on the straight-line path from (x1,y1)
-     * to (x2,y2) falls inside forest terrain.
+     * Returns true if the straight-line path from (x1,y1) to (x2,y2) crosses
+     * forest.
      *
-     * Sampling starts one LOS_SAMPLE_STEP away from the origin so the origin's
-     * own terrain doesn't contribute (already handled by sightMod). Sampling
-     * stops before the destination (its terrain is checked separately by
-     * losForestMod via isForestAt).
+     * The first LOS_ORIGIN_FOREST_SKIP units are ignored so the observer's own
+     * tile doesn't contribute (that is sightMod's job). The destination itself is
+     * excluded too — losForestMod checks it separately via isForest.
      */
     private boolean hasForestOnPath(float x1, float y1, float x2, float y2) {
         if (terrain == null) return false;
-
-        float dx   = x2 - x1;
-        float dy   = y2 - y1;
-        float dist = (float) Math.sqrt(dx * dx + dy * dy);
-
-        if (dist <= LOS_SAMPLE_STEP) return false;
-
-        float stepT = LOS_SAMPLE_STEP / dist;
-        for (float t = stepT; t < 1.0f; t += stepT) {
-            if (terrain.isForest(x1 + dx * t, y1 + dy * t)) return true;
-        }
-        return false;
+        return terrain.hasForestOnSegment(x1, y1, x2, y2,
+                                          TerrainQuery.LOS_ORIGIN_FOREST_SKIP);
     }
 
     // ── Elevation line-of-sight ──────────────────────────────────────────────
@@ -194,20 +181,11 @@ public class VisibilitySystem {
         float x1 = observer.position.x, y1 = observer.position.y;
         float x2 = target.position.x,   y2 = target.position.y;
 
-        float dx   = x2 - x1;
-        float dy   = y2 - y1;
-        float dist = (float) Math.sqrt(dx * dx + dy * dy);
-        if (dist <= LOS_SAMPLE_STEP) return false;
-
         float hObs = terrain.height(x1, y1);
         float hTgt = terrain.height(x2, y2);
         float ceiling = Math.max(hObs, hTgt) + ELEVATION_BLOCK_MARGIN;
 
-        float stepT = LOS_SAMPLE_STEP / dist;
-        for (float t = stepT; t < 1.0f; t += stepT) {
-            if (terrain.height(x1 + dx * t, y1 + dy * t) > ceiling) return true;
-        }
-        return false;
+        return terrain.hasGroundAboveOnSegment(x1, y1, x2, y2, ceiling);
     }
 
     private boolean isForest(float x, float y) {
