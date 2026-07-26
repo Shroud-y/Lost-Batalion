@@ -23,6 +23,28 @@ public final class UIFactory {
 
     private static final String FONT_PATH = "fonts/main.ttf";
 
+    /**
+     * Набір символів, які треба згенерувати зі шрифту.
+     *
+     * <p>Задавати його ОБОВ'ЯЗКОВО. За замовчуванням FreeType бере лише
+     * {@code DEFAULT_CHARS} — латиницю з цифрами, — і будь-яка кирилиця стає
+     * порожнім квадратом навіть тоді, коли гліфи у файлі шрифту є.
+     *
+     * <p>Сюди входить і пунктуація, якою реально користується інтерфейс:
+     * трикрапка, тире, лапки, апостроф. Без них у текстах на кшталт
+     * «Очікування…» останній символ теж перетворюється на квадрат.
+     */
+    private static final String FONT_CHARS =
+        FreeTypeFontGenerator.DEFAULT_CHARS
+        + "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯ"
+        + "абвгґдеєжзиіїйклмнопрстуфхцчшщьюя"
+        + "ЁёЪъЫыЭэ"          // трапляються в чужих ніках
+        + "…—–«»„“”’№°×÷≈≤≥"
+        + "☰≡✕";              // піктограми кнопок HUD
+
+    /** Чи вже сказали в лог, що шрифт неповний. Раз на запуск, не раз на стиль. */
+    private static boolean fontCoverageReported;
+
     private static final Array<BitmapFont> createdFonts    = new Array<>();
     private static final Array<Texture>    createdTextures = new Array<>();
     public static final Color COLOR_ACCENT = new Color(0.80f, 0.60f, 0.20f, 1f);
@@ -277,6 +299,7 @@ public final class UIFactory {
         FreeTypeFontParameter p   = new FreeTypeFontParameter();
         p.size       = size * 2;
         p.color      = color;
+        p.characters = FONT_CHARS;
         p.minFilter  = TextureFilter.Linear;
         p.magFilter  = TextureFilter.Linear;
         p.genMipMaps = true;
@@ -284,7 +307,34 @@ public final class UIFactory {
         font.getData().setScale(0.5f);
         gen.dispose();
         createdFonts.add(font);
+
+        reportCoverageOnce(font);
         return font;
+    }
+
+    /**
+     * Один раз за запуск сказати в лог, яких гліфів шрифту бракує.
+     *
+     * <p>Порожній квадрат на екрані виглядає як помилка кодування, і на її
+     * пошук легко витратити пів дня — хоча причина проста: у файлі шрифту
+     * просто немає такої літери. Хай про це скаже лог, а не здогадка.
+     */
+    private static void reportCoverageOnce(BitmapFont font) {
+        if (fontCoverageReported) return;
+        fontCoverageReported = true;
+
+        StringBuilder missing = new StringBuilder();
+        for (int i = 0; i < FONT_CHARS.length(); i++) {
+            char c = FONT_CHARS.charAt(i);
+            if (Character.isWhitespace(c)) continue;
+            if (font.getData().getGlyph(c) == null) missing.append(c);
+        }
+        if (missing.length() == 0) return;
+
+        Gdx.app.error("UIFactory",
+            "Шрифт " + FONT_PATH + " не має " + missing.length()
+            + " потрібних гліфів — вони малюватимуться порожніми квадратами: "
+            + missing);
     }
 
     public static Slider.SliderStyle createSliderStyle() {

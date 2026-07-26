@@ -42,7 +42,10 @@ public class UnitRenderer {
             if (!u.isVisibleTo(viewer)) continue; // туман
 
             Texture tex = getTexture(u);
-            float size  = u.getSize();
+            // getSizePx(), а НЕ getSize(): друге повертає fixed-point long, і
+            // Java мовчки розширила б його у float — юніт розміром 10 малювався б
+            // розміром 655360 і закривав би собою всю карту.
+            float size  = u.getSizePx();
             float x     = u.renderX(alpha) - size / 2f;
             float y     = u.renderY(alpha) - size / 2f;
             batch.draw(tex, x, y, size, size);
@@ -80,7 +83,7 @@ public class UnitRenderer {
     // ── Приватні методи ───────────────────────────────────────────────────
 
     private void drawOutline(Unit u, float alpha) {
-        float size = u.getSize();
+        float size = u.getSizePx();
         float pad  = OUTLINE_PAD;
         float x    = u.renderX(alpha) - size / 2f - pad;
         float y    = u.renderY(alpha) - size / 2f - pad;
@@ -93,7 +96,7 @@ public class UnitRenderer {
     }
 
     private void drawHpBar(Unit u, float alpha) {
-        float size = u.getSize();
+        float size = u.getSizePx();
         float barH = size;
 
         float x = u.renderX(alpha) - size / 2f - BAR_LEFT - BAR_W;

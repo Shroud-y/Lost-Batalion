@@ -241,7 +241,8 @@ public class CombatManager {
             Unit u = all.get(i);
             if (u.team == viewer || !u.alive || !u.isVisibleTo(viewer)) continue;
             float dx = worldX - u.worldX(), dy = worldY - u.worldY();
-            if (dx * dx + dy * dy <= Fixed.toFloat(u.getHitRadius()) * Fixed.toFloat(u.getHitRadius()))
+            float r = Fixed.toFloat(u.hitRadiusFixed());
+            if (dx * dx + dy * dy <= r * r)
                 return u;
         }
         return null;

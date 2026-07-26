@@ -36,8 +36,8 @@ public class Infantry extends Unit {
         setPosition(rawX, rawY);
     }
 
-    @Override public long getSize()      { return INF_SIZE_FIXED; }
-    @Override public long getHitRadius() { return INF_HIT_RADIUS; }
+    @Override public long sizeFixed()      { return INF_SIZE_FIXED; }
+    @Override public long hitRadiusFixed() { return INF_HIT_RADIUS; }
 
     @Override public String getTexturePath() {
         return team == Team.PLAYER

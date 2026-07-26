@@ -234,7 +234,7 @@ public class UnitManager {
     }
 
     private void moveClamped(Unit u, long tx, long ty, long mapW, long mapH) {
-        long half = u.getSize() >> 1;
+        long half = u.sizeFixed() >> 1;
         u.moveTo(Fixed.clamp(tx, half, mapW - half),
                  Fixed.clamp(ty, half, mapH - half));
     }

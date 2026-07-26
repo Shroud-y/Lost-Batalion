@@ -284,14 +284,23 @@ public abstract class Unit {
     /** Частка здоров'я 0..1 — тільки для HP-бару. */
     public float hpRatio() { return maxHp <= 0 ? 0f : (float) ((double) hp / (double) maxHp); }
 
-    /** Розмір юніта у світових одиницях (Q47.16). */
-    public abstract long getSize();
+    /**
+     * Розмір юніта у світових одиницях (Q47.16).
+     *
+     * <p>Суфікс {@code Fixed} тут не з любові до довгих імен. Раніше метод
+     * звався {@code getSize()}, і рендер написав {@code float size = u.getSize()}
+     * — Java мовчки розширила {@code long} у {@code float}, юніт розміром 10
+     * почав малюватись розміром 655360 і закрив собою всю карту. Компілятор
+     * такого не ловить, тому ловить назва: {@code sizeFixed} у float-вираз
+     * рефлекторно не пишуть.
+     */
+    public abstract long sizeFixed();
 
     /** Радіус влучання (Q47.16). */
-    public long getHitRadius() { return getSize() >> 1; }
+    public long hitRadiusFixed() { return sizeFixed() >> 1; }
 
-    /** Розмір для рендеру. */
-    public float getSizePx() { return Fixed.toFloat(getSize()); }
+    /** Розмір у пікселях — єдине, що можна брати в рендер. */
+    public float getSizePx() { return Fixed.toFloat(sizeFixed()); }
 
     public abstract String getTexturePath();
 }

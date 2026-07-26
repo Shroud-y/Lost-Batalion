@@ -105,6 +105,6 @@ public class Artillery extends Unit {
         return Math.min(1f, aimTicks / (float) STRIKE_AIM_TICKS);
     }
 
-    @Override public long   getSize()        { return ART_SIZE_FIXED; }
+    @Override public long   sizeFixed()      { return ART_SIZE_FIXED; }
     @Override public String getTexturePath() { return "units/artillery.png"; }
 }
