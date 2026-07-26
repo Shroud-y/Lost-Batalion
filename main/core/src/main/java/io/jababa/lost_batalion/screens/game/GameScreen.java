@@ -28,6 +28,7 @@ import io.jababa.lost_batalion.net.commands.AttackCommand;
 import io.jababa.lost_batalion.net.commands.CurveFormationCommand;
 import io.jababa.lost_batalion.net.commands.MoveCommand;
 import io.jababa.lost_batalion.net.commands.MoveLineCommand;
+import io.jababa.lost_batalion.net.commands.PathMoveCommand;
 import io.jababa.lost_batalion.net.commands.StopCommand;
 import io.jababa.lost_batalion.net.kryo.LocalMatchTransport;
 import io.jababa.lost_batalion.screens.renderer.UnitRenderer;
@@ -56,6 +57,25 @@ public class GameScreen implements Screen {
      * блимає на кожен пакет, лише дратує.
      */
     private static final int WAIT_HINT_FRAMES = 12;
+
+    /** Підписи кнопки строю. Раніше тут були значки, яких немає в шрифті. */
+    private static final String FORMATION_OFF = "Стрій";
+    private static final String FORMATION_ON  = "Скасув.";
+
+    /**
+     * Вікно подвійного кліку ПКМ, мілісекунди.
+     *
+     * <p>Це локальний стан інтерфейсу, а не симуляції, тож системний час тут
+     * дозволений: на різних машинах він дасть різні результати, але й наслідок
+     * буде різним лише в тому, ЯКУ команду відправив гравець — а команда далі
+     * їде в мережу і виконується в усіх однаково.
+     */
+    private static final long DOUBLE_RMB_MILLIS = 350;
+    /** Наскільки далеко може зсунутись курсор між кліками, у пікселях екрана. */
+    private static final float DOUBLE_RMB_SLACK = 40f;
+
+    private long  lastRmbTime;
+    private float lastRmbX, lastRmbY;
 
     private boolean selecting;
     private float selStartX, selStartY, selCurX, selCurY;
@@ -267,7 +287,10 @@ public class GameScreen implements Screen {
 
     private void buildHud() {
         boolean isMobile = Gdx.app.getType() != Application.ApplicationType.Desktop;
-        TextButton burgerBtn = new TextButton("☰", UIFactory.createSmallButtonStyle());
+        // Словом, а не піктограмою: ані Cinzel, ані PT Serif не мають гліфів
+        // ☰ ≡ ✕, і кнопка малювалась порожнім квадратом. Тягнути заради трьох
+        // значків окремий шрифт із символами не варто.
+        TextButton burgerBtn = new TextButton("Меню", UIFactory.createSmallButtonStyle());
         burgerBtn.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) { togglePause(); }
         });
@@ -287,12 +310,12 @@ public class GameScreen implements Screen {
         hudStage.addActor(waitRow);
 
         if (isMobile) {
-            formationBtn = new TextButton("=", UIFactory.createSmallButtonStyle());
+            formationBtn = new TextButton(FORMATION_OFF, UIFactory.createSmallButtonStyle());
             formationBtn.setVisible(false);
             formationBtn.addListener(new ChangeListener() {
                 @Override public void changed(ChangeEvent e, Actor a) {
                     formationModeActive = !formationModeActive;
-                    formationBtn.setText(formationModeActive ? "X" : "|");
+                    formationBtn.setText(formationModeActive ? FORMATION_ON : FORMATION_OFF);
                     if (!formationModeActive) formationDrag.cancel();
                 }
             });
@@ -343,7 +366,7 @@ public class GameScreen implements Screen {
                 formationBtn.setVisible(unitManager.hasSelection());
                 if (!unitManager.hasSelection() && formationModeActive) {
                     formationModeActive = false;
-                    formationBtn.setText("≡");
+                    formationBtn.setText(FORMATION_OFF);
                     formationDrag.cancel();
                 }
             }
@@ -542,6 +565,23 @@ public class GameScreen implements Screen {
         moveMarker.show(worldX, worldY, MoveMarker.MarkerType.MOVE);
     }
 
+    /**
+     * Рух із пошуком найшвидшого шляху — подвійний ПКМ.
+     *
+     * <p>Перший клік уже відправив звичайний наказ, і скасувати його не можна:
+     * він пішов у мережу. Тому другий клік просто перекриває його маршрутом —
+     * юніти встигають зробити крок-два навпростець, а потім повертають на
+     * обхід. Альтернатива — притримувати КОЖЕН наказ на час очікування
+     * подвійного кліку — зробила б звичайне керування помітно млявішим заради
+     * рідкої дії.
+     */
+    public void issuePathMove(float worldX, float worldY) {
+        if (!unitManager.hasSelection()) return;
+        runner.issue(new PathMoveCommand(runner.getLocalPlayerId(), unitManager.selectedIds(),
+                                         Fixed.fromFloat(worldX), Fixed.fromFloat(worldY)));
+        moveMarker.show(worldX, worldY, MoveMarker.MarkerType.MOVE);
+    }
+
     public void issueMoveLine(float x1, float y1, float x2, float y2) {
         if (!unitManager.hasSelection()) return;
         runner.issue(new MoveLineCommand(runner.getLocalPlayerId(), unitManager.selectedIds(),
@@ -567,6 +607,19 @@ public class GameScreen implements Screen {
     public void issueStop() {
         if (!unitManager.hasSelection()) return;
         runner.issue(new StopCommand(runner.getLocalPlayerId(), unitManager.selectedIds()));
+    }
+
+    /**
+     * Чи це другий клік подвійного ПКМ.
+     *
+     * <p>Перевіряється і час, і зсув курсора: два кліки в різних кінцях екрана
+     * — це два різні накази, навіть якщо гравець зробив їх швидко.
+     */
+    private boolean isDoubleRmb(int screenX, int screenY) {
+        if (lastRmbTime == 0) return false;
+        if (System.currentTimeMillis() - lastRmbTime > DOUBLE_RMB_MILLIS) return false;
+        return Math.abs(screenX - lastRmbX) <= DOUBLE_RMB_SLACK
+            && Math.abs(screenY - lastRmbY) <= DOUBLE_RMB_SLACK;
     }
 
     /** Ворог під курсором очима локального гравця — для збирання наказу атаки. */
@@ -597,7 +650,7 @@ public class GameScreen implements Screen {
                           formationDrag.getEndX(),   formationDrag.getEndY());
         }
         formationModeActive = false;
-        if (formationBtn != null) formationBtn.setText("≡");
+        if (formationBtn != null) formationBtn.setText(FORMATION_OFF);
     }
 
     public void startSelecting(float wx, float wy) {
@@ -835,10 +888,20 @@ public class GameScreen implements Screen {
                         if (wasForm) {
                             issueMoveLine(formationDrag.getStartX(), formationDrag.getStartY(),
                                           formationDrag.getEndX(),   formationDrag.getEndY());
+                            lastRmbTime = 0;   // драг не рахується за клік
                         } else {
                             Unit enemy = enemyAt(w.x, w.y);
-                            if (enemy != null) issueAttack(enemy);
-                            else               issueMove(w.x, w.y);
+                            if (enemy != null) {
+                                issueAttack(enemy);
+                                lastRmbTime = 0;
+                            } else if (isDoubleRmb(sx, sy)) {
+                                issuePathMove(w.x, w.y);
+                                lastRmbTime = 0;   // третій клік не має рахуватись
+                            } else {
+                                issueMove(w.x, w.y);
+                                lastRmbTime = System.currentTimeMillis();
+                                lastRmbX = sx; lastRmbY = sy;
+                            }
                         }
                     }
                     return true;

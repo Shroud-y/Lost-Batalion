@@ -52,8 +52,14 @@ public class UnitManager {
 
     /** Відстань між сусідами у відділенні (Q47.16). */
     private static final long SQUAD_SPACING = Infantry.INF_SIZE_FIXED + Fixed.fromInt(8);
-    /** Відстань між юнітами в сітці наказу руху (Q47.16). */
-    private static final long GRID_SPACING  = Infantry.INF_SIZE_FIXED + Fixed.fromInt(6);
+    /**
+     * Відстань між юнітами в сітці наказу руху (Q47.16).
+     *
+     * <p>З появою колізій це вже не лише естетика: інтервал, менший за діаметр
+     * хітбокса, означає, що юніти штовхатимуться на місці призначення замість
+     * того, щоб спокійно стати.
+     */
+    private static final long GRID_SPACING  = Infantry.INF_SIZE_FIXED + Fixed.fromInt(12);
 
     public void spawnSquad(Team team, long centerX, long centerY) {
         addUnit(new Infantry(team, centerX - SQUAD_SPACING, centerY));
@@ -71,7 +77,7 @@ public class UnitManager {
      *
      * @param terrain спільний доступ до обох масок; null → місцевість ігнорується
      */
-    public void tick(TerrainQuery terrain) {
+    public void tick(TerrainQuery terrain, long mapW, long mapH) {
         for (int i = 0; i < allUnits.size; i++) {
             Unit u = allUnits.get(i);
             u.beginTick();
@@ -81,6 +87,11 @@ public class UnitManager {
                 : Fixed.ONE;
             u.tick(multiplier);
         }
+
+        // Розштовхування — ПІСЛЯ руху всіх: інакше юніт, який ходить раніше за
+        // сусіда, штовхав би того ще до того, як той зробив свій крок, і
+        // результат залежав би від порядку в масиві сильніше, ніж треба.
+        UnitSeparation.resolve(allUnits, mapW, mapH);
 
         // Мертві вилітають із виділення. Без нового Array на кожен тік —
         // при 40 тіках/с це були б 40 зайвих обʼєктів на секунду в сміття.

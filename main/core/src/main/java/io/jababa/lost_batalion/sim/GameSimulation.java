@@ -5,6 +5,8 @@ import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.math.DeterministicRandom;
 import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.net.commands.CommandContext;
+import io.jababa.lost_batalion.path.NavGrid;
+import io.jababa.lost_batalion.path.PathFinder;
 import io.jababa.lost_batalion.terrain.TerrainQuery;
 import io.jababa.lost_batalion.units.Artillery;
 import io.jababa.lost_batalion.units.CombatManager;
@@ -56,6 +58,20 @@ public class GameSimulation implements CommandContext {
      * безпечне і не смітить об'єктами 40 разів на секунду.
      */
     private final Array<Unit> commandScratch = new Array<>();
+
+    /**
+     * Сітка прохідності й пошук по ній.
+     *
+     * <p>Будуються один раз на матч із масок місцевості. У знімок стану не
+     * входять: маски — це ассети, однакові у всіх, тож сітка відтворюється, а
+     * не змінюється по ходу гри.
+     *
+     * <p>Створюються ліниво — при першому наказі з пошуком шляху. Побудова
+     * сітки обходить 32 400 клітинок; платити за це в кожному матчі, де ніхто
+     * жодного разу не двічі-клікнув, немає сенсу.
+     */
+    private NavGrid    navGrid;
+    private PathFinder pathFinder;
 
     public GameSimulation(TerrainQuery terrain, float mapWidth, float mapHeight, long rngSeed) {
         this.terrain   = terrain;
@@ -121,7 +137,7 @@ public class GameSimulation implements CommandContext {
     public void tick() {
         tickNumber++;
 
-        unitManager.tick(terrain);
+        unitManager.tick(terrain, mapW, mapH);
         combatManager.tick();
         visibilitySystem.update(unitManager.getAllUnits());
     }
@@ -177,6 +193,52 @@ public class GameSimulation implements CommandContext {
         combatManager.cancelAttackOrders(units);
         unitManager.moveUnitsTo(units, targetX, targetY, mapW, mapH);
     }
+
+    /**
+     * Рух із пошуком найшвидшого шляху — ОДИН маршрут на всю групу.
+     *
+     * <p>Шлях будується від центроїда виділення до цілі, і ним ідуть усі. Це і
+     * дешевше (один пошук замість десятка), і виглядає правильніше: група
+     * рухається разом, а не розпливається окремими стежками. Розходяться юніти
+     * лише в кінці — кожен у своє місце в строю, як і при звичайному наказі.
+     */
+    @Override
+    public void pathMoveUnits(int playerId, int[] unitIds, long targetX, long targetY) {
+        Array<Unit> units = own(playerId, unitIds);
+        if (units.size == 0) return;
+        combatManager.cancelAttackOrders(units);
+
+        ensureNavigation();
+
+        // Центроїд: цілочисельне середнє, тож однакове в усіх.
+        long cx = 0, cy = 0;
+        for (int i = 0; i < units.size; i++) { cx += units.get(i).x; cy += units.get(i).y; }
+        cx /= units.size; cy /= units.size;
+
+        long[] waypoints = pathFinder.findPath(cx, cy, targetX, targetY);
+
+        // Спершу розкладаємо цілі по строю звичайним чином — так місця в
+        // шерензі однакові з тими, що дає простий наказ.
+        unitManager.moveUnitsTo(units, targetX, targetY, mapW, mapH);
+
+        if (waypoints == null) return;   // ціль поруч або шлях не знайдено — йдемо прямо
+
+        // …а потім кажемо кожному пройти спільним маршрутом до свого місця.
+        for (int i = 0; i < units.size; i++) {
+            Unit u = units.get(i);
+            u.followPath(waypoints, u.getTargetX(), u.getTargetY());
+        }
+    }
+
+    private void ensureNavigation() {
+        if (navGrid == null) {
+            navGrid    = new NavGrid(terrain, mapWidth, mapHeight);
+            pathFinder = new PathFinder(navGrid);
+        }
+    }
+
+    /** Сітка прохідності матчу. Створюється при першій потребі. */
+    public NavGrid getNavGrid() { ensureNavigation(); return navGrid; }
 
     @Override
     public void moveUnitsToLine(int playerId, int[] unitIds, long x1, long y1, long x2, long y2) {

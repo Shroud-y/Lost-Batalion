@@ -34,13 +34,34 @@ public final class UIFactory {
      * трикрапка, тире, лапки, апостроф. Без них у текстах на кшталт
      * «Очікування…» останній символ теж перетворюється на квадрат.
      */
-    private static final String FONT_CHARS =
-        FreeTypeFontGenerator.DEFAULT_CHARS
-        + "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯ"
+    /**
+     * Символи, яких потребує САМЕ ця гра понад стандартний набір libGDX.
+     *
+     * <p>Перевірка покриття шрифту дивиться лише сюди. {@code DEFAULT_CHARS}
+     * від libGDX — це збірна солянка з латиницею всіх мов, і половини її немає
+     * в жодному нормальному шрифті. Скаржитись на неї означало б щоразу
+     * друкувати попередження про літери, яких інтерфейс ніколи не покаже.
+     */
+    private static final String REQUIRED_CHARS =
+          "АБВГҐДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯ"
         + "абвгґдеєжзиіїйклмнопрстуфхцчшщьюя"
         + "ЁёЪъЫыЭэ"          // трапляються в чужих ніках
-        + "…—–«»„“”’№°×÷≈≤≥"
-        + "☰≡✕";              // піктограми кнопок HUD
+        + "…—–«»„“”’№°×÷≈≤≥";
+    // Піктограм ☰ ≡ ✕ тут немає навмисно: жоден із текстових шрифтів, що
+    // пасують грі, їх не містить. Кнопки HUD підписані словами.
+
+    /**
+     * Набір символів, які треба згенерувати зі шрифту.
+     *
+     * <p>Задавати його ОБОВ'ЯЗКОВО. За замовчуванням FreeType бере лише
+     * {@code DEFAULT_CHARS} — латиницю з цифрами, — і будь-яка кирилиця стає
+     * порожнім квадратом навіть тоді, коли гліфи у файлі шрифту є.
+     */
+    private static final String FONT_CHARS =
+        FreeTypeFontGenerator.DEFAULT_CHARS + REQUIRED_CHARS;
+    // Піктограм ☰ ≡ ✕ тут навмисно НЕМАЄ: жоден із текстових шрифтів, що
+    // пасують грі, їх не містить, а генерувати завідомо порожні гліфи — це
+    // щоразу лякати лог фальшивим попередженням. Кнопки підписані словами.
 
     /** Чи вже сказали в лог, що шрифт неповний. Раз на запуск, не раз на стиль. */
     private static boolean fontCoverageReported;
@@ -324,8 +345,8 @@ public final class UIFactory {
         fontCoverageReported = true;
 
         StringBuilder missing = new StringBuilder();
-        for (int i = 0; i < FONT_CHARS.length(); i++) {
-            char c = FONT_CHARS.charAt(i);
+        for (int i = 0; i < REQUIRED_CHARS.length(); i++) {
+            char c = REQUIRED_CHARS.charAt(i);
             if (Character.isWhitespace(c)) continue;
             if (font.getData().getGlyph(c) == null) missing.append(c);
         }

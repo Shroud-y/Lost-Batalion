@@ -23,6 +23,16 @@ public interface CommandContext {
     /** Наказ рухатись у точку; юніти шикуються сіткою навколо неї. */
     void moveUnits(int playerId, int[] unitIds, long targetX, long targetY);
 
+    /**
+     * Те саме, але з пошуком найшвидшого шляху в обхід дорогої місцевості.
+     *
+     * <p>Шлях НЕ передається по мережі: кожен клієнт рахує його сам із тих
+     * самих масок тим самим детермінованим алгоритмом. Передавати маршрут
+     * означало б слати десятки координат замість двох на кожен наказ — і при
+     * цьому все одно довіряти, що відправник порахував його чесно.
+     */
+    void pathMoveUnits(int playerId, int[] unitIds, long targetX, long targetY);
+
     /** Наказ шикуватись у лінію між двома точками (ПКМ-драг). */
     void moveUnitsToLine(int playerId, int[] unitIds, long x1, long y1, long x2, long y2);
 

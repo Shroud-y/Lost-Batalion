@@ -95,6 +95,17 @@ public final class StateChecksum {
             positions = mix(positions, u.x);
             positions = mix(positions, u.y);
             positions = mix(positions, u.isMoving());
+            // Маршрут — теж стан: два клієнти з однаковими позиціями, але
+            // різними шляхами розійдуться вже наступного тіку, і чекати на це
+            // означало б ловити розбіжність із запізненням.
+            positions = mix(positions, u.getTargetX());
+            positions = mix(positions, u.getTargetY());
+            positions = mix(positions, u.getPathIndex());
+            long[] route = u.getPath();
+            positions = mix(positions, route == null ? -1 : route.length);
+            if (route != null) {
+                for (int p = 0; p < route.length; p++) positions = mix(positions, route[p]);
+            }
 
             health = mix(health, u.id);
             health = mix(health, u.hp);

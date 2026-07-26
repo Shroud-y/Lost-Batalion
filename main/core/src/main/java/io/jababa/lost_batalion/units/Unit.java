@@ -78,6 +78,20 @@ public abstract class Unit {
     private boolean moving = false;
 
     /**
+     * Маршрут: пари координат підряд (x0, y0, x1, y1, …) у Q47.16.
+     *
+     * <p>Порожній для звичайного наказу — там юніт іде прямо в точку. Маршрут
+     * з'являється лише за наказом пошуку шляху; юніт іде від точки до точки, і
+     * коли доходить останньої, {@link #moving} гасне як завжди.
+     *
+     * <p>Це СТАН гри: він входить у checksum і в знімок для ресинку. Інакше
+     * після ресинку юніти пішли б навпростець, а їхні супротивники бачили б
+     * обхід — і матч розійшовся б удруге.
+     */
+    private long[] path;
+    private int    pathIndex;
+
+    /**
      * Позиція на початок поточного тіку. Рендер малює юніта між нею і поточною,
      * інакше при 144 Гц рух виглядав би ривками по 25 мс.
      * До симуляції не належить і в checksum не входить.
@@ -120,7 +134,55 @@ public abstract class Unit {
         targetX = rawX;
         targetY = rawY;
         moving  = true;
+        path      = null;      // прямий наказ скасовує маршрут
+        pathIndex = 0;
     }
+
+    /**
+     * Іти заданим маршрутом, а в кінці стати в {@code finalX/finalY}.
+     *
+     * <p>Остання точка маршруту й особисте місце юніта в строю — різні речі:
+     * група йде спільним шляхом, але розходиться по місцях лише прийшовши.
+     *
+     * @param waypoints пари координат підряд; null або порожній → звичайний рух
+     */
+    public void followPath(long[] waypoints, long finalX, long finalY) {
+        if (waypoints == null || waypoints.length < 2) {
+            moveTo(finalX, finalY);
+            return;
+        }
+        path   = waypoints;
+        moving = true;
+        this.finalX = finalX;
+        this.finalY = finalY;
+
+        // Починаємо з найближчої до себе точки, а не з нульової. Маршрут
+        // будується від центроїда групи, тож для юніта з переднього краю
+        // перші точки лежать ПОЗАДУ — без цього він спершу йшов би назад.
+        pathIndex = nearestWaypoint(waypoints);
+        targetX = waypoints[pathIndex * 2];
+        targetY = waypoints[pathIndex * 2 + 1];
+    }
+
+    private int nearestWaypoint(long[] waypoints) {
+        int best = 0;
+        long bestDist = Long.MAX_VALUE;
+        for (int i = 0; i * 2 + 1 < waypoints.length; i++) {
+            long d = Fixed.dstSq(x, y, waypoints[i * 2], waypoints[i * 2 + 1]);
+            if (d < bestDist) { bestDist = d; best = i; }
+        }
+        return best;
+    }
+
+    /** Куди юніт стане, коли пройде весь маршрут. */
+    private long finalX, finalY;
+
+    public long getTargetX() { return targetX; }
+    public long getTargetY() { return targetY; }
+
+    public boolean hasPath()      { return path != null && pathIndex * 2 < path.length; }
+    public int     getPathIndex() { return pathIndex; }
+    public long[]  getPath()      { return path; }
 
     /** Запам'ятати, звідки юніт стартував цей тік. Викликається перед {@link #tick}. */
     public void beginTick() {
@@ -135,6 +197,18 @@ public abstract class Unit {
      * потрапляє — без порога юніт вічно смикався б навколо цілі.
      */
     private static final long ARRIVE_EPSILON = Fixed.fromInt(2);
+
+    /**
+     * Радіус, у якому проміжна точка маршруту вважається пройденою.
+     *
+     * <p>Набагато більший за {@link #ARRIVE_EPSILON} — і це не недбалість.
+     * Група йде СПІЛЬНИМ маршрутом, тобто всі націлені на ту саму точку. Із
+     * жорстким порогом у 2 одиниці вони збиваються в купу навколо неї,
+     * розштовхуються і ніхто не підходить достатньо близько, щоб перемкнутись
+     * на наступну точку: група застрягає на місці назавжди. Проміжну точку
+     * досить ПРОМИНУТИ, а не стати в неї.
+     */
+    private static final long WAYPOINT_RADIUS = Fixed.fromInt(14);
 
     /**
      * Один крок симуляції.
@@ -153,10 +227,14 @@ public abstract class Unit {
             long dx = targetX - x, dy = targetY - y;
             long dist = Fixed.length(dx, dy);
 
-            if (dist < ARRIVE_EPSILON) {
+            // Поки попереду ще є точки маршруту, повз них можна проходити;
+            // ставати точно треба лише в кінцеву.
+            long arriveAt = hasPath() ? WAYPOINT_RADIUS : ARRIVE_EPSILON;
+
+            if (dist < arriveAt) {
                 x = targetX;
                 y = targetY;
-                moving = false;
+                if (!advanceWaypoint()) moving = false;
             } else {
                 long step = Fixed.mul(speedPerTick, terrainSpeedMultiplier);
                 // Крок, що перестрибнув би ціль, обрізається до неї — інакше
@@ -164,13 +242,39 @@ public abstract class Unit {
                 if (step >= dist) {
                     x = targetX;
                     y = targetY;
-                    moving = false;
+                    if (!advanceWaypoint()) moving = false;
                 } else {
                     x += Fixed.mul(Fixed.div(dx, dist), step);
                     y += Fixed.mul(Fixed.div(dy, dist), step);
                 }
             }
         }
+    }
+
+    /**
+     * Перейти до наступної точки маршруту.
+     *
+     * @return true, якщо є куди йти далі; false — маршрут пройдено
+     */
+    private boolean advanceWaypoint() {
+        if (path == null) return false;
+
+        pathIndex++;
+        if (pathIndex * 2 + 1 < path.length) {
+            targetX = path[pathIndex * 2];
+            targetY = path[pathIndex * 2 + 1];
+            return true;
+        }
+
+        // Маршрут скінчився — лишається стати на своє місце в строю.
+        path      = null;
+        pathIndex = 0;
+        if (finalX != x || finalY != y) {
+            targetX = finalX;
+            targetY = finalY;
+            return true;
+        }
+        return false;
     }
 
     // ── Межа рендеру: єдине місце, де з'являється float ───────────────────
@@ -237,6 +341,8 @@ public abstract class Unit {
         targetX = x;
         targetY = y;
         moving  = false;
+        path      = null;
+        pathIndex = 0;
     }
 
     // ── Знімок стану (ресинк) ─────────────────────────────────────────────
@@ -258,6 +364,12 @@ public abstract class Unit {
         out.writeBoolean(alive);
         out.writeBoolean(visibleTo[0]);
         out.writeBoolean(visibleTo[1]);
+
+        out.writeLong(finalX);
+        out.writeLong(finalY);
+        out.writeInt(pathIndex);
+        out.writeInt(path == null ? 0 : path.length);
+        if (path != null) for (int i = 0; i < path.length; i++) out.writeLong(path[i]);
     }
 
     public void readSnapshot(java.io.DataInputStream in) throws java.io.IOException {
@@ -272,6 +384,17 @@ public abstract class Unit {
         alive            = in.readBoolean();
         visibleTo[0]     = in.readBoolean();
         visibleTo[1]     = in.readBoolean();
+
+        finalX    = in.readLong();
+        finalY    = in.readLong();
+        pathIndex = in.readInt();
+        int pathLength = in.readInt();
+        if (pathLength <= 0) {
+            path = null;
+        } else {
+            path = new long[pathLength];
+            for (int i = 0; i < pathLength; i++) path[i] = in.readLong();
+        }
 
         // Інтерполяція рендеру після ресинку стартує з нової позиції: інакше
         // юніт «прилетів» би через пів карти за один кадр.
