@@ -112,12 +112,29 @@ public final class NetworkProtocol {
 
     public static final byte DISCOVERY_REQUEST  = 0x01;
     public static final byte DISCOVERY_RESPONSE = 0x02;
+    /**
+     * Хост іде з мережі. Не обов'язковий: UDP не гарантує доставки, тож
+     * зникнення лоббі однаково підстраховане таймаутом за
+     * {@link NetConfig#LOBBY_STALE_MS}. Але коли пакет доходить — а в
+     * локальній мережі він доходить майже завжди — рядок зникає одразу,
+     * а не висить шість секунд, наче гра підвисла.
+     */
+    public static final byte DISCOVERY_BYE      = 0x03;
 
     /** Запит «хто тут є?»: магія + тип + версія протоколу. */
     public static byte[] buildDiscoveryRequest() {
         byte[] packet = new byte[DISCOVERY_MAGIC.length + 2];
         System.arraycopy(DISCOVERY_MAGIC, 0, packet, 0, DISCOVERY_MAGIC.length);
         packet[DISCOVERY_MAGIC.length]     = DISCOVERY_REQUEST;
+        packet[DISCOVERY_MAGIC.length + 1] = (byte) NetConfig.PROTOCOL_VERSION;
+        return packet;
+    }
+
+    /** Прощання хоста: магія + тип + версія. Тіла не потребує — досить адреси. */
+    public static byte[] buildDiscoveryBye() {
+        byte[] packet = new byte[DISCOVERY_MAGIC.length + 2];
+        System.arraycopy(DISCOVERY_MAGIC, 0, packet, 0, DISCOVERY_MAGIC.length);
+        packet[DISCOVERY_MAGIC.length]     = DISCOVERY_BYE;
         packet[DISCOVERY_MAGIC.length + 1] = (byte) NetConfig.PROTOCOL_VERSION;
         return packet;
     }

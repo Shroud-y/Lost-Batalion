@@ -150,10 +150,20 @@ public class LobbyScanner implements LobbyDirectory {
     }
 
     private void handleResponse(DatagramPacket packet) {
+        String address = packet.getAddress().getHostAddress();
+
+        // Хост попрощався — прибираємо одразу, не чекаючи таймауту. Без цього
+        // закрите лоббі висить у списку до LOBBY_STALE_MS і виглядає так, наче
+        // гра не помітила його зникнення.
+        if (NetworkProtocol.discoveryType(packet.getData(), packet.getLength())
+                == NetworkProtocol.DISCOVERY_BYE) {
+            synchronized (lock) { found.remove(address); }
+            return;
+        }
+
         LobbyInfo info = NetworkProtocol.readLobbyInfo(kryo, packet.getData(), packet.getLength());
         if (info == null) return;
 
-        String address = packet.getAddress().getHostAddress();
         synchronized (lock) {
             found.put(address, new DiscoveredLobby(info, address, System.currentTimeMillis()));
         }

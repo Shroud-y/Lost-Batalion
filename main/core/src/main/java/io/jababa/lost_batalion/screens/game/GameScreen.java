@@ -625,8 +625,15 @@ public class GameScreen implements Screen {
     @Override public void pause()  {}
     @Override public void resume() {}
 
+    /** Захист від подвійного звільнення: dispose може прийти і з перемикання
+     *  екрана, і з закриття гри. Другий раз має бути безпечним. */
+    private boolean disposed;
+
     @Override
     public void dispose() {
+        if (disposed) return;
+        disposed = true;
+
         if (runner          != null) runner.close();
         if (batch           != null) batch.dispose();
         if (uiBatch         != null) uiBatch.dispose();

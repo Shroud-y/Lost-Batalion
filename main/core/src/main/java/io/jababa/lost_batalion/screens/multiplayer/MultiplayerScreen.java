@@ -221,6 +221,7 @@ public class MultiplayerScreen extends BaseScreen {
     @Override
     public void render(float delta) {
         super.render(delta);
+        if (stage == null) return;   // екран уже звільнено
 
         if (scanLabel != null) {
             scanLabel.setText(directory.isScanning() ? "сканую…" : "");

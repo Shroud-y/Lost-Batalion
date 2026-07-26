@@ -80,7 +80,10 @@ public abstract class BaseScreen implements Screen {
 
     @Override
     public void dispose() {
-        if (stage != null) stage.dispose();
+        if (stage != null) {
+            stage.dispose();
+            stage = null;   // повторний dispose має бути безпечним
+        }
     }
 
 
