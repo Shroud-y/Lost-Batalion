@@ -30,20 +30,6 @@ public class ScenarioScreen extends BaseScreen {
         super(game);
     }
 
-    private Array<ScenarioCard> buildScenarios() {
-        Array<ScenarioCard> list = new Array<>();
-        list.add(new ScenarioCard(
-            "zhovti_vody",
-            "Zhovti Vody",
-            "Coming soon...",
-            "scenarios/Zhovty_Vodu.png",
-            "scenarios/Zhovty_Vodu_mask.png",        // маска лісу
-            "scenarios/Zhovty_Vodu_terrain_mask.png" // маска топографії
-        ));
-        return list;
-    }
-
-
     @Override
     protected void buildUI() {
         disposeOwnedTextures();
@@ -67,7 +53,7 @@ public class ScenarioScreen extends BaseScreen {
         Table grid = new Table();
         grid.top().left().pad(CARD_PAD);
 
-        for (ScenarioCard card : buildScenarios()) {
+        for (ScenarioCard card : ScenarioCatalog.all()) {
             grid.add(buildCardActor(card))
                 .size(CARD_WIDTH, CARD_HEIGHT)
                 .pad(CARD_PAD);

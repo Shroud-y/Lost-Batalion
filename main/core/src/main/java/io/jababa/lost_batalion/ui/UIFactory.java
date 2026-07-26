@@ -11,6 +11,7 @@ import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator;
 import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator.FreeTypeFontParameter;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
+import com.badlogic.gdx.scenes.scene2d.ui.TextField;
 import com.badlogic.gdx.scenes.scene2d.utils.Drawable;
 import com.badlogic.gdx.scenes.scene2d.utils.NinePatchDrawable;
 import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
@@ -88,6 +89,78 @@ public final class UIFactory {
         s.font = generateFont(15, c);
         s.fontColor = c;
         return s;
+    }
+
+    /** Звичайний текст у списках і формах. */
+    public static Label.LabelStyle createBodyStyle() {
+        Label.LabelStyle s = new Label.LabelStyle();
+        s.font = generateFont(17, COLOR_TEXT);
+        s.fontColor = COLOR_TEXT;
+        return s;
+    }
+
+    /** Другорядний текст: підписи, лічильники, статуси. */
+    public static Label.LabelStyle createHintStyle() {
+        Color c = new Color(0.62f, 0.60f, 0.54f, 1f);
+        Label.LabelStyle s = new Label.LabelStyle();
+        s.font = generateFont(14, c);
+        s.fontColor = c;
+        return s;
+    }
+
+    /** Помилки валідації та мережеві збої. */
+    public static Label.LabelStyle createErrorStyle() {
+        Color c = new Color(0.85f, 0.35f, 0.30f, 1f);
+        Label.LabelStyle s = new Label.LabelStyle();
+        s.font = generateFont(15, c);
+        s.fontColor = c;
+        return s;
+    }
+
+    /** Підсвічений текст: свій нік у списку, «готовий», акценти. */
+    public static Label.LabelStyle createAccentStyle() {
+        Label.LabelStyle s = new Label.LabelStyle();
+        s.font = generateFont(17, COLOR_ACCENT);
+        s.fontColor = COLOR_ACCENT;
+        return s;
+    }
+
+    public static TextField.TextFieldStyle createTextFieldStyle() {
+        TextField.TextFieldStyle s = new TextField.TextFieldStyle();
+        s.font      = generateFont(18, COLOR_TEXT);
+        s.fontColor = COLOR_TEXT;
+        s.messageFont      = generateFont(18, new Color(0.45f, 0.44f, 0.40f, 1f));
+        s.messageFontColor = new Color(0.45f, 0.44f, 0.40f, 1f);
+        s.background = roundedNinePatch(new Color(0.08f, 0.08f, 0.12f, 1f), COLOR_BORDER_IDLE);
+        s.focusedBackground = roundedNinePatch(new Color(0.08f, 0.08f, 0.12f, 1f), COLOR_ACCENT);
+
+        Drawable cursor = flatDrawable(COLOR_ACCENT);
+        cursor.setMinWidth(2f);
+        s.cursor = cursor;
+
+        Drawable selection = flatDrawable(new Color(0.30f, 0.28f, 0.45f, 1f));
+        s.selection = selection;
+        return s;
+    }
+
+    /**
+     * Напівпрозоре затемнення на весь екран під модальні вікна.
+     * Потрібне, щоб було видно: гра під ним не реагує, поки вікно відкрите.
+     */
+    public static Drawable createModalScrim() {
+        return flatDrawable(new Color(0f, 0f, 0f, 0.72f));
+    }
+
+    /** Фон панелі/картки. */
+    public static Drawable createPanelBackground() {
+        return roundedNinePatch(new Color(0.13f, 0.13f, 0.20f, 0.98f), COLOR_BORDER_IDLE);
+    }
+
+    /** Фон рядка у списку — трохи світліший за екран, щоб рядки читались. */
+    public static Drawable createRowBackground(boolean highlighted) {
+        return highlighted
+            ? roundedNinePatch(new Color(0.20f, 0.19f, 0.28f, 1f), COLOR_ACCENT)
+            : roundedNinePatch(new Color(0.11f, 0.11f, 0.17f, 1f), COLOR_BORDER_IDLE);
     }
 
     public static void disposeAll() {

@@ -4,7 +4,6 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
-import com.badlogic.gdx.math.MathUtils;
 
 /**
  * Ефект одного артилерійського пострілу.
@@ -13,8 +12,13 @@ import com.badlogic.gdx.math.MathUtils;
  *   INCOMING — снаряд летить (PNG: effects/shell.png).
  *              Обертається у напрямку польоту.
  *   EXPLODE  — анімація вибуху (spritesheet або окремі PNG).
- *              Урон вже нанесений ззовні (ArtilleryStrikeCommand) у момент переходу.
  *   DONE     — активність скинута.
+ *
+ * Клас СУТО ВІЗУАЛЬНИЙ. Політ і момент влучання рахує ArtilleryShell у
+ * симуляції, в тіках і у fixed-point; сюди позиція лише передається ззовні.
+ * Раніше політ інтегрувався тут за часом кадру, і оскільки саме перехід
+ * INCOMING→EXPLODE наносив AoE-урон, момент влучання залежав від FPS —
+ * тобто був десинхроном.
  *
  * ── Asset-файли ────────────────────────────────────────────────────────────
  *   effects/shell.png              — PNG снаряду (~16x8 px, вістрям вправо)
@@ -32,8 +36,6 @@ import com.badlogic.gdx.math.MathUtils;
 public class ArtilleryStrikeEffect {
 
     // ── Налаштування ─────────────────────────────────────────────────────
-    /** Швидкість снаряду (px/s). */
-    private static final float SHELL_SPEED    = 700f;
     /** Розмір спрайту снаряду на екрані. */
     private static final float SHELL_W        = 20f;
     private static final float SHELL_H        = 10f;
@@ -52,12 +54,9 @@ public class ArtilleryStrikeEffect {
     public  boolean active = false;
     private Phase   phase  = Phase.DONE;
 
-    private float fromX, fromY;
     private float targetX, targetY;
     private float curX, curY;
-    private float travelDist;
-    private float traveled;
-    private float angle; // кут польоту (радіани)
+    private float angleDeg; // кут польоту, градуси
 
     private float splashRadius;
 
@@ -67,10 +66,6 @@ public class ArtilleryStrikeEffect {
     private static Texture           shellTex       = null;
     private static ExplosionAnimation explosionAnim = null;
     private static boolean            assetsLoaded  = false;
-
-    // ── Колбек: нанести урон у момент імпакту ────────────────────────────
-    public interface ImpactCallback { void onImpact(float x, float y, float splashRadius); }
-    private ImpactCallback impactCallback;
 
     // ── Публічне API ─────────────────────────────────────────────────────
 
@@ -101,65 +96,44 @@ public class ArtilleryStrikeEffect {
         assetsLoaded = false;
     }
 
-    /**
-     * @param impactCb  колбек що буде викликаний точно в момент прильоту снаряду
-     */
-    public void show(float fromX, float fromY,
-                     float targetX, float targetY,
-                     float splashRadius,
-                     ImpactCallback impactCb) {
-        this.fromX          = fromX;
-        this.fromY          = fromY;
-        this.targetX        = targetX;
-        this.targetY        = targetY;
-        this.splashRadius   = splashRadius;
-        this.impactCallback = impactCb;
-        this.curX           = fromX;
-        this.curY           = fromY;
-
-        float dx = targetX - fromX;
-        float dy = targetY - fromY;
-        travelDist = (float) Math.sqrt(dx * dx + dy * dy);
-        traveled   = 0f;
-        angle      = MathUtils.atan2(dy, dx); // кут для обертання спрайту
+    /** Почати показ снаряду в польоті. Позицію далі задає симуляція. */
+    public void showIncoming(float fromX, float fromY,
+                             float targetX, float targetY,
+                             float splashRadius, float angleDeg) {
+        this.targetX      = targetX;
+        this.targetY      = targetY;
+        this.splashRadius = splashRadius;
+        this.curX         = fromX;
+        this.curY         = fromY;
+        this.angleDeg     = angleDeg;
 
         explodeTimer = 0f;
         phase        = Phase.INCOMING;
         active       = true;
     }
 
+    /** Позиція снаряду цього кадру — приходить із симуляції. */
+    public void setShellPosition(float x, float y) {
+        curX = x;
+        curY = y;
+    }
+
+    /** Снаряд влучив: далі показуємо вибух. Урон уже нанесла симуляція. */
+    public void explode() {
+        phase        = Phase.EXPLODE;
+        explodeTimer = 0f;
+        active       = true;
+    }
+
+    /** Тільки анімація вибуху — політ рахує симуляція, а не цей таймер. */
     public void update(float delta) {
-        if (!active) return;
+        if (!active || phase != Phase.EXPLODE) return;
 
-        switch (phase) {
-            case INCOMING: {
-                traveled += SHELL_SPEED * delta;
-                float t = travelDist > 0.01f ? Math.min(traveled / travelDist, 1f) : 1f;
-                curX = fromX + (targetX - fromX) * t;
-                curY = fromY + (targetY - fromY) * t;
-
-                if (t >= 1f) {
-                    // ── ІМПАКТ: нанести урон саме тут ───────────────────
-                    if (impactCallback != null) {
-                        impactCallback.onImpact(targetX, targetY, splashRadius);
-                    }
-                    phase        = Phase.EXPLODE;
-                    explodeTimer = 0f;
-                }
-                break;
-            }
-            case EXPLODE: {
-                explodeTimer += delta;
-                float duration = explosionAnim != null
-                    ? explosionAnim.getDuration()
-                    : 0f;
-                if (explosionAnim == null || explodeTimer >= duration) {
-                    phase  = Phase.DONE;
-                    active = false;
-                }
-                break;
-            }
-            default: break;
+        explodeTimer += delta;
+        float duration = explosionAnim != null ? explosionAnim.getDuration() : 0f;
+        if (explosionAnim == null || explodeTimer >= duration) {
+            phase  = Phase.DONE;
+            active = false;
         }
     }
 
@@ -188,7 +162,6 @@ public class ArtilleryStrikeEffect {
         // Малюємо з обертанням у напрямку польоту
         float originX = SHELL_W / 2f;
         float originY = SHELL_H / 2f;
-        float angleDeg = angle * MathUtils.radiansToDegrees;
 
         batch.draw(
             shellTex,

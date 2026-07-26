@@ -8,6 +8,12 @@ dependencies {
   api "com.badlogicgames.gdx:gdx:$gdxVersion"
   api "com.badlogicgames.gdx:gdx-freetype:$gdxVersion"
 
+  // Мережа: lockstep-мультиплеєр по TCP + UDP-дискаверi лоббі.
+  api("com.esotericsoftware:kryonet:$kryonetVersion") {
+    // KryoNet тягне повний jsonbeans/minlog-стек, з якого нам треба лише minlog.
+    exclude group: 'com.esotericsoftware', module: 'jsonbeans'
+  }
+
   if(enableGraalNative == 'true') {
     implementation "io.github.berstanio:gdx-svmhelper-annotations:$graalHelperVersion"
   }

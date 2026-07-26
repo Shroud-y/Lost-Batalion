@@ -11,20 +11,30 @@ import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.Stage;
+import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
-import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
 import io.jababa.lost_batalion.LostBatalion;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.commands.CurvedFormationCommand;
+import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.mobile.GameInputHandler;
 import io.jababa.lost_batalion.mobile.MobileTouchHandler;
+import io.jababa.lost_batalion.net.api.MatchTransport;
+import io.jababa.lost_batalion.net.commands.AttackCommand;
+import io.jababa.lost_batalion.net.commands.CurveFormationCommand;
+import io.jababa.lost_batalion.net.commands.MoveCommand;
+import io.jababa.lost_batalion.net.commands.MoveLineCommand;
+import io.jababa.lost_batalion.net.commands.StopCommand;
+import io.jababa.lost_batalion.net.kryo.LocalMatchTransport;
 import io.jababa.lost_batalion.screens.renderer.UnitRenderer;
 import io.jababa.lost_batalion.screens.scenario.ScenarioCard;
 import io.jababa.lost_batalion.screens.ui.SelectionPanel;
+import io.jababa.lost_batalion.sim.GameSimulation;
+import io.jababa.lost_batalion.sim.MatchRunner;
 import io.jababa.lost_batalion.terrain.TerrainMaskManager;
 import io.jababa.lost_batalion.terrain.TerrainQuery;
 import io.jababa.lost_batalion.terrain.TerrainType;
@@ -40,6 +50,13 @@ public class GameScreen implements Screen {
     private static final float ZOOM_MAX  = 2.0f;
     private static final float ZOOM_STEP = 0.1f;
 
+    /**
+     * Скільки кадрів очікування треба, щоб показати «чекаємо на гравця».
+     * Коротка затримка в мережі — норма і трапляється щосекунди; підказка, що
+     * блимає на кожен пакет, лише дратує.
+     */
+    private static final int WAIT_HINT_FRAMES = 12;
+
     private boolean selecting;
     private float selStartX, selStartY, selCurX, selCurY;
     private boolean clickConsumedByUnit = false;
@@ -48,6 +65,20 @@ public class GameScreen implements Screen {
     private PauseOverlay pauseOverlay;
     private Stage pauseStage;
     private Stage hudStage;
+    private Label waitLabel;
+
+    /** Модальні вікна матчу. Живуть на власній сцені поверх усього. */
+    private Stage modalStage;
+    private DesyncOverlay desyncOverlay;
+    private MatchNoticeOverlay noticeOverlay;
+
+    /**
+     * Скільки часу тримати на екрані повідомлення про вибуття суперника.
+     * Це не помилка й не тупик — матч триває, тож напис має згаснути сам.
+     */
+    private static final float DROP_NOTICE_SECONDS = 8f;
+    private float dropNoticeTimer;
+    private int   shownDropCount;
 
     private TerrainMaskManager terrainMask;
     private ForestTooltip forestTooltip;
@@ -58,17 +89,40 @@ public class GameScreen implements Screen {
     private int cursorScreenX, cursorScreenY;
     private float cursorWorldX, cursorWorldY;
 
+    /** Увесь ігровий стан. Рухається тільки тіками по 25 мс. */
+    private GameSimulation sim;
+
+    /**
+     * Lockstep-цикл: годинник, буфер команд і транспорт.
+     *
+     * <p>Ввід сюди не застосовується напряму — він перетворюється на команди,
+     * які виконуються через {@code INPUT_DELAY_TICKS} тіків одночасно в усіх.
+     * В одиночній грі шлях той самий, просто транспорт замкнений сам на себе.
+     */
+    private MatchRunner runner;
+
+    /** Частка тіку для інтерполяції рендеру, оновлюється щокадру. */
+    private float renderAlpha;
+
+    /** За кого грає ця копія гри. Визначає і виділення, і туман. */
+    private Team localTeam = Team.PLAYER;
+    /** Чи в матчі більше одного гравця — від цього залежить поведінка паузи. */
+    private boolean multiplayer;
+
+    // Зручні посилання на підсистеми sim — щоб обробники вводу не писали
+    // sim.getUnitManager() у кожному рядку.
     private UnitManager unitManager;
+    private CombatManager combatManager;
+    private VisibilitySystem visibilitySystem;
+
     private UnitRenderer unitRenderer;
     private MoveMarker moveMarker;
     private FormationDragHandler formationDrag;
-    private CombatManager combatManager;
 
     private SelectionPanel selectionPanel;
     private SpriteBatch panelBatch;
     private CurvedFormationCommand curvedFormation;
 
-    private VisibilitySystem visibilitySystem;
     private FogOfWarRenderer fogRenderer;
 
     private TextButton formationBtn;
@@ -76,6 +130,10 @@ public class GameScreen implements Screen {
 
     private final LostBatalion game;
     private final ScenarioCard scenario;
+    /** Seed ігрового RNG. У мультиплеєрі приходить від хоста в StartMatch. */
+    private final long rngSeed;
+    /** Канал матчу. null → одиночна гра, підставиться петля. */
+    private final MatchTransport transport;
 
     public OrthographicCamera camera;
     private SpriteBatch batch;
@@ -86,9 +144,26 @@ public class GameScreen implements Screen {
 
     private float mapWidth, mapHeight;
 
+    /** Одиночна гра: seed довільний, відтворюваність нікому не потрібна. */
     public GameScreen(LostBatalion game, ScenarioCard scenario) {
-        this.game     = game;
-        this.scenario = scenario;
+        this(game, scenario, System.nanoTime(), null);
+    }
+
+    public GameScreen(LostBatalion game, ScenarioCard scenario, long rngSeed) {
+        this(game, scenario, rngSeed, null);
+    }
+
+    /**
+     * @param transport канал матчу; null означає одиночну гру, і тоді
+     *                  підставляється {@link LocalMatchTransport} — той самий
+     *                  lockstep-цикл, тільки замкнений сам на себе
+     */
+    public GameScreen(LostBatalion game, ScenarioCard scenario, long rngSeed,
+                      MatchTransport transport) {
+        this.game      = game;
+        this.scenario  = scenario;
+        this.rngSeed   = rngSeed;
+        this.transport = transport;
     }
 
     @Override
@@ -107,38 +182,38 @@ public class GameScreen implements Screen {
         camera = new OrthographicCamera();
         gameViewport = new ExtendViewport(900, 580, camera);
         gameViewport.update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
-        camera.position.set(mapWidth / 2f, mapHeight / 2f, 0);
-        camera.update();
 
         String maskPath = buildMaskPath(scenario.maskPath, scenario.texturePath);
         terrainMask      = new TerrainMaskManager(maskPath);                    // ліс + річки
         terrainCombatMask= new TerrainMaskManager(scenario.terrainMaskPath);    // яруси висот
         terrain          = new TerrainQuery(terrainMask, terrainCombatMask);
 
-        unitManager     = new UnitManager();
+        sim = new GameSimulation(terrain, mapWidth, mapHeight, rngSeed);
+        sim.spawnInitialForces();
+
+        MatchTransport channel = transport != null ? transport : new LocalMatchTransport();
+        runner      = new MatchRunner(sim, channel);
+        localTeam   = Team.forPlayer(runner.getLocalPlayerId());
+        multiplayer = channel.getPlayerIds().length > 1;
+
+        unitManager      = sim.getUnitManager();
+        combatManager    = sim.getCombatManager();
+        visibilitySystem = sim.getVisibility();
+
+        // Камера дивиться на власну армію, а не в центр карти: у 1v1 сторони
+        // розведені по краях, і гість інакше стартував би дивлячись у поле.
+        camera.position.set(localTeam == Team.PLAYER ? mapWidth * 0.25f : mapWidth * 0.75f,
+                            mapHeight / 2f, 0);
+        camera.update();
+
         unitRenderer    = new UnitRenderer();
         moveMarker      = new MoveMarker();
         formationDrag   = new FormationDragHandler();
         curvedFormation = new CurvedFormationCommand();
 
-        // Спавн піхоти
-        unitManager.spawnPlayerSquad(mapWidth / 2f, mapHeight / 2f);
-        unitManager.spawnPlayerSquad(mapWidth / 2f, mapHeight / 1.7f);
-        unitManager.spawnPlayerSquad(mapWidth / 2f, mapHeight / 1.5f);
-
-        // Спавн артилерії гравця
-        unitManager.addUnit(new Artillery(Team.PLAYER, mapWidth / 2f - 80f, mapHeight / 2f - 60f));
-        unitManager.addUnit(new Artillery(Team.PLAYER, mapWidth / 2f + 80f, mapHeight / 2f - 60f));
-
-        // Ворог
-        unitManager.addUnit(new Infantry(Team.ENEMY, mapWidth * 0.75f, mapHeight * 0.6f));
-        unitManager.addUnit(new Infantry(Team.ENEMY, mapWidth * 0.75f + Infantry.INF_SIZE + 8f, mapHeight * 0.6f));
-        unitManager.addUnit(new Infantry(Team.ENEMY, mapWidth * 0.75f - Infantry.INF_SIZE - 8f, mapHeight * 0.6f));
-
-        combatManager    = new CombatManager(unitManager, terrain);
         selectionPanel   = new SelectionPanel();
-        visibilitySystem = new VisibilitySystem(terrain);
         fogRenderer      = new FogOfWarRenderer(mapWidth, mapHeight, terrain);
+        fogRenderer.setViewer(localTeam);
         forestTooltip    = new ForestTooltip("ui/forest_tooltip.png");
 
         selectionPanel.setListener(new SelectionPanel.CommandListener() {
@@ -158,8 +233,18 @@ public class GameScreen implements Screen {
         buildPauseOverlay();
         hudStage = new Stage(new ScreenViewport(), batch);
         buildHud();
+        modalStage = new Stage(new ScreenViewport(), batch);
 
         InputMultiplexer mux = new InputMultiplexer();
+        // Вікно десинхрону перехоплює ввід першим: поки стан розійшовся,
+        // командувати військами не можна взагалі.
+        mux.addProcessor(new InputAdapter() {
+            @Override public boolean touchDown(int x, int y, int p, int b) { if (!modalActive()) return false; return modalStage.touchDown(x,y,p,b); }
+            @Override public boolean touchUp  (int x, int y, int p, int b) { if (!modalActive()) return false; return modalStage.touchUp  (x,y,p,b); }
+            @Override public boolean touchDragged(int x, int y, int p)     { if (!modalActive()) return false; return modalStage.touchDragged(x,y,p); }
+            @Override public boolean mouseMoved  (int x, int y)             { if (!modalActive()) return false; return modalStage.mouseMoved(x,y); }
+            @Override public boolean keyDown(int k)                         { return modalActive(); }
+        });
         mux.addProcessor(new InputAdapter() {
             @Override public boolean touchDown(int x, int y, int p, int b) { if (!paused) return false; return pauseStage.touchDown(x,y,p,b); }
             @Override public boolean touchUp  (int x, int y, int p, int b) { if (!paused) return false; return pauseStage.touchUp  (x,y,p,b); }
@@ -182,7 +267,7 @@ public class GameScreen implements Screen {
 
     private void buildHud() {
         boolean isMobile = Gdx.app.getType() != Application.ApplicationType.Desktop;
-        TextButton burgerBtn = new TextButton("\u2630", UIFactory.createSmallButtonStyle());
+        TextButton burgerBtn = new TextButton("☰", UIFactory.createSmallButtonStyle());
         burgerBtn.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) { togglePause(); }
         });
@@ -190,6 +275,16 @@ public class GameScreen implements Screen {
         root.setFillParent(true);
         root.top().left().pad(12f);
         root.add(burgerBtn).size(54f, 48f);
+
+        // Підказка про очікування чужих наказів. У lockstep гра просто стоїть,
+        // і без пояснення це виглядає як зависання.
+        waitLabel = new Label("", UIFactory.createHintStyle());
+        waitLabel.setVisible(false);
+        Table waitRow = new Table();
+        waitRow.setFillParent(true);
+        waitRow.top().padTop(18f);
+        waitRow.add(waitLabel);
+        hudStage.addActor(waitRow);
 
         if (isMobile) {
             formationBtn = new TextButton("=", UIFactory.createSmallButtonStyle());
@@ -223,19 +318,32 @@ public class GameScreen implements Screen {
             }
 
             updateTerrainUnderCursor();
-            unitManager.update(delta, terrain);
+        }
+
+        // ── Симуляція ────────────────────────────────────────────────────
+        // У матчі вона не зупиняється навіть на паузі: суперник не зобов'язаний
+        // чекати, поки хтось читає меню. Пауза лишається паузою тільки в
+        // одиночній грі — там зупиняти нікого.
+        if (!paused || multiplayer) {
+            runner.update(delta);
+            renderAlpha = runner.getRenderAlpha();
+        }
+        if (dropNoticeTimer > 0f) dropNoticeTimer -= delta;
+        updateWaitHint();
+        updateModals();
+
+        if (!paused) {
+            // ── Візуал: за часом кадру, на стан гри не впливає ─────────────
             moveMarker.update(delta);
-            combatManager.update(delta);
+            combatManager.updateVisuals(delta);
             combatManager.updatePopups(delta);
             selectionPanel.update(delta, unitManager.getSelectedUnits());
-
-            visibilitySystem.update(unitManager.getAllUnits());
 
             if (formationBtn != null) {
                 formationBtn.setVisible(unitManager.hasSelection());
                 if (!unitManager.hasSelection() && formationModeActive) {
                     formationModeActive = false;
-                    formationBtn.setText("\u2261");
+                    formationBtn.setText("≡");
                     formationDrag.cancel();
                 }
             }
@@ -251,13 +359,13 @@ public class GameScreen implements Screen {
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
         if (mapTexture != null) batch.draw(mapTexture, 0, 0);
-        unitRenderer.drawSprites(batch, unitManager.getAllUnits());
+        unitRenderer.drawSprites(batch, unitManager.getAllUnits(), renderAlpha, localTeam);
         combatManager.drawPopups(batch);
         batch.end();
 
         shapes.setProjectionMatrix(camera.combined);
         unitRenderer.setProjectionMatrix(camera.combined);
-        unitRenderer.drawOverlays(unitManager.getAllUnits());
+        unitRenderer.drawOverlays(unitManager.getAllUnits(), renderAlpha, localTeam);
 
         combatManager.drawShots(shapes);
         formationDrag.draw(shapes);
@@ -306,9 +414,170 @@ public class GameScreen implements Screen {
             pauseStage.act(delta);
             pauseStage.draw();
         }
+
+        if (modalActive()) {
+            modalStage.getViewport().update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
+            modalStage.act(delta);
+            modalStage.draw();
+        }
+    }
+
+    private boolean modalActive() { return desyncOverlay != null || noticeOverlay != null; }
+
+    /**
+     * Показати або сховати вікно розсинхронізації.
+     *
+     * <p>Вікно зникає само, коли ресинк вдався: {@code MatchRunner} чистить
+     * книгу хешів, і десинхрону більше немає. Тому стан вікна не тримається
+     * окремим прапорцем — він завжди виводиться з цикла.
+     */
+    private void updateModals() {
+        // Втрачений власний канал важливіший за все: із нього виходу немає,
+        // і показувати поверх нього кнопку синхронізації було б знущанням.
+        if (runner.isDisconnected() || runner.isAlone()) {
+            showNoticeIfNeeded();
+            return;
+        }
+
+        boolean shouldShow = runner.isDesynced();
+
+        if (shouldShow && desyncOverlay == null) {
+            modalStage.clear();
+            desyncOverlay = new DesyncOverlay(modalStage, runner, new DesyncOverlay.Listener() {
+                @Override public void onResync() { runner.beginResync(); }
+                @Override public void onLeave()  { leaveToMenu(); }
+            });
+        } else if (!shouldShow && desyncOverlay != null) {
+            modalStage.clear();
+            desyncOverlay = null;
+        } else if (desyncOverlay != null) {
+            desyncOverlay.update(runner);
+        }
+    }
+
+    /**
+     * Вікно «далі не піде»: або обірвався власний канал, або в матчі не
+     * лишилось суперників.
+     *
+     * <p>Останнє в 1v1 означає, що опонент вийшов. Механічно симуляція готова
+     * крутитись і далі, але грати вже нема з ким, тож чесніше сказати це прямо,
+     * ніж лишити гравця ганяти війська по порожній карті.
+     */
+    private void showNoticeIfNeeded() {
+        if (noticeOverlay != null) return;
+
+        String title, text;
+        if (runner.isDisconnected()) {
+            String reason = runner.getDisconnectReason();
+            title = "Зв'язок втрачено";
+            text  = (reason == null ? "З'єднання обірвалось." : reason)
+                  + " Матч продовжити не можна.";
+        } else {
+            title = "Суперник вийшов";
+            text  = String.join(", ", runner.getDroppedNicks())
+                  + " більше не в матчі. Грати нема з ким.";
+        }
+
+        modalStage.clear();
+        desyncOverlay = null;
+        noticeOverlay = new MatchNoticeOverlay(modalStage, title, text, this::leaveToMenu);
+    }
+
+    private void leaveToMenu() {
+        game.setScreen(new io.jababa.lost_batalion.screens.scenario.ScenarioScreen(game));
+    }
+
+    private void updateWaitHint() {
+        if (waitLabel == null) return;
+
+        // Про десинхрон і про обрив говорять модальні вікна — дублювати їх
+        // підказкою під ними немає сенсу.
+        if (modalActive() || runner.isDesynced() || runner.isDisconnected()) {
+            waitLabel.setVisible(false);
+            return;
+        }
+
+        // Хтось вибув, але матч триває — сказати про це один раз і згаснути.
+        if (runner.getDroppedNicks().size() > shownDropCount) {
+            shownDropCount = runner.getDroppedNicks().size();
+            dropNoticeTimer = DROP_NOTICE_SECONDS;
+        }
+        if (dropNoticeTimer > 0f) {
+            waitLabel.setText(String.join(", ", runner.getDroppedNicks())
+                            + " вибув з матчу. Гра триває.");
+            waitLabel.setStyle(UIFactory.createErrorStyle());
+            waitLabel.setVisible(true);
+            return;
+        }
+
+        boolean show = runner.isWaiting() && runner.getWaitingFrames() > WAIT_HINT_FRAMES;
+        waitLabel.setVisible(show);
+        if (show) {
+            int who = runner.getWaitingForPlayer();
+            // Коротка затримка — це просто мережа; довга вже варта окремих слів.
+            boolean lagging = runner.isLagWarning();
+            waitLabel.setStyle(lagging ? UIFactory.createErrorStyle() : UIFactory.createHintStyle());
+            if (who < 0) {
+                waitLabel.setText("Очікування…");
+            } else if (lagging) {
+                waitLabel.setText("Гравець #" + who + " гальмує матч ("
+                                + (int) (runner.getWaitingMillis() / 1000f) + " с)…");
+            } else {
+                waitLabel.setText("Очікуємо наказів гравця #" + who + "…");
+            }
+        }
+    }
+
+    // ── Накази ────────────────────────────────────────────────────────────
+    //
+    // Ввід нічого не змінює одразу. Він складає команду, яка через
+    // INPUT_DELAY_TICKS тіків виконається однаково в усіх — і в автора теж.
+    // Маркери й мітки натомість показуються негайно: підтвердження кліку має
+    // бути миттєвим, інакше керування відчувається залиплим.
+
+    public void issueMove(float worldX, float worldY) {
+        if (!unitManager.hasSelection()) return;
+        runner.issue(new MoveCommand(runner.getLocalPlayerId(), unitManager.selectedIds(),
+                                     Fixed.fromFloat(worldX), Fixed.fromFloat(worldY)));
+        moveMarker.show(worldX, worldY, MoveMarker.MarkerType.MOVE);
+    }
+
+    public void issueMoveLine(float x1, float y1, float x2, float y2) {
+        if (!unitManager.hasSelection()) return;
+        runner.issue(new MoveLineCommand(runner.getLocalPlayerId(), unitManager.selectedIds(),
+                                         Fixed.fromFloat(x1), Fixed.fromFloat(y1),
+                                         Fixed.fromFloat(x2), Fixed.fromFloat(y2)));
+        moveMarker.show((x1 + x2) / 2f, (y1 + y2) / 2f, MoveMarker.MarkerType.MOVE);
+    }
+
+    public void issueCurve(long[] pointsXY) {
+        if (pointsXY == null || !unitManager.hasSelection()) return;
+        runner.issue(new CurveFormationCommand(runner.getLocalPlayerId(),
+                                               unitManager.selectedIds(), pointsXY));
+    }
+
+    public void issueAttack(Unit enemy) {
+        if (enemy == null || !unitManager.hasSelection()) return;
+        runner.issue(new AttackCommand(runner.getLocalPlayerId(), unitManager.selectedIds(),
+                                       enemy.id));
+        combatManager.showTargetPopup(enemy);
+        moveMarker.show(enemy.worldX(), enemy.worldY(), MoveMarker.MarkerType.ATTACK);
+    }
+
+    public void issueStop() {
+        if (!unitManager.hasSelection()) return;
+        runner.issue(new StopCommand(runner.getLocalPlayerId(), unitManager.selectedIds()));
+    }
+
+    /** Ворог під курсором очима локального гравця — для збирання наказу атаки. */
+    public Unit enemyAt(float worldX, float worldY) {
+        return combatManager.tryGetEnemyAtPoint(worldX, worldY, localTeam);
     }
 
     // ── Геттери ───────────────────────────────────────────────────────────
+    public GameSimulation getSimulation()              { return sim; }
+    public MatchRunner getRunner()                     { return runner; }
+    public Team getLocalTeam()                         { return localTeam; }
     public boolean isFormationModeActive()             { return formationModeActive; }
     public boolean isPaused()                          { return paused; }
     public boolean isSelecting()                       { return selecting; }
@@ -323,17 +592,12 @@ public class GameScreen implements Screen {
 
     public void applyFormationLine() {
         boolean applied = formationDrag.onRmbUp();
-        if (applied && unitManager.hasSelection()) {
-            unitManager.moveSelectedToLine(
-                formationDrag.getStartX(), formationDrag.getStartY(),
-                formationDrag.getEndX(),   formationDrag.getEndY(),
-                mapWidth, mapHeight);
-            float mx = (formationDrag.getStartX() + formationDrag.getEndX()) / 2f;
-            float my = (formationDrag.getStartY() + formationDrag.getEndY()) / 2f;
-            moveMarker.show(mx, my, MoveMarker.MarkerType.MOVE);
+        if (applied) {
+            issueMoveLine(formationDrag.getStartX(), formationDrag.getStartY(),
+                          formationDrag.getEndX(),   formationDrag.getEndY());
         }
         formationModeActive = false;
-        if (formationBtn != null) formationBtn.setText("\u2261");
+        if (formationBtn != null) formationBtn.setText("≡");
     }
 
     public void startSelecting(float wx, float wy) {
@@ -345,7 +609,7 @@ public class GameScreen implements Screen {
         if (!selecting) return;
         float rx = Math.min(selStartX, selCurX), ry = Math.min(selStartY, selCurY);
         float rw = Math.abs(selCurX - selStartX), rh = Math.abs(selCurY - selStartY);
-        if (rw > 6f && rh > 6f) unitManager.selectInRect(rx, ry, rw, rh, true);
+        if (rw > 6f && rh > 6f) unitManager.selectInRect(rx, ry, rw, rh, true, localTeam);
         selecting = false;
     }
     public void setClickConsumedByUnit(boolean v)  { clickConsumedByUnit = v; }
@@ -355,6 +619,7 @@ public class GameScreen implements Screen {
         gameViewport.update(w, h, false);
         hudStage.getViewport().update(w, h, true);
         pauseStage.getViewport().update(w, h, true);
+        if (modalStage != null) modalStage.getViewport().update(w, h, true);
     }
     @Override public void hide()   { game.setScreenInputProcessor(new InputAdapter()); }
     @Override public void pause()  {}
@@ -362,6 +627,7 @@ public class GameScreen implements Screen {
 
     @Override
     public void dispose() {
+        if (runner          != null) runner.close();
         if (batch           != null) batch.dispose();
         if (uiBatch         != null) uiBatch.dispose();
         if (panelBatch      != null) panelBatch.dispose();
@@ -369,6 +635,7 @@ public class GameScreen implements Screen {
         if (mapTexture      != null) mapTexture.dispose();
         if (pauseStage      != null) pauseStage.dispose();
         if (hudStage        != null) hudStage.dispose();
+        if (modalStage      != null) modalStage.dispose();
         if (terrainMask     != null) terrainMask.dispose();
         if (forestTooltip   != null) forestTooltip.dispose();
         if (unitRenderer    != null) unitRenderer.dispose();
@@ -435,7 +702,14 @@ public class GameScreen implements Screen {
     private void togglePause() {
         paused = !paused;
         pauseStage.clear();
-        if (paused) buildPauseOverlay();
+        if (paused) {
+            buildPauseOverlay();
+        } else if (!multiplayer) {
+            // Час, що минув на паузі, не має перетворитись на пачку тіків
+            // наздоганяння в перший же кадр після зняття паузи. У матчі
+            // симуляція не спинялась, тож скидати нічого.
+            runner.resetClock();
+        }
     }
 
     private void buildPauseOverlay() {
@@ -467,6 +741,8 @@ public class GameScreen implements Screen {
                     if (curvedFormation.isDrawing()) { curvedFormation.cancel(); selectionPanel.setFormationActive(false); awaitingDrawStart=false; return true; }
                     togglePause(); return true;
                 }
+                // Окремої клавіші «стій» тут навмисно немає: S уже зайнята рухом
+                // камери. issueStop() лишається для UI, який її викличе.
                 return false;
             }
 
@@ -499,7 +775,7 @@ public class GameScreen implements Screen {
                     if (curvedFormation.isDrawing()) return true;
                     if (unitManager == null) return false;
                     boolean shift = Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT)||Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT);
-                    clickConsumedByUnit = unitManager.trySelectAtPointAnyTeam(w.x, w.y, shift);
+                    clickConsumedByUnit = unitManager.trySelectAtPoint(w.x, w.y, shift, localTeam);
                     if (!clickConsumedByUnit) startSelecting(w.x, w.y);
                     return true;
                 }
@@ -531,7 +807,7 @@ public class GameScreen implements Screen {
 
                 if (btn == Input.Buttons.LEFT) {
                     if (curvedFormation.isDrawing()) {
-                        curvedFormation.finishAndApply(unitManager, mapWidth, mapHeight);
+                        issueCurve(curvedFormation.finishAndCollect());
                         selectionPanel.setFormationActive(false); awaitingDrawStart=false; return true;
                     }
                     if (!selecting) return false;
@@ -540,7 +816,7 @@ public class GameScreen implements Screen {
                     float rx=Math.min(selStartX,selCurX), ry=Math.min(selStartY,selCurY);
                     float rw=Math.abs(selCurX-selStartX), rh=Math.abs(selCurY-selStartY);
                     boolean shift=Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT)||Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT);
-                    if (rw>6f&&rh>6f) unitManager.selectInRect(rx,ry,rw,rh,shift);
+                    if (rw>6f&&rh>6f) unitManager.selectInRect(rx,ry,rw,rh,shift,localTeam);
                     else if (!clickConsumedByUnit&&!shift) unitManager.clearSelection();
                     selecting=false; return true;
                 }
@@ -550,24 +826,12 @@ public class GameScreen implements Screen {
                     boolean wasForm = formationDrag.onRmbUp();
                     if (unitManager.hasSelection()) {
                         if (wasForm) {
-                            combatManager.cancelAttackOrders(unitManager.getSelectedUnits());
-                            unitManager.moveSelectedToLine(
-                                formationDrag.getStartX(), formationDrag.getStartY(),
-                                formationDrag.getEndX(),   formationDrag.getEndY(),
-                                mapWidth, mapHeight);
-                            float mx=(formationDrag.getStartX()+formationDrag.getEndX())/2f;
-                            float my=(formationDrag.getStartY()+formationDrag.getEndY())/2f;
-                            moveMarker.show(mx,my,MoveMarker.MarkerType.MOVE);
+                            issueMoveLine(formationDrag.getStartX(), formationDrag.getStartY(),
+                                          formationDrag.getEndX(),   formationDrag.getEndY());
                         } else {
-                            Unit enemy = combatManager.tryGetEnemyAtPoint(w.x, w.y);
-                            if (enemy!=null) {
-                                combatManager.orderAttack(enemy);
-                                moveMarker.show(enemy.position.x,enemy.position.y,MoveMarker.MarkerType.ATTACK);
-                            } else {
-                                combatManager.cancelAttackOrders(unitManager.getSelectedUnits());
-                                unitManager.moveSelectedTo(w.x,w.y,mapWidth,mapHeight);
-                                moveMarker.show(w.x,w.y,MoveMarker.MarkerType.MOVE);
-                            }
+                            Unit enemy = enemyAt(w.x, w.y);
+                            if (enemy != null) issueAttack(enemy);
+                            else               issueMove(w.x, w.y);
                         }
                     }
                     return true;

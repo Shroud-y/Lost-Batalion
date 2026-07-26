@@ -4,7 +4,6 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.InputAdapter;
 import com.badlogic.gdx.math.Vector3;
 import io.jababa.lost_batalion.screens.game.GameScreen;
-import io.jababa.lost_batalion.screens.game.MoveMarker;
 import io.jababa.lost_batalion.units.Unit;
 
 public class MobileTouchHandler extends InputAdapter {
@@ -131,29 +130,16 @@ public class MobileTouchHandler extends InputAdapter {
             if (isDoubleTap && screen.getUnitManager().hasSelection()) {
                 lastTapTime = 0;
 
-                Unit enemy = screen.getCombatManager()
-                    .tryGetEnemyAtPoint(world.x, world.y);
-
-                if (enemy != null) {
-
-                    screen.getCombatManager().orderAttack(enemy);
-                    screen.getMoveMarker().show(
-                        enemy.position.x, enemy.position.y,
-                        MoveMarker.MarkerType.ATTACK);
-                } else {
-
-                    screen.getCombatManager().cancelAttackOrders(screen.getUnitManager().getSelectedUnits());
-
-                    screen.getUnitManager().moveSelectedTo(
-                        world.x, world.y,
-                        screen.getMapWidth(), screen.getMapHeight());
-                    screen.getMoveMarker().show(
-                        world.x, world.y, MoveMarker.MarkerType.MOVE);
-                }
+                // Наказ не застосовується тут — він іде в lockstep-цикл і
+                // виконається через input delay одночасно в усіх.
+                Unit enemy = screen.enemyAt(world.x, world.y);
+                if (enemy != null) screen.issueAttack(enemy);
+                else               screen.issueMove(world.x, world.y);
                 return true;
             }
 
-            screen.getUnitManager().trySelectAtPointAnyTeam(world.x, world.y, false);
+            screen.getUnitManager()
+                  .trySelectAtPoint(world.x, world.y, false, screen.getLocalTeam());
 
             lastTapTime = now;
             lastTapX = screenX;

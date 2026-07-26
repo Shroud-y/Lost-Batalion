@@ -1,0 +1,3488 @@
+╭─── Claude Code v2.1.220 ─────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting        │
+│                 Welcome back Wilol!                │ started                 │
+│                                                    │ Run /init to create a … │
+│                       ▐▛███▜▌                      │ ─────────────────────── │
+│                      ▝▜█████▛▘                     │ What's new              │
+│                        ▘▘ ▝▝                       │ Bug fixes and reliabil… │
+│ Opus 5 · Claude Pro · maximpaskoserhi@gmail.com's  │ Added Claude Opus 5 (`… │
+│ Organization                                       │ Added `sandbox.network… │
+│              C:\GitReps\Lost-Batalion              │ /release-notes for more │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+   Tackle your toughest work with Opus 5. Switch anytime with /model.
+
+❯ /model                                                                        
+  ⎿  Set model to Opus 5 and saved as your default for new sessions
+
+❯ \# Задача: реалізувати мультиплеєр для RTS-гри на libGDX (Java)               
+                                                                                
+                                                                                
+                                                                                
+  \## Контекст                                                                  
+                                                                                
+                                                                                
+                                                                                
+  Проєкт — мультиплеєрна RTS-стратегія на Java + libGDX. Потрібно реалізувати   
+  мережевий мультиплеєр з нуля на архітектурі \*\*lockstep (deterministic       
+  simulation)\*\*: по мережі передаються не стани об'єктів, а лише команди      
+  гравців, і кожен клієнт локально симулює гру на основі одного й того ж потоку 
+  команд.                                                                       
+                                                                                
+                                                                                
+                                                                                
+  Перед початком роботи проаналізуй поточну структуру проєкту (systems,         
+  entity/component модель, ігровий цикл, наявні класи юнитів/будівель) і        
+  адаптуй реалізацію під неї, а не створюй паралельну архітектуру.              
+                                                                                
+                                                                                
+                                                                                
+  \---                                                                          
+                                                                                
+                                                                                
+                                                                                
+  \## 1. Мережева архітектура: lockstep                                         
+                                                                                
+                                                                                
+                                                                                
+  \- Клієнти НЕ надсилають і не отримують стан об'єктів (позиції, HP тощо).     
+  Передаються лише \*\*команди гравців\*\* (наказ юниту рухатись/атакувати,     
+  побудова будівлі, дослідження, тощо).                                         
+                                                                                
+  \- Кожен клієнт виконує симуляцію на \*\*фіксованому timestep\*\*,            
+  синхронізованому з tick rate.                                                 
+                                                                                
+  \- \*\*Tick rate: 40 тіків/сек\*\* (25 мс на тік). Ігрова логіка оновлюється  
+  строго на фіксованих тіках, окремо від рендер-циклу (рендер може йти з        
+  будь-яким FPS, інтерполюючи між тіками).                                      
+                                                                                
+  \- \*\*Input delay (command delay): 2 тіки.\*\* Команда, віддана гравцем на   
+  тіку N, виконується на тіку N+2 в усіх клієнтів одночасно. Це дає час         
+  розіслати команду всім учасникам до моменту її виконання.                     
+                                                                                
+  \- Тік НЕ виконується, доки не отримано команди (або підтвердження            
+  відсутності команд) від УСІХ гравців за цей тік. Якщо гравець гальмує/лагає — 
+  весь матч чекає на нього (це нормальна поведінка lockstep, не баг).           
+                                                                                
+                                                                                
+                                                                                
+  \## 2. Детермінізм симуляції — критично важлива частина                       
+                                                                                
+                                                                                
+                                                                                
+  Реалізація мусить гарантувати, що при однакових вхідних командах усі клієнти  
+  отримують ідентичний результат симуляції. Обов'язково врахуй:                 
+                                                                                
+                                                                                
+                                                                                
+  \- \*\*Fixed-point математика замість float\*\*, якщо у проєкті вже           
+  використовуються float-обчислення для позицій/фізики юнитів — знайди ці місця 
+  і заміни на детерміновану ціловисельну арифметику зі шкалюванням              
+  (fixed-point), або чітко задокументуй ризик і запропонуй альтернативу.        
+                                                                                
+  \- \*\*Порядок ітерації колекцій\*\*: перевір усі місця, де ігровий стан      
+  ітерується (списки юнитів, черги команд тощо) — заборонити HashMap/HashSet    
+  для чогось, що впливає на симуляцію; використовувати впорядковані структури   
+  (масиви, LinkedHashMap, List з гарантованим порядком).                        
+                                                                                
+  \- \*\*Random\*\*: увесь ігровий RNG має бути один seeded-генератор,          
+  синхронізований по seed між усіма клієнтами на старті матчу, і крутитись      
+  строго синхронно (однакова кількість викликів на кожному клієнті на кожному   
+  тіці).                                                                        
+                                                                                
+  \- \*\*Pathfinding\*\*: результат пошуку шляху має бути ідентичним на всіх    
+  клієнтах при однакових вхідних даних — перевір, чи не використовуються там    
+  float/hash-порядок/системний час.                                             
+                                                                                
+  \- Не використовувати системний час (System.currentTimeMillis, нанотайм тощо) 
+  ВСЕРЕДИНІ ігрової симуляції — тільки номер тіку.                              
+                                                                                
+                                                                                
+                                                                                
+  \## 3. Виявлення десинхронізації                                              
+                                                                                
+                                                                                
+                                                                                
+  \- Кожні N тіків (визнач розумне значення, наприклад кожні 40-80 тіків, і     
+  зроби налаштовуваним) кожен клієнт рахує \*\*checksum/hash повного ігрового   
+  стану\*\* (позиції, HP, ресурси всіх гравців тощо).                           
+                                                                                
+  \- Хеші звіряються між клієнтами через хоста.                                 
+                                                                                
+  \- Якщо хеш якогось клієнта відрізняється від хоста — цей клієнт вважається   
+  десинхронізованим.                                                            
+                                                                                
+                                                                                
+                                                                                
+  \## 4. UI при десинхронізації                                                 
+                                                                                
+                                                                                
+                                                                                
+  \- Коли виявлено десинхрон, \*\*у всіх гравців\*\* посередині екрана          
+  з'являється модальне вікно з повідомленням, що гравець \[нік гравця]          
+  десинхронізований.                                                            
+                                                                                
+  \- У \*\*хоста\*\* в цьому вікні є додаткова кнопка "Пересинхронізувати гру"  
+  — по натисканню хост надсилає повний знімок поточного ігрового стану          
+  десинхронізованому клієнту (або всім клієнтам, залежно від того, що простіше  
+  реалізувати надійно), і гра продовжується.                                    
+                                                                                
+  \- Поки триває десинхрон, симуляція для всіх ставиться на паузу (гру не можна 
+  продовжувати з розбіжним станом).                                             
+                                                                                
+                                                                                
+                                                                                
+  \## 5. Мережевий протокол і бібліотека                                        
+                                                                                
+                                                                                
+                                                                                
+  \- Транспорт: \*\*TCP\*\*.                                                    
+                                                                                
+  \- Бібліотека: \*\*KryoNet\*\* (додати як залежність, налаштувати             
+  серіалізацію команд через штатний Kryo-механізм).                             
+                                                                                
+  \- Створи чіткий набір класів-повідомлень (команди гравця, підтвердження      
+  тіку, checksum-повідомлення, повідомлення десинхрону/ресинку,                 
+  лоббі-повідомлення тощо) — усі мають бути серіалізовані через Kryo.           
+                                                                                
+                                                                                
+                                                                                
+  \## 6. Модель хоста                                                           
+                                                                                
+                                                                                
+                                                                                
+  \- Один із гравців виступає \*\*хостом\*\*: приймає з'єднання від інших       
+  гравців, ретранслює команди між усіма учасниками, є джерелом істини при       
+  ресинку.                                                                      
+                                                                                
+  \- Хост одночасно є звичайним гравцем-клієнтом (грає в тому ж матчі).         
+                                                                                
+  \- Клієнти з'єднуються з хостом напряму по TCP (без окремого                  
+  dedicated-сервера).                                                           
+                                                                                
+                                                                                
+                                                                                
+  \## 7. Лоббі та matchmaking                                                   
+                                                                                
+                                                                                
+                                                                                
+  \- У головному меню гри — кнопка \*\*"Мультиплеєр"\*\*.                       
+                                                                                
+  \- У мультиплеєр-меню:                                                        
+                                                                                
+  &#x20; - Поле вводу \*\*ніка\*\* — обов'язкове. Без введеного ніка гравця не  
+  можна пустити далі (кнопки переходу в лоббі/список серверів                   
+  заблоковані/неактивні, поки нік порожній).                                    
+                                                                                
+  &#x20; - Список \*\*доступних лоббі/серверів\*\*, створених іншими гравцями   
+  (назва лоббі, нік хоста, кількість гравців/макс. гравців, статус).            
+                                                                                
+  &#x20; - Кнопка \*\*"Створити лоббі"\*\* — гравець стає хостом, задає назву   
+  лоббі (і за потреби інші параметри: макс. кількість гравців, карта).          
+                                                                                
+  \- У самому лоббі (і для хоста, і для гостей): список гравців, що приєднались 
+  (з їхніми ніками), кнопка "Готовий"/"Старт" (старт доступний хосту, коли всі  
+  готові).                                                                      
+                                                                                
+  \- Для виявлення лоббі в мережі — реалізуй найпростіший робочий варіант       
+  (наприклад широкомовний UDP-дискавері в локальній мережі, або якщо це не      
+  підходить під проєкт — список через центральний легкий relay/реєстр; обери    
+  варіант, який реалістично реалізувати в рамках поточної інфраструктури        
+  проєкту, і явно вкажи, який підхід обрано і чому).                            
+                                                                                
+                                                                                
+                                                                                
+  \## 8. Обробка дисконекту та лагу                                             
+                                                                                
+                                                                                
+                                                                                
+  \- Якщо гравець втрачає з'єднання/не надсилає команди — інші гравці бачать це 
+  через механізм десинхрону/очікування (тік не просувається, поки не отримано   
+  підтвердження від усіх).                                                      
+                                                                                
+  \- Додай окрему обробку саме \*\*розриву з'єднання\*\* (на відміну від        
+  тимчасового лагу): якщо гравець реально відключився, показати відповідне      
+  повідомлення (відрізняється від просто "десинхронізовано") та дати хосту      
+  опцію продовжити гру без нього / чекати на перепідключення (реалізуй на свій  
+  розсуд, головне — не залишати гру в мертвому очікуванні назавжди).            
+                                                                                
+                                                                                
+                                                                                
+  \## 9. Що зробити технічно (порядок реалізації)                               
+                                                                                
+                                                                                
+                                                                                
+  Розбий реалізацію на такі етапи і реалізовуй послідовно, показуючи мені       
+  результат після кожного великого етапу:                                       
+                                                                                
+                                                                                
+                                                                                
+  1\. Інтеграція KryoNet у проєкт, базові класи повідомлень.                    
+                                                                                
+  2\. UI мультиплеєр-меню: поле ніка, список лоббі, створення лоббі, екран      
+  очікування в лоббі.                                                           
+                                                                                
+  3\. Мережевий шар лоббі: хост приймає підключення, розсилає список гравців,   
+  старт матчу.                                                                  
+                                                                                
+  4\. Ігровий цикл: перехід з поточного (сингл-плеєрного) game loop на          
+  fixed-timestep tick-based цикл із tick rate 40.                               
+                                                                                
+  5\. Система команд: захоплення інпуту гравця → команда → буферизація з input  
+  delay 2 тіки → розсилка всім → синхронне виконання на потрібному тіку.        
+                                                                                
+  6\. Приведення симуляції до детермінізму (fixed-point, порядок ітерацій,      
+  seeded RNG, детермінований pathfinding) — знайди і виправ конкретні місця в   
+  поточному коді.                                                               
+                                                                                
+  7\. Checksum-система та виявлення десинхрону.                                 
+                                                                                
+  8\. UI десинхрону + кнопка ресинку в хоста + логіка передачі повного стану.   
+                                                                                
+  9\. Обробка дисконекту.                                                       
+                                                                                
+                                                                                
+                                                                                
+  \## 10. Важливо                                                               
+                                                                                
+                                                                                
+                                                                                
+  \- Перед тим як писати код, знайди і покажи мені, які саме класи в поточному  
+  проєкті відповідають за: ігровий цикл, обробку інпуту гравця, симуляцію       
+  юнитів/будівель, рендер — щоб інтеграція lockstep-циклу не ламала існуючу     
+  архітектуру без потреби.                                                      
+                                                                                
+  \- Якщо десь у поточному коді вже є float-обчислення, критичні для            
+  позицій/логіки юнитів, — явно виведи список цих місць окремо, до того як      
+  почнеш масову заміну на fixed-point, щоб я міг це підтвердити.                
+                                                                                
+  \- Питай, якщо якесь рішення з описаного вище неоднозначне відносно поточної  
+  структури проєкту, замість того щоб мовчки обирати варіант.                   
+
+  Searched for 1 pattern, read 10 files, listed 2 directories, ran 3 shell commands (ctrl+o to expand)
+
+● Проаналізував проєкт. Код ще не писав — спершу звіт + питання, як просив.
+
+  Мапа поточної архітектури
+
+  Ігровий цикл — окремого немає. Симуляція живе прямо в рендер-колбеку:
+  - LostBatalion.java:10 — Game, тримає Screen
+  - screens/game/GameScreen.java:213 — render(float delta); сим-виклики на
+  рядках 217-247 (unitManager.update, combatManager.update,
+  visibilitySystem.update) з variable delta. Тобто зараз симуляція прив'язана до
+  FPS. Це переробляється повністю під tick loop.
+
+  Інпут гравця:
+  - GameScreen.java:461-577 buildGameInput() — десктоп (ЛКМ вибір, ПКМ
+  рух/атака, рамка, зум)
+  - mobile/MobileTouchHandler.java, mobile/GameInputHandler.java — мобільний
+  - units/FormationDragHandler.java — ПКМ-драг лінії
+  - commands/CurvedFormationCommand.java — малювання кривої формації
+  - screens/ui/SelectionPanel.java — кнопки
+
+  Проблема: інпут мутує сим-стан напряму (unitManager.moveSelectedTo,
+  combatManager.orderAttack — GameScreen.java:553-569). Це і є точка, куди
+  вставляється черга команд.
+
+  Симуляція:
+  - units/Unit.java:43 update() — рух, таймери атаки
+  - units/UnitManager.java:25 update() — обхід юнітів + очищення мертвих
+  - units/CombatManager.java:97 update() — ордери, авто-атака, артилерія
+  - units/Artillery.java:58 — таймери релоаду
+  - visibility/VisibilitySystem.java:56 — visibleToPlayer
+  - terrain/TerrainQuery.java, TerrainCombatModifier, TerrainMovementModifier
+
+  Рендер: screens/renderer/UnitRenderer, visibility/FogOfWarRenderer,
+  screens/effects/*, screens/game/MoveMarker, SelectionPanel, стейджі.
+
+  Знахідки, критичні для детермінізму
+
+  1. Порядок колекцій — чисто. Скрізь com.badlogic.gdx.utils.Array
+  (впорядкований). Жодного HashMap/HashSet в сим-коді. Нічого міняти.
+
+  2. Pathfinding — його немає. Юніти йдуть по прямій (Unit.java:56-69). Це
+  добре: одна з найтиповіших причин десинку відсутня.
+
+  3. Системний час — тільки в інпуті. MobileTouchHandler.java:40,67,123 —
+  розрізнення тап/утримання. Не сим, лишаємо.
+
+  4. RNG — 2 місця:
+  - CombatManager.java:331-332 MathUtils.random — розкид артснаряда. Впливає на 
+  симуляцію (визначає точку AoE-урону). Обов'язково на seeded RNG.
+  - ShotEffect.java:23-24 — чисто візуал. Лишаємо на глобальному RNG.
+
+  5. Урон артилерії живе в рендер-ефекті. CombatManager.java:336-343:
+  ArtilleryStrikeEffect летить по власному таймеру і на прильоті викликає колбек
+  applyArtilleryAoe. Тобто сим-урон керується об'єктом візуальних ефектів. Це
+  треба розділити: політ снаряда як сим-сутність на тіках, вибух як візуал.
+
+  6. visibleToPlayer впливає на симуляцію. CombatManager.java:118 знімає ордер
+  атаки, якщо !o.target.visibleToPlayer. Зараз видимість рахується тільки з 
+  перспективи Team.PLAYER. У мультиплеєрі кожен клієнт рахує своє → миттєвий
+  десинк.
+
+  7. Team — двозначний. Team.java містить лише PLAYER/ENEMY. Захардкожено по
+  всьому коду (VisibilitySystem.java:59,64,70, CombatManager.java:157,
+  FogOfWarRenderer). Для мультиплеєра потрібна модель playerId + локальна
+  перспектива.
+
+  Float — повний список сим-критичних місць
+
+  Файл: units/Unit.java:11-31
+  Що: maxHp, hp, speed, damage, attackRange, attackCooldown, attackTimer, 
+  defense, sightRange, stealthRating, Vector2 position/target
+  ────────────────────────────────────────
+  Файл: units/Unit.java:56-69
+  Що: рух: dst(), ділення на дистанцію, speed*delta
+  ────────────────────────────────────────
+  Файл: units/Unit.java:81-105
+  Що: takeDamage, takeDamageWithTerrain (ділення на множник)
+  ────────────────────────────────────────
+  Файл: units/UnitManager.java:98-131
+  Що: moveSelectedTo (Math.ceil, Math.sqrt), moveSelectedToLine (Math.sqrt,
+  (float)i/(count-1))
+  ────────────────────────────────────────
+  Файл: units/CombatManager.java:173-206
+  Що: formLineAndOrder: Math.sqrt, нормалізація, сорт по float dot-product
+  ────────────────────────────────────────
+  Файл: units/CombatManager.java:208-239
+  Що: processOrder: dst, Math.sqrt, нормалізація
+  ────────────────────────────────────────
+  Файл: units/CombatManager.java:245-273
+  Що: tryAttack: dst, defMult *= 1.5f
+  ────────────────────────────────────────
+  Файл: units/CombatManager.java:275-285, 316-326
+  Що: пошук найближчого ворога — dst, порівняння float (важливий tie-break!)
+  ────────────────────────────────────────
+  Файл: units/CombatManager.java:293-347
+  Що: таймери прицілу артилерії, MathUtils.cos/sin (lookup-таблиця, не точна)
+  ────────────────────────────────────────
+  Файл: units/CombatManager.java:350-360
+  Що: AoE: dst, falloff = 1 - dist/radius
+  ────────────────────────────────────────
+  Файл: units/CombatManager.java:456-465
+  Що: AttackOrder.perpOffset — sqrt + скалярний добуток
+  ────────────────────────────────────────
+  Файл: units/Artillery.java:15-64
+  Що: усі константи + reloadTimer, aimTimer
+  ────────────────────────────────────────
+  Файл: units/Infantry.java
+  Що: константи статів
+  ────────────────────────────────────────
+  Файл: visibility/VisibilitySystem.java:66-197
+  Що: вся система: множники, Math.min, порівняння дистанцій, 1f/1.30f
+  ────────────────────────────────────────
+  Файл: terrain/TerrainQuery.java
+  Що: семплінг масок по float-координатах, height(), elevation()
+  ────────────────────────────────────────
+  Файл: terrain/TerrainCombatModifier.java
+  Що: множники захисту
+  ────────────────────────────────────────
+  Файл: terrain/TerrainMovementModifier.java
+  Що: множники швидкості
+
+  Окремо небезпечні: MathUtils.cos/sin/random — це інтерпольовані lookup-таблиці
+  libGDX, а не Math.*. Детерміновані в межах однакової версії gdx, але я б їх
+  замінив на власні у fixed-point шарі.
+
+  ---
+  Перед етапом 1 потрібні 4 рішення від тебе:
+
+● User answered Claude's questions:
+  ⎿  · Як робимо детерміновану математику? Це найдорожче рішення — воно зачіпає 
+     всі файли з таблиці вище. → Повний fixed-point (рекомендую)
+     · Модель гравців — зараз Team має тільки PLAYER/ENEMY, захардкожено по 
+     всьому коду. На що міняємо? → 2 гравці, 1v1 (рекомендую для старту)
+     · Видимість (visibleToPlayer) зараз впливає на симуляцію — 
+     CombatManager.java:118 знімає ордер атаки по невидимій цілі. У мультиплеєрі
+     це прямий десинк. Як розв'язуємо? → Рахувати видимість для ВСІХ гравців 
+     детерміновано (рекомендую)
+     · Як гравці знаходять лоббі одне одного? → UDP-broadcast LAN + ручне 
+     введення IP (рекомендую)
+
+● Рішення прийняті. Стартую Етап 1: KryoNet + класи повідомлень.
+
+  Спершу перевірю, чи резолвиться залежність:
+
+  Read 2 files, ran 1 shell command (ctrl+o to expand)
+
+● Update(main\gradle.properties)  ⎿  Added 1 line
+      21  android.enableR8.fullMode=false
+      22  enableGraalNative=false
+      23  gdxVersion=1.14.0
+      24 +kryonetVersion=2.22.0-RC1                                      
+      25  projectVersion=1.0.0
+
+● Update(main\core\build.gradle)
+  ⎿  Added 6 lines
+       8    api "com.badlogicgames.gdx:gdx:$gdxVersion"
+       9    api "com.badlogicgames.gdx:gdx-freetype:$gdxVersion"
+      10  
+      11 +  // Мережа: lockstep-мультиплеєр по TCP + UDP-дискаверi лоббі.
+      12 +  api("com.esotericsoftware:kryonet:$kryonetVersion") {        
+      13 +    // KryoNet тягне повний jsonbeans/minlog-стек, з якого нам 
+         +треба лише minlog.                                             
+      14 +    exclude group: 'com.esotericsoftware', module: 'jsonbeans' 
+      15 +  }                                                            
+      16 +                                                               
+      17    if(enableGraalNative == 'true') {
+      18      implementation "io.github.berstanio:gdx-svmhelper-annotatio
+          ns:$graalHelperVersion"
+      19    }
+
+  Listed 2 directories, ran 3 shell commands (ctrl+o to expand)
+
+● Резолвиться: kryonet 2.22.0-RC1 → kryo 2.24.0 + minlog + objenesis. Пишу
+  мережевий шар.
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\math\Fixed.java)
+  ⎿  Wrote 175 lines to
+     main\core\src\main\java\io\jababa\lost_batalion\math\Fixed.java
+       1 package io.jababa.lost_batalion.math;
+       3 /**
+       4  * Детермінована арифметика з фіксованою комою, формат Q47.16 у 
+       5  *
+       6  * <p>Уся симуляція рахується в цих числах, бо {@code float}/{@c
+       7  * побітово однакового результату між JVM, архітектурами (x86 vs
+          ARM) і платформами
+         ості: розбіжність
+       9  * в один ULP на одному тіку через 40 тіків на секунду перетворю
+      10  * що стоїть в іншому місці, і матч розсинхронізується.
+     … +204 lines (ctrl+o to expand)
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\math\Fixed.java)
+  ⎿  Added 11 lines, removed 5 lines
+       90      public static long sqrt(long raw) {
+       91          if (raw <= 0) return 0;
+       92  
+       93 -        // sqrt(x * 2^16) * 2^8 == sqrt(x) * 2^16, тож рахуємо
+          - isqrt від (raw << 16)                                        
+       94 -        // порозрядно, щоб не переповнити long на великих знач
+          -еннях.                                                        
+       95 -        long n = raw;                                         
+       93 +        // sqrt(R) у Q47.16 == isqrt(raw << 16), бо sqrt(raw/2
+          +^16)*2^16 == sqrt(raw*2^16).                                  
+       94 +        // Зсув безпечний, поки raw < 2^47 (тобто величина < 2
+          +^31) — для дистанцій на                                       
+       95 +        // мапі порядку 10^3 px це з великим запасом. Понад ці
+          +єю межею падаємо на                                           
+       96 +        // менш точну гілку, аби не втратити старші біти.     
+       97 +        if (raw < (1L << 47)) return isqrt(raw << SHIFT);     
+       98 +        return isqrt(raw) << (SHIFT / 2);                     
+       99 +    }                                                         
+      100 +                                                              
+      101 +    /** Цілочисельний квадратний корінь (floor). Лише цілі опе
+          +рації — побітово стабільний. */                               
+      102 +    private static long isqrt(long n) {                       
+      103          long result = 0;
+      104          // Стартовий біт: найстарший парний біт, не більший за
+            n.
+      105          long bit = 1L << 62;
+     ...
+      114              }
+      115              bit >>= 2;
+      116          }
+      110 -        // result == isqrt(raw) у сирих одиницях; перевести у 
+          -Q47.16: << (SHIFT/2)                                          
+      111 -        return result << (SHIFT / 2);                         
+      117 +        return result;                                        
+      118      }
+      119  
+      120      /** Довжина вектора (dx, dy). */
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\math\Fixed.java)
+  ⎿  Added 3 lines, removed 3 lines
+      161  
+      162      /** Індекс у таблиці для кута в Q47.16 радіанах. */
+      163      private static int sinIndex(long angleRaw) {
+      164 -        // angle / PI2 * SIN_COUNT, без переходу у float      
+      165 -        long turns = div(angleRaw, PI2);           // частка о
+          -берту, Q47.16                                                 
+      166 -        return (int) ((turns * SIN_COUNT) >> SHIFT) & SIN_MASK
+          -;                                                             
+      164 +        // (angle / 2π) * SIN_COUNT одним діленням, щоб не втр
+          +ачати точність двічі.                                         
+      165 +        // Від'ємні кути коректно обгортаються завдяки доповня
+          +льному коду + масці.                                          
+      166 +        return (int) ((angleRaw * SIN_COUNT) / PI2) & SIN_MASK
+          +;                                                             
+      167      }
+      168  
+      169      public static long sin(long angleRaw) { return SIN_TABLE[s
+           inIndex(angleRaw)]; }
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\math\DeterministicRandom
+       .java)
+  ⎿  Wrote 84 lines to main\core\src\main\java\io\jababa\lost_batalion\math
+     \DeterministicRandom.java
+       1 package io.jababa.lost_batalion.math;
+       2 
+       4  * Єдиний генератор випадкових чисел ігрової симуляції.
+       5  *
+       6  * <p>xorshift64* — цілочисельний, без {@code Math.random}, без 
+       7  * (той теж детермінований, але його стан не серіалізується зруч
+         но, а нам стан треба
+       8  * класти у знімок для ресинку і в checksum).
+      10  * <p>Правила користування, порушення будь-якого = гарантований 
+         десинхрон:
+     … +88 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\NetConfig.java)
+  ⎿  Wrote 89 lines to
+     main\core\src\main\java\io\jababa\lost_batalion\net\NetConfig.java
+       1 package io.jababa.lost_batalion.net;
+       2 
+       4  * Константи мережевого шару та lockstep-циклу.
+       5  *
+       6  * <p>Параметри, які мусять збігатися між клієнтами (tick rate, 
+       7  * інтервал checksum), передаються ще й у StartMatch — щоб клієн
+         т зі старішою
+       8  * збіркою відвалився одразу з внятною помилкою, а не десинхроні
+       9  */
+      10 public final class NetConfig {
+     … +103 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\commands\CommandCont
+       ext.java)
+  ⎿  Wrote 41 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     commands\CommandContext.java
+       1 package io.jababa.lost_batalion.net.commands;
+       3 /**
+       4  * Те, що команда може зробити з симуляцією.
+       5  *
+         ють ні про
+       7  * UnitManager, ні про CombatManager. Симуляція реалізує цей інт
+       8  * вона вирішує, як наказ перетворюється на зміну стану. Завдяки
+          цьому шар
+       9  * повідомлень не тягне за собою залежність від ігрових класів, 
+      10  * команди легко підмінити в тестах детермінізму.
+     … +45 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\commands\GameCommand
+       .java)
+  ⎿  Wrote 27 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     commands\GameCommand.java
+       1 package io.jababa.lost_batalion.net.commands;
+       3 /**
+       4  * Наказ гравця — єдине, що взагалі їздить по мережі під час мат
+         чу.
+       6  * <p>Позиції, HP і решта стану НЕ передаються ніколи: кожен клі
+         єнт отримує той
+         да мусить бути
+       8  * повністю самодостатньою — жодних посилань на локальні об'єкти
+         , лише id та
+      10  *
+     … +23 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\commands\MoveCommand
+       .java)
+  ⎿  Wrote 23 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     commands\MoveCommand.java
+       1 package io.jababa.lost_batalion.net.commands;
+       2 
+       3 /** ПКМ по землі: виділені юніти йдуть у точку і шикуються сітко
+         ю. */
+       4 public class MoveCommand extends GameCommand {
+       6     public int[] unitIds;
+       7     /** Ціль у fixed-point (Q47.16). */
+       8     public long targetX, targetY;
+       9 
+      10     public MoveCommand() {}
+     … +15 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\commands\MoveLineCom
+       mand.java)
+  ⎿  Wrote 23 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     commands\MoveLineCommand.java
+       1 package io.jababa.lost_batalion.net.commands;
+       2 
+       3 /** ПКМ-драг: виділені юніти шикуються в лінію між двома точками
+         . */
+       4 public class MoveLineCommand extends GameCommand {
+       6     public int[] unitIds;
+       7     /** Кінці лінії у fixed-point (Q47.16). */
+       8     public long x1, y1, x2, y2;
+       9 
+      10     public MoveLineCommand() {}
+     … +14 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\commands\CurveFormat
+       ionCommand.java)
+  ⎿  Wrote 29 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     commands\CurveFormationCommand.java
+       1 package io.jababa.lost_batalion.net.commands;
+       3 /**
+       4  * Намальована мишею крива формації.
+       5  *
+         урсора: кількість
+       7  * семплів у сирому сліді залежить від FPS малювальника, а FPS у
+       8  * якби прорідження робив кожен клієнт сам, юніти стали б у різн
+         і місця.
+       9  * Прорідження виконується один раз на боці автора, до відправки
+      10  */
+     … +24 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\commands\AttackComma
+       nd.java)
+  ⎿  Wrote 22 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     commands\AttackCommand.java
+       1 package io.jababa.lost_batalion.net.commands;
+       2 
+       3 /** ПКМ по ворожому юніту: виділені юніти отримують наказ атаки.
+       4 public class AttackCommand extends GameCommand {
+       5 
+       6     public int[] unitIds;
+       7     /** Стабільний id цілі. Якщо ціль загине до тіку виконання —
+       8     public int targetUnitId;
+       9 
+      10     public AttackCommand() {}
+     … +14 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\commands\StopCommand
+       .java)
+  ⎿  Wrote 19 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     commands\StopCommand.java
+       1 package io.jababa.lost_batalion.net.commands;
+       2 
+       3 /** Скасувати накази атаки й зупинити юнітів на місці. */
+       4 public class StopCommand extends GameCommand {
+       5 
+       6     public int[] unitIds;
+       7 
+       8     public StopCommand() {}
+       9 
+      10     public StopCommand(int playerId, int[] unitIds) {
+     … +9 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\LobbyStatus
+       .java)  ⎿  Wrote 11 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\LobbyStatus.java
+       1 package io.jababa.lost_batalion.net.messages;
+       2 
+       3 /** Стан лоббі, який бачать інші гравці у списку серверів. */
+       4 public enum LobbyStatus {
+       5     /** Чекає на гравців, приєднатись можна. */
+       7     /** Усі готові, хост запускає матч — нові підключення вже не
+          приймаються. */
+       8     STARTING,
+       9     /** Матч триває. */
+      10     IN_GAME
+     … +2 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\PlayerSlot.
+       java)
+  ⎿  Wrote 33 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\PlayerSlot.java
+       1 package io.jababa.lost_batalion.net.messages;
+       2 
+       3 /** Один гравець у лоббі/матчі. */
+       4 public class PlayerSlot {
+       5 
+       7      * Номер гравця, 0..MAX_PLAYERS-1. Хост завжди 0.
+       8      * Це той самий id, за яким симуляція визначає власника юніт
+         а, тож він не
+       9      * змінюється від приєднання до кінця матчу.
+      10      */
+     … +27 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\LobbyInfo.j
+       ava)
+  ⎿  Wrote 39 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\LobbyInfo.java
+       1 package io.jababa.lost_batalion.net.messages;
+       3 /**
+       4  * Візитівка лоббі — те, що хост відповідає на широкомовний UDP-
+         запит і що
+       6  *
+       7  * <p>Свідомо мала і без списку гравців: летить у одному UDP-дат
+       8  * можна фрагментувати, тож тримаємо її в межах сотні байтів. По
+         вний склад
+       9  * гравців приходить уже після TCP-підключення, у {@link LobbySt
+      10  *
+     … +36 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\LobbyState.
+       java)
+  ⎿  Wrote 38 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\LobbyState.java
+       1 package io.jababa.lost_batalion.net.messages;
+       2 
+       3 import java.util.ArrayList;
+       4 
+       5 /**
+       7  * (приєднання, вихід, зміна готовності) — клієнти лоббі стану н
+         е виводять самі,
+       8  * тільки відображають те, що прислав хост.
+       9  */
+      10 public class LobbyState {
+     … +31 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\JoinRequest
+       .java)
+  ⎿  Wrote 15 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\JoinRequest.java
+      1 package io.jababa.lost_batalion.net.messages;
+      2 
+      3 /** Клієнт → хост, перше повідомлення після встановлення TCP-з'єд
+        нання. */
+      4 public class JoinRequest {
+      5 
+      6     public int    protocolVersion;
+      7     public String nick;
+      8 
+      9     public JoinRequest() {}
+     … +6 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\JoinRespons
+       e.java)
+  ⎿  Wrote 30 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\JoinResponse.java
+       1 package io.jababa.lost_batalion.net.messages;
+       2 
+       3 /** Хост → клієнт у відповідь на {@link JoinRequest}. */
+       5 
+       6     public boolean accepted;
+       7     /** Причина відмови для показу гравцеві: лоббі повне, версія
+          протоколу, зайнятий нік. */
+       9     /** Присвоєний номер гравця; має сенс лише при accepted == t
+         rue. */
+      10     public int     assignedPlayerId;
+     … +24 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\SetReady.ja
+       va)
+  ⎿  Wrote 11 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\SetReady.java
+       1 package io.jababa.lost_batalion.net.messages;
+       2 
+       3 /** Клієнт → хост: натиснуто «Готовий». */
+       4 public class SetReady {
+       5 
+       6     public boolean ready;
+       7 
+       8     public SetReady() {}
+       9 
+      10     public SetReady(boolean ready) { this.ready = ready; }
+     … +1 line (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\LeaveLobby.
+       java)
+  ⎿  Wrote 11 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\LeaveLobby.java
+       1 package io.jababa.lost_batalion.net.messages;
+       2 
+       3 /**
+       5  *
+       6  * <p>Потрібне окремо від обриву TCP: свідомий вихід звільняє сл
+         от одразу,
+       7  * тоді як обрив тримає слот під перепідключення (див. RECONNECT
+       8  */
+       9 public class LeaveLobby {
+      10     public LeaveLobby() {}
+     … +3 lines (ctrl+o to expand)
+
+● Тепер ігрові повідомлення:
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\StartMatch.
+       java)
+  ⎿  Wrote 30 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\StartMatch.java
+       1 package io.jababa.lost_batalion.net.messages;
+       2 
+       4 
+       5 /**
+       6  * Хост → усім: матч починається.
+       8  * <p>Крім складу гравців несе всі параметри, від яких залежить 
+         симуляція. Вони
+       9  * дублюють константи NetConfig навмисно: якщо у когось збірка з
+      10  * або іншим input delay, це видно одразу при старті, а не через
+          десинхрон на
+     … +25 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\TickCommand
+       s.java)
+  ⎿  Wrote 34 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\TickCommands.java
+       1 package io.jababa.lost_batalion.net.messages;
+       2 
+       3 import io.jababa.lost_batalion.net.commands.GameCommand;
+       5 import java.util.ArrayList;
+       6 
+       7 /**
+       8  * Команди одного гравця на один конкретний тік — основне повідо
+       9  *
+      10  * <p>Надсилається КОЖЕН тік, навіть коли гравець нічого не роби
+         в: порожній
+     … +31 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\TickChecksu
+       m.java)
+  ⎿  Wrote 22 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\TickChecksum.java
+      1 package io.jababa.lost_batalion.net.messages;
+      2 
+      3 /**
+      4  * Клієнт → хост: хеш повного стану симуляції на контрольному тік
+        у.
+      6  * <p>Хост звіряє чужі хеші зі своїм. Свій хеш він рахує так само
+        , як усі —
+      7  * він рівноправний учасник симуляції, просто ще й арбітр.
+      8  */
+      9 public class TickChecksum {
+     … +13 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\DesyncAlert
+       .java)
+  ⎿  Wrote 31 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\DesyncAlert.java
+       1 package io.jababa.lost_batalion.net.messages;
+       2 
+       3 /**
+       5  *
+       6  * <p>Отримавши це, КОЖЕН клієнт (включно з тими, чий хеш збігся
+         ) ставить
+       7  * симуляцію на паузу і показує модальне вікно: продовжувати мат
+       8  * станом не можна, бо далі розбіжність лише зростатиме.
+       9  */
+      10 public class DesyncAlert {
+     … +26 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\ResyncSnaps
+       hot.java)
+  ⎿  Wrote 33 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\ResyncSnapshot.java
+       1 package io.jababa.lost_batalion.net.messages;
+       3 /**
+       4  * Хост → усім: повний знімок стану симуляції, з якого треба про
+         довжити.
+       6  * <p>Надсилається всім, а не лише десинхронізованому. Так прост
+         іше зробити
+         тані, і не треба
+       8  * доводити, що стан «здорових» клієнтів справді ідентичний хост
+         овому — після
+      10  *
+     … +31 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\ResyncAck.j
+       ava)
+  ⎿  Wrote 23 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\ResyncAck.java
+      1 package io.jababa.lost_batalion.net.messages;
+      2 
+      3 /**
+      4  * Клієнт → хост: знімок застосовано.
+      5  *
+      6  * <p>Хост знімає паузу лише коли підтвердили всі — інакше той, х
+        то ще
+      7  * розпаковує знімок, відстане і десинхрон повториться одразу ж.
+      8  */
+      9 public class ResyncAck {
+     … +14 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\ResumeMatch
+       .java)
+  ⎿  Wrote 16 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\ResumeMatch.java
+      1 package io.jababa.lost_batalion.net.messages;
+      2 
+      3 /**
+      4  * Хост → усім: пауза знята, симуляція продовжується з {@code res
+        umeTick + 1}.
+      6  * <p>Надсилається після успішного ресинку або після рішення хост
+        а продовжити
+      7  * без відключеного гравця.
+      8  */
+      9 public class ResumeMatch {
+     … +9 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\ConnectionE
+       ventKind.java)
+  ⎿  Wrote 19 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\ConnectionEventKind.java
+       1 package io.jababa.lost_batalion.net.messages;
+       3 /** Що саме сталося зі з'єднанням гравця. Визначає, який текст п
+         оказує UI. */
+       4 public enum ConnectionEventKind {
+       6      * Гравець підключений, але його команди не приходять вчасно
+          — матч чекає.
+         потрібне лише
+       8      * щоб решта розуміла, чому гра «підвисла», і бачила винуват
+         ця.
+      10     LAGGING,
+     … +14 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\PlayerConne
+       ctionEvent.java)
+  ⎿  Wrote 26 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\PlayerConnectionEvent.java
+       1 package io.jababa.lost_batalion.net.messages;
+       2 
+       3 /**
+       5  *
+       6  * <p>Свідомо окреме від {@link DesyncAlert}: «гравця вибило з м
+         ережі» і
+       7  * «гравець рахує гру інакше» — різні проблеми з різними кнопкам
+       8  * плутати їх в одному вікні означає плутати гравця.
+       9  */
+      10 public class PlayerConnectionEvent {
+     … +20 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\messages\PlayerDropp
+       ed.java)
+  ⎿  Wrote 32 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     messages\PlayerDropped.java
+       1 package io.jababa.lost_batalion.net.messages;
+       3 /**
+       4  * Хост → усім: з тіку {@code effectiveTick} гравця більше немає
+       5  *
+       6  * <p>Ключове тут — саме номер тіку. Викинути гравця «прямо зара
+       7  * якщо один клієнт перестане чекати його команд на тіку 500, а 
+         інший на 503,
+         в і
+       9  * розсинхронізуються. Тому хост призначає спільний тік, з якого
+      10  * одночасно перестають вимагати команди цього гравця.
+     … +28 lines (ctrl+o to expand)
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\NetworkProtocol.java
+       )  ⎿  Wrote 123 lines to main\core\src\main\java\io\jababa\lost_batalion\net
+     \NetworkProtocol.java
+       1 package io.jababa.lost_batalion.net;
+       2 
+       3 import com.esotericsoftware.kryo.Kryo;
+       4 import com.esotericsoftware.kryo.io.ByteBufferInput;
+       5 import com.esotericsoftware.kryo.io.ByteBufferOutput;
+       7 import io.jababa.lost_batalion.net.commands.AttackCommand;
+       8 import io.jababa.lost_batalion.net.commands.CurveFormationComman
+         d;
+       9 import io.jababa.lost_batalion.net.commands.MoveCommand;
+      10 import io.jababa.lost_batalion.net.commands.MoveLineCommand;
+     … +136 lines (ctrl+o to expand)
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Компілюється. Швидка перевірка математики й Kryo-серіалізації:
+
+  Made 1 scratchpad edit +149, ran 2 shell commands (ctrl+o to expand)
+
+● Етап 1 готовий — KryoNet + протокол
+
+  Що додано
+
+  Залежність (gradle.properties, core/build.gradle):
+  com.esotericsoftware:kryonet:2.22.0-RC1 → kryo 2.24.0 + minlog + objenesis
+  ServerDiscoveryHandler/ClientDiscoveryHandler у цій версії є — UDP-дискаверi з
+  п.7 буде на штатному механізмі KryoNet.
+
+  math/Fixed.java — Q47.16 в long. mul/div без переповнення, sqrt цілочисельним
+  Ньютоном (жодного Math.sqrt), sin/cos через таблицю на 4096 семплів,
+  квантовану у fixed-point при завантаженні класу — тому однакову на будь-якій
+  платформі.
+
+  math/DeterministicRandom.java — xorshift64*, seed від хоста, лічильник
+  викликів іде в checksum (ловить розбіжність у кількості смикань, а не лише в
+  значеннях).
+
+  net/NetConfig.java — tick rate 40, TICK_MILLIS=25, INPUT_DELAY_TICKS=2,
+  MAX_CATCHUP_TICKS=8, checksum-інтервал 40 тіків (налаштовуваний, розсилається
+  у StartMatch), таймінги дисконекту.
+
+  net/NetworkProtocol.java — реєстрація Kryo у фіксованому порядку +
+  серіалізація LobbyInfo в UDP-датаграму. Окремий Kryo для дискаверi (Kryo не
+  потокобезпечний, а сканування може йти паралельно з матчем). Виставлено
+  setRegistrationRequired(true).
+
+  Повідомлення (net/messages, 17 класів): лоббі — LobbyInfo, LobbyState, 
+  PlayerSlot, LobbyStatus, JoinRequest, JoinResponse, SetReady, LeaveLobby, 
+  StartMatch; матч — TickCommands, TickChecksum, DesyncAlert, ResyncSnapshot, 
+  ResyncAck, ResumeMatch; з'єднання — PlayerConnectionEvent, 
+  ConnectionEventKind, PlayerDropped.
+
+  Команди (net/commands): GameCommand + MoveCommand, MoveLineCommand, 
+  CurveFormationCommand, AttackCommand, StopCommand, усі координати — сирий
+  fixed-point.
+
+  Два рішення, які варто відзначити
+
+  CommandContext — команди не знають про UnitManager/CombatManager, вони
+  викликають інтерфейс, який реалізує симуляція. Інакше шар повідомлень тягнув
+  би за собою половину ігрових класів, і тест детермінізму неможливо було б
+  запустити без libGDX-контексту.
+
+  PlayerDropped.effectiveTick — викинути відвʼязаного гравця «зараз» не можна:
+  якщо один клієнт перестане чекати його команд на тіку 500, а інший на 503,
+  вони виконають різну кількість тіків. Хост призначає спільний тік, з якого всі
+  одночасно перестають вимагати команди.
+
+  Перевірено запуском
+
+  Прогнав смоук-тест (scratchpad/NetSmokeTest.java) — BUILD SUCCESSFUL, усі 27
+  перевірок пройшли:
+  - sqrt(2) = 1.4141998 (похибка 1.4e-5), dst(900,580) збігається з Math до 6e-6
+  - sin²+cos²=1 по всьому оберту, найгірша похибка 3.05e-5
+  - юніт зі швидкістю артилерії доходить із (0,0) у (500,300) за 517 тіків, без
+  накопичення зсуву
+  - 10000 викликів RNG з однаковим seed — ідентичні
+  - TickCommands із 5 різнотипними командами: round-trip, 62 байти на тік
+  - LobbyInfo — 53 байти, влазить в один UDP-датаграм
+
+  Дві речі на майбутнє
+
+  1. Kryo 2.24 смикає sun.misc.Unsafe::arrayBaseOffset, на Java 25 це warning
+  про майбутнє видалення. Зараз працює; коли зламається — переходити на форк
+  com.github.crykn:kryonet з Kryo 5.
+  2. gradle-wrapper.jar відсутній у репозиторії — його з'їдає *.jar у кореневому
+  .gitignore, тому ./gradlew не працює з чистого клону. Я збирав локально
+  встановленим Gradle 9.4.0. Виправляється рядком
+  !gradle/wrapper/gradle-wrapper.jar у .gitignore — скажи, чи чіпати.
+
+  Далі — Етап 2: UI мультиплеєр-меню (кнопка в головному меню, екран із ніком і
+  списком лоббі, екран лоббі). Кажи, якщо хочеш щось змінити в протоколі до
+  того, як на нього ляже UI.
+
+✻ Cooked for 17m 55s
+
+❯ продовжуй 2 етап, по його завершенню дай мені знати                           
+
+  Read 3 files (ctrl+o to expand)
+
+● Читаю стиль UI. Додаю потрібні стилі та каталог сценаріїв (хосту треба
+  вибирати карту в лоббі):
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\ui\UIFactory.java)
+  ⎿  Added 72 lines
+       90          return s;
+       91      }
+       92  
+       93 +    /** Звичайний текст у списках і формах. */                
+       94 +    public static Label.LabelStyle createBodyStyle() {        
+       95 +        Label.LabelStyle s = new Label.LabelStyle();          
+       96 +        s.font = generateFont(17, COLOR_TEXT);                
+       97 +        s.fontColor = COLOR_TEXT;                             
+       98 +        return s;                                             
+       99 +    }                                                         
+      100 +                                                              
+      101 +    /** Другорядний текст: підписи, лічильники, статуси. */   
+      102 +    public static Label.LabelStyle createHintStyle() {        
+      103 +        Color c = new Color(0.62f, 0.60f, 0.54f, 1f);         
+      104 +        Label.LabelStyle s = new Label.LabelStyle();          
+      105 +        s.font = generateFont(14, c);                         
+      106 +        s.fontColor = c;                                      
+      107 +        return s;                                             
+      108 +    }                                                         
+      109 +                                                              
+      110 +    /** Помилки валідації та мережеві збої. */                
+      111 +    public static Label.LabelStyle createErrorStyle() {       
+      112 +        Color c = new Color(0.85f, 0.35f, 0.30f, 1f);         
+      113 +        Label.LabelStyle s = new Label.LabelStyle();          
+      114 +        s.font = generateFont(15, c);                         
+      115 +        s.fontColor = c;                                      
+      116 +        return s;                                             
+      117 +    }                                                         
+      118 +                                                              
+      119 +    /** Підсвічений текст: свій нік у списку, «готовий», акцен
+          +ти. */                                                        
+      120 +    public static Label.LabelStyle createAccentStyle() {      
+      121 +        Label.LabelStyle s = new Label.LabelStyle();          
+      122 +        s.font = generateFont(17, COLOR_ACCENT);              
+      123 +        s.fontColor = COLOR_ACCENT;                           
+      124 +        return s;                                             
+      125 +    }                                                         
+      126 +                                                              
+      127 +    public static TextField.TextFieldStyle createTextFieldStyl
+          +e() {                                                         
+      128 +        TextField.TextFieldStyle s = new TextField.TextFieldSt
+          +yle();                                                        
+      129 +        s.font      = generateFont(18, COLOR_TEXT);           
+      130 +        s.fontColor = COLOR_TEXT;                             
+      131 +        s.messageFont      = generateFont(18, new Color(0.45f,
+          + 0.44f, 0.40f, 1f));                                          
+      132 +        s.messageFontColor = new Color(0.45f, 0.44f, 0.40f, 1f
+          +);                                                            
+      133 +        s.background = roundedNinePatch(new Color(0.08f, 0.08f
+          +, 0.12f, 1f), COLOR_BORDER_IDLE);                             
+      134 +        s.focusedBackground = roundedNinePatch(new Color(0.08f
+          +, 0.08f, 0.12f, 1f), COLOR_ACCENT);                           
+      135 +                                                              
+      136 +        Drawable cursor = flatDrawable(COLOR_ACCENT);         
+      137 +        cursor.setMinWidth(2f);                               
+      138 +        s.cursor = cursor;                                    
+      139 +                                                              
+      140 +        Drawable selection = flatDrawable(new Color(0.30f, 0.2
+          +8f, 0.45f, 1f));                                              
+      141 +        s.selection = selection;                              
+      142 +        return s;                                             
+      143 +    }                                                         
+      144 +                                                              
+      145 +    /**                                                       
+      146 +     * Напівпрозоре затемнення на весь екран під модальні вікн
+          +а.                                                            
+      147 +     * Потрібне, щоб було видно: гра під ним не реагує, поки в
+          +ікно відкрите.                                                
+      148 +     */                                                       
+      149 +    public static Drawable createModalScrim() {               
+      150 +        return flatDrawable(new Color(0f, 0f, 0f, 0.72f));    
+      151 +    }                                                         
+      152 +                                                              
+      153 +    /** Фон панелі/картки. */                                 
+      154 +    public static Drawable createPanelBackground() {          
+      155 +        return roundedNinePatch(new Color(0.13f, 0.13f, 0.20f,
+          + 0.98f), COLOR_BORDER_IDLE);                                  
+      156 +    }                                                         
+      157 +                                                              
+      158 +    /** Фон рядка у списку — трохи світліший за екран, щоб ряд
+          +ки читались. */                                               
+      159 +    public static Drawable createRowBackground(boolean highlig
+          +hted) {                                                       
+      160 +        return highlighted                                    
+      161 +            ? roundedNinePatch(new Color(0.20f, 0.19f, 0.28f, 
+          +1f), COLOR_ACCENT)                                            
+      162 +            : roundedNinePatch(new Color(0.11f, 0.11f, 0.17f, 
+          +1f), COLOR_BORDER_IDLE);                                      
+      163 +    }                                                         
+      164 +                                                              
+      165      public static void disposeAll() {
+      166          for (int i = 0; i < createdFonts.size;    i++) created
+           Fonts.get(i).dispose();
+      167          for (int i = 0; i < createdTextures.size; i++) created
+           Textures.get(i).dispose();
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\ui\UIFactory.java)
+  ⎿  Added 1 line
+      11  import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGener
+          ator.FreeTypeFontParameter;
+      12  import com.badlogic.gdx.scenes.scene2d.ui.Label;
+      13  import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
+      14 +import com.badlogic.gdx.scenes.scene2d.ui.TextField;           
+      15  import com.badlogic.gdx.scenes.scene2d.utils.Drawable;
+      16  import com.badlogic.gdx.scenes.scene2d.utils.NinePatchDrawable;
+      17  import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawa
+          ble;
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\screens\scenario\Scenari
+       oCatalog.java)
+  ⎿  Wrote 51 lines to main\core\src\main\java\io\jababa\lost_batalion\scre
+     ens\scenario\ScenarioCatalog.java
+       1 package io.jababa.lost_batalion.screens.scenario;
+       2 
+       4 
+       5 /**
+       6  * Єдиний перелік сценаріїв.
+       8  * <p>Винесений з {@link ScenarioScreen} тому, що карту тепер об
+         ирає не лише
+       9  * одиночна гра: хост задає її при створенні лоббі, а клієнт мус
+      10  * самий сценарій за id, який прийшов по мережі. Два незалежні с
+         писки в двох
+     … +50 lines (ctrl+o to expand)
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\scenario\Scenar
+        ioScreen.java)
+  ⎿  Removed 14 lines
+      30          super(game);
+      31      }
+      32  
+      33 -    private Array<ScenarioCard> buildScenarios() {             
+      34 -        Array<ScenarioCard> list = new Array<>();              
+      35 -        list.add(new ScenarioCard(                             
+      36 -            "zhovti_vody",                                     
+      37 -            "Zhovti Vody",                                     
+      38 -            "Coming soon...",                                  
+      39 -            "scenarios/Zhovty_Vodu.png",                       
+      40 -            "scenarios/Zhovty_Vodu_mask.png",        // маска л
+         -ісу                                                            
+      41 -            "scenarios/Zhovty_Vodu_terrain_mask.png" // маска т
+         -опографії                                                      
+      42 -        ));                                                    
+      43 -        return list;                                           
+      44 -    }                                                          
+      45 -                                                               
+      46 -                                                               
+      33      @Override
+      34      protected void buildUI() {
+      35          disposeOwnedTextures();
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\scenario\Scenar
+        ioScreen.java)
+  ⎿  Added 1 line, removed 1 line
+      53          Table grid = new Table();
+      54          grid.top().left().pad(CARD_PAD);
+      55  
+      56 -        for (ScenarioCard card : buildScenarios()) {           
+      56 +        for (ScenarioCard card : ScenarioCatalog.all()) {      
+      57              grid.add(buildCardActor(card))
+      58                  .size(CARD_WIDTH, CARD_HEIGHT)
+      59                  .pad(CARD_PAD);
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\LostBatalion.java)
+  ⎿  Added 4 lines
+      70  
+      71          public static boolean isFullscreen() { return getPrefs(
+          ).getBoolean("fullscreen", false); }
+      72          public static void setFullscreen(boolean val) { getPref
+          s().putBoolean("fullscreen", val).flush(); }
+      73 +                                                               
+      74 +        /** Нік для мультиплеєра. Запам'ятовується, щоб не ввод
+         +ити його щоразу. */                                            
+      75 +        public static String getNick() { return getPrefs().getS
+         +tring("nick", ""); }                                           
+      76 +        public static void setNick(String val) { getPrefs().put
+         +String("nick", val == null ? "" : val).flush(); }              
+      77      }
+      78  
+      79      @Override
+
+● Тепер контракти, на які спирається UI (реалізацію підключу на етапі 3):
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\api\DiscoveredLobby.
+       java)
+  ⎿  Wrote 44 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     api\DiscoveredLobby.java
+       1 package io.jababa.lost_batalion.net.api;
+       2 
+       3 import io.jababa.lost_batalion.net.messages.LobbyInfo;
+       5 /**
+       6  * Лоббі, знайдене в мережі, разом із тим, звідки воно прийшло.
+       7  *
+       8  * <p>Адреси немає в самому {@link LobbyInfo}, бо хост її не зна
+       9  * бачить свій локальний інтерфейс, а не той, за яким до нього д
+         остукались.
+      10  * Тому адресу підставляє приймач із конверта датаграми.
+     … +45 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\api\LobbyDirectory.j
+       ava)
+  ⎿  Wrote 31 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     api\LobbyDirectory.java
+       1 package io.jababa.lost_batalion.net.api;
+       2 
+       4 
+       5 /**
+       6  * Джерело списку доступних лоббі.
+       8  * <p>Винесено в інтерфейс, щоб спосіб пошуку можна було замінит
+         и, не чіпаючи
+       9  * екран: зараз це широкомовний UDP по локальній мережі, а якщо 
+      10  * центральний реєстр для гри через інтернет — міняється одна ре
+         алізація.
+     … +25 lines (ctrl+o to expand)
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\api\LobbySession.jav
+       a)
+  ⎿  Wrote 70 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     api\LobbySession.java
+       1 package io.jababa.lost_batalion.net.api;
+       2 
+       3 import io.jababa.lost_batalion.net.messages.LobbyState;
+       5 
+       6 /**
+       7  * Участь у конкретному лоббі — з боку хоста або гостя.
+       8  *
+         му, що
+      10  * {@link #startMatch()} і {@link #setScenario(String)} дозволен
+         і тільки хосту.
+     … +74 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\api\MultiplayerServi
+       ces.java)
+  ⎿  Wrote 162 lines to main\core\src\main\java\io\jababa\lost_batalion\net
+     \api\MultiplayerServices.java
+       1 package io.jababa.lost_batalion.net.api;
+       2 
+       3 import io.jababa.lost_batalion.net.NetConfig;
+       4 import io.jababa.lost_batalion.net.messages.LobbyState;
+       5 import io.jababa.lost_batalion.net.messages.LobbyStatus;
+       6 import io.jababa.lost_batalion.net.messages.PlayerSlot;
+       7 import io.jababa.lost_batalion.net.messages.StartMatch;
+       8 
+       9 import java.util.ArrayDeque;
+      10 import java.util.ArrayList;
+     … +180 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\screens\multiplayer\Mult
+       iplayerScreen.java)
+  ⎿  Wrote 334 lines to main\core\src\main\java\io\jababa\lost_batalion\scr
+     eens\multiplayer\MultiplayerScreen.java
+       1 package io.jababa.lost_batalion.screens.multiplayer;
+       2 
+       3 import com.badlogic.gdx.scenes.scene2d.Actor;
+       4 import com.badlogic.gdx.scenes.scene2d.ui.Label;
+       5 import com.badlogic.gdx.scenes.scene2d.ui.ScrollPane;
+       6 import com.badlogic.gdx.scenes.scene2d.ui.Table;
+       7 import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
+       8 import com.badlogic.gdx.scenes.scene2d.ui.TextField;
+       9 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
+      10 import io.jababa.lost_batalion.LostBatalion;
+     … +378 lines (ctrl+o to expand)
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\multiplayer\Mul
+        tiplayerScreen.java)
+  ⎿  Added 8 lines
+      53      private Label      messageLabel;
+      54      private Label      scanLabel;
+      55  
+      56 +    /**                                                        
+      57 +     * Стилі створюються раз на побудову сцени і перевикористов
+         +уються.                                                        
+      58 +     * UIFactory на кожен виклик генерує новий FreeType-шрифт і
+         +з текстурою —                                                  
+      59 +     * робити це на кожне натискання клавіші в полі ніка не мож
+         +на.                                                            
+      60 +     */                                                        
+      61 +    private Label.LabelStyle hintStyle;                        
+      62 +    private Label.LabelStyle errorStyle;                       
+      63 +                                                               
+      64      /** Підпис поточного списку — щоб не перебудовувати рядки щ
+          окадру. */
+      65      private String renderedListSignature = "";
+      66  
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\multiplayer\Mul
+        tiplayerScreen.java)
+  ⎿  Added 2 lines
+      90      @Override
+      91      protected void buildUI() {
+      92          renderedListSignature = "";
+      93 +        hintStyle  = UIFactory.createHintStyle();              
+      94 +        errorStyle = UIFactory.createErrorStyle();             
+      95  
+      96          Table root = new Table();
+      97          root.setFillParent(true);
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\multiplayer\Mul
+        tiplayerScreen.java)
+  ⎿  Added 1 line, removed 2 lines
+      100          root.add(buildTopBar()).expandX().fillX().padBottom(6f
+           ).row();
+      101          root.add(buildNickRow()).expandX().fillX().padBottom(4
+           f).row();
+      102  
+      103 -        messageLabel = new Label(message,                     
+      104 -            messageIsError ? UIFactory.createErrorStyle() : UI
+          -Factory.createHintStyle());                                   
+      103 +        messageLabel = new Label(message, messageIsError ? err
+          +orStyle : hintStyle);                                         
+      104          root.add(messageLabel).expandX().left().padLeft(6f).pa
+           dBottom(8f).row();
+      105  
+      106          root.add(buildLobbyListHeader()).expandX().fillX().pad
+           Bottom(4f).row();
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\multiplayer\Mul
+        tiplayerScreen.java)
+  ⎿  Added 1 line, removed 1 line
+      330          messageIsError = error;
+      331          if (messageLabel != null) {
+      332              messageLabel.setText(text);
+      333 -            messageLabel.setStyle(error ? UIFactory.createErro
+          -rStyle() : UIFactory.createHintStyle());                      
+      333 +            messageLabel.setStyle(error ? errorStyle : hintSty
+          +le);                                                          
+      334          }
+      335      }
+      336  
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\screens\multiplayer\Crea
+       teLobbyScreen.java)
+  ⎿  Wrote 164 lines to main\core\src\main\java\io\jababa\lost_batalion\scr
+     eens\multiplayer\CreateLobbyScreen.java
+       1 package io.jababa.lost_batalion.screens.multiplayer;
+       2 
+       3 import com.badlogic.gdx.scenes.scene2d.Actor;
+       4 import com.badlogic.gdx.scenes.scene2d.ui.Label;
+       5 import com.badlogic.gdx.scenes.scene2d.ui.Table;
+       6 import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
+       7 import com.badlogic.gdx.scenes.scene2d.ui.TextField;
+       8 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
+       9 import io.jababa.lost_batalion.LostBatalion;
+      10 import io.jababa.lost_batalion.net.NetConfig;
+     … +173 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\screens\multiplayer\Lobb
+       yScreen.java)
+  ⎿  Wrote 265 lines to main\core\src\main\java\io\jababa\lost_batalion\scr
+     eens\multiplayer\LobbyScreen.java
+       1 package io.jababa.lost_batalion.screens.multiplayer;
+       2 
+       3 import com.badlogic.gdx.scenes.scene2d.Actor;
+       4 import com.badlogic.gdx.scenes.scene2d.ui.Label;
+       5 import com.badlogic.gdx.scenes.scene2d.ui.Table;
+       6 import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
+       7 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
+       8 import io.jababa.lost_batalion.LostBatalion;
+       9 import io.jababa.lost_batalion.net.api.LobbySession;
+      10 import io.jababa.lost_batalion.net.messages.LobbyState;
+     … +297 lines (ctrl+o to expand)
+
+● Тепер кнопка в головному меню:
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\MainMenuScreen.
+        java)
+  ⎿  Added 8 lines
+      29          Label subtitle = new Label("Real-Time Strategy", UIFact
+          ory.createSubtitleStyle());
+      30  
+      31          TextButton btnScenario = createButton("Select Scenario"
+          );
+      32 +        TextButton btnMultiplayer = createButton("Мультиплеєр")
+         +;                                                              
+      33          TextButton btnSettings = createButton("Settings");
+      34          TextButton btnExit = createButton("Exit");
+      35  
+     ...
+      40              }
+      41          });
+      42  
+      43 +        btnMultiplayer.addListener(new ChangeListener() {      
+      44 +            @Override                                          
+      45 +            public void changed(ChangeEvent event, Actor actor)
+         + {                                                             
+      46 +                game.setScreen(new io.jababa.lost_batalion.scre
+         +ens.multiplayer.MultiplayerScreen(game));                      
+      47 +            }                                                  
+      48 +        });                                                    
+      49 +                                                               
+      50          btnSettings.addListener(new ChangeListener() {
+      51              @Override
+      52              public void changed(ChangeEvent event, Actor actor)
+           {
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\MainMenuScreen.
+        java)
+  ⎿  Added 1 line
+      68          root.add(subtitle).padBottom(60f).row();
+      69  
+      70          root.add(btnScenario).size(BUTTON_WIDTH, BUTTON_HEIGHT)
+          .padBottom(BUTTON_SPACING).row();
+      71 +        root.add(btnMultiplayer).size(BUTTON_WIDTH, BUTTON_HEIG
+         +HT).padBottom(BUTTON_SPACING).row();                           
+      72          root.add(btnSettings).size(BUTTON_WIDTH, BUTTON_HEIGHT)
+          .padBottom(BUTTON_SPACING).row();
+      73          root.add(btnExit).size(BUTTON_WIDTH, BUTTON_HEIGHT).row
+          ();
+      74  
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● Компілюється. Прогоню екрани в реальному GL-контексті (прихованому вікні), щоб
+  зловити помилки стилів/верстки:
+
+  Made 1 scratchpad edit +122, ran 5 shell commands (ctrl+o to expand)
+
+● Етап 2 готовий — UI мультиплеєра
+
+  Екрани
+
+  MainMenuScreen — кнопка «Мультиплеєр» другим пунктом.
+
+  screens/multiplayer/MultiplayerScreen — поле ніка (зберігається в Preferences,
+  підтягується наступного запуску), список знайдених лоббі, «Оновити» з
+  індикатором сканування, пряме підключення за IP, «Створити лоббі».
+
+  Нік обов'язковий: поки він порожній, «Створити лоббі», «Підключитись» і всі
+  «Приєднатись» у рядках вимкнені (setDisabled + затемнення до 45% альфи, бо
+  саме по собі setDisabled нічого не малює) і висить пояснення, чому.
+
+  Рядок лоббі показує назву, нік хоста, 1/2, адресу. Якщо приєднатись не можна —
+  замість адреси причина червоним: «інша версія гри» / «матч уже почався» /
+  «немає місць».
+
+  screens/multiplayer/CreateLobbyScreen — назва (дефолт «Лоббі <нік>»),
+  перемикач карти, кількість гравців. Перемикач карти вимкнений, поки сценарій
+  один, але верстка вже під нього.
+
+  screens/multiplayer/LobbyScreen — склад гравців із порожніми слотами, свій
+  рядок підсвічений, статуси «готовий / не готовий / зв'язок втрачено». У хоста
+  кнопка «Старт» (активна лише коли allReady()), у гостя — перемикач «Готовий/Не
+  готовий».
+
+  Контракти для етапу 3
+
+  UI не знає про KryoNet — він працює через net/api:
+
+  ┌─────────────────────┬────────────────────────────────────────────────────┐
+  │         Тип         │                        Роль                        │
+  ├─────────────────────┼────────────────────────────────────────────────────┤
+  │ LobbyDirectory      │ джерело списку лоббі                               │
+  │                     │ (start/stop/refresh/getLobbies/isScanning)         │
+  ├─────────────────────┼────────────────────────────────────────────────────┤
+  │ LobbySession        │ участь у лоббі, однакова для хоста і гостя         │
+  ├─────────────────────┼────────────────────────────────────────────────────┤
+  │ DiscoveredLobby     │ LobbyInfo + адреса + lastSeen                      │
+  ├─────────────────────┼────────────────────────────────────────────────────┤
+  │ MultiplayerServices │ фабрика: createDirectory / host / join /           │
+  │                     │ joinByAddress                                      │
+  └─────────────────────┴────────────────────────────────────────────────────┘
+
+  Зараз фабрика віддає заглушки: список порожній, а host(...) створює локальне
+  лоббі на одну людину — щоб екран лоббі можна було відкрити й пройти до запуску
+  матчу вже зараз. На етапі 3 міняються тільки тіла трьох фабричних методів.
+
+  Три рішення, які варто пояснити
+
+  LobbySession.pump(listener) замість колбеків. KryoNet кличе слухачі у своєму
+  потоці, а віджети libGDX можна чіпати лише з потоку рендеру. Тому події
+  накопичуються всередині сесії, а екран забирає їх у своєму render. Інакше етап
+  3 приніс би плаваючі краші при кожному приєднанні.
+
+  Стан екрана в полях, не у віджетах. BaseScreen.rebuildStage перебудовує сцену
+  на кожну зміну розміру вікна — все, що жило б лише у TextField, при цьому
+  зникало б. Нік, адреса, повідомлення тримаються в полях і перемальовуються з
+  них.
+
+  ScenarioCatalog — перелік карт винесено з приватного методу ScenarioScreen.
+  Хост тепер обирає карту в лоббі, а клієнт мусить знайти ту саму за id з
+  мережі. Два списки в двох місцях рано чи пізно розійшлися б, і клієнт
+  завантажив би іншу карту — з іншими масками місцевості, тобто з іншою
+  симуляцією.
+
+  Плюс дрібне, але не дрібне на практиці: стилі створюються раз на побудову
+  сцени і перевикористовуються. UIFactory на кожен виклик генерує новий
+  FreeType-шрифт із текстурою, а refreshEnabledState смикається на кожне
+  натискання клавіші в полі ніка.
+
+  Перевірено запуском
+
+  Написав UiSmokeTest — піднімає справжній GL-контекст у прихованому вікні,
+  проходить усі екрани, малює кожен по кілька кадрів і робить resize
+  (найризикованіше місце, бо там BaseScreen перебудовує сцену з нуля):
+
+  OK   LostBatalion.create + MainMenuScreen
+  OK   MultiplayerScreen          + resize 800x600
+  OK   CreateLobbyScreen          + resize 1280x720
+  OK   LobbyScreen (host)         + resize 900x580
+  OK   LobbyScreen (недоступна сесія)
+  OK   назад у головне меню
+
+  UI SMOKE: ВСІ ЕКРАНИ ПОБУДУВАЛИСЬ БЕЗ ПОМИЛОК
+
+  Пройди клікам сам — я перевірив, що екрани будуються й переживають ресайз, але
+  не як вони виглядають. Якщо верстка десь крива, скажи що саме, поправлю до
+  того, як на неї ляже мережа.
+
+  Тимчасову задачу printRuntimeClasspath, якою діставав classpath для тесту, з
+  lwjgl3/build.gradle прибрав.
+
+  Далі — Етап 3: мережевий шар лоббі (KryoNet Server у хоста, UDP-дискаверi,
+  реальні host/join).
+
+✻ Churned for 10m 37s
+
+❯ продовжуй 3 етап, по завершенню теж дай знати, тести потім                    
+  Ran 5 shell commands (ctrl+o to expand)
+
+● ServerDiscoveryHandler KryoNet-а не годиться — його сигнатура тягне
+  package-private UdpConnection, реалізувати поза пакетом
+  com.esotericsoftware.kryonet неможливо. Роблю власне UDP-дискаверi. Спершу
+  правлю хелпери серіалізації:
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\NetworkProtocol.jav
+        a)
+  ⎿  Added 40 lines, removed 9 lines
+       99          return kryo;
+      100      }
+      101  
+      102 -    /** Максимальний розмір датаграми відповіді — з запасом, а
+          -ле в межах одного пакета. */                                  
+      102 +    /** Максимальний розмір датаграми — з запасом, але в межах
+          + одного пакета без фрагментації. */                           
+      103      public static final int DISCOVERY_PACKET_BYTES = 512;
+      104  
+      105 -    public static ByteBuffer writeLobbyInfo(Kryo kryo, LobbyIn
+          -fo info) {                                                    
+      106 -        ByteBufferOutput out = new ByteBufferOutput(DISCOVERY_
+          -PACKET_BYTES);                                                
+      105 +    /**                                                       
+      106 +     * Заголовок наших датаграм. На широкомовний порт може при
+          +летіти будь-що —                                              
+      107 +     * від чужої гри до службового трафіку мережі, — тож пакет
+          +и без цього                                                   
+      108 +     * префікса відкидаються ще до спроби розпакувати їх Kryo.
+      109 +     */                                                       
+      110 +    public static final byte[] DISCOVERY_MAGIC = { 'L', 'B', '
+          +T', 'N' };                                                    
+      111 +                                                              
+      112 +    public static final byte DISCOVERY_REQUEST  = 0x01;       
+      113 +    public static final byte DISCOVERY_RESPONSE = 0x02;       
+      114 +                                                              
+      115 +    /** Запит «хто тут є?»: магія + тип + версія протоколу. */
+      116 +    public static byte[] buildDiscoveryRequest() {            
+      117 +        byte[] packet = new byte[DISCOVERY_MAGIC.length + 2]; 
+      118 +        System.arraycopy(DISCOVERY_MAGIC, 0, packet, 0, DISCOV
+          +ERY_MAGIC.length);                                            
+      119 +        packet[DISCOVERY_MAGIC.length]     = DISCOVERY_REQUEST
+          +;                                                             
+      120 +        packet[DISCOVERY_MAGIC.length + 1] = (byte) NetConfig.
+          +PROTOCOL_VERSION;                                             
+      121 +        return packet;                                        
+      122 +    }                                                         
+      123 +                                                              
+      124 +    /** Відповідь хоста: магія + тип + серіалізована візитівка
+          +. */                                                          
+      125 +    public static byte[] buildDiscoveryResponse(Kryo kryo, Lob
+          +byInfo info) {                                                
+      126 +        Output out = new Output(DISCOVERY_PACKET_BYTES);      
+      127 +        out.writeBytes(DISCOVERY_MAGIC);                      
+      128 +        out.writeByte(DISCOVERY_RESPONSE);                    
+      129          kryo.writeObject(out, info);
+      130          out.flush();
+      109 -        ByteBuffer buffer = out.getByteBuffer();              
+      110 -        buffer.flip();                                        
+      111 -        return buffer;                                        
+      131 +        return out.toBytes();                                 
+      132      }
+      133  
+      134 +    /** @return тип пакета ({@link #DISCOVERY_REQUEST}/{@link 
+          +#DISCOVERY_RESPONSE}) або 0, якщо чужий */                    
+      135 +    public static byte discoveryType(byte[] data, int length) 
+          +{                                                             
+      136 +        if (length < DISCOVERY_MAGIC.length + 1) return 0;    
+      137 +        for (int i = 0; i < DISCOVERY_MAGIC.length; i++) {    
+      138 +            if (data[i] != DISCOVERY_MAGIC[i]) return 0;      
+      139 +        }                                                     
+      140 +        return data[DISCOVERY_MAGIC.length];                  
+      141 +    }                                                         
+      142 +                                                              
+      143      /** @return розпакована візитівка або null, якщо датаграма
+            чужа/пошкоджена */
+      115 -    public static LobbyInfo readLobbyInfo(Kryo kryo, ByteBuffe
+          -r buffer) {                                                   
+      144 +    public static LobbyInfo readLobbyInfo(Kryo kryo, byte[] da
+          +ta, int length) {                                             
+      145 +        if (discoveryType(data, length) != DISCOVERY_RESPONSE)
+          + return null;                                                 
+      146 +        int offset = DISCOVERY_MAGIC.length + 1;              
+      147          try {
+      117 -            return kryo.readObject(new ByteBufferInput(buffer)
+          -, LobbyInfo.class);                                           
+      148 +            return kryo.readObject(new Input(data, offset, len
+          +gth - offset), LobbyInfo.class);                              
+      149          } catch (RuntimeException e) {
+      119 -            // У мережі може відповісти будь-що на тому ж порт
+          -у — це не привід падати.                                      
+      150 +            // Пакет із правильним префіксом, але поламаним вм
+          +істом — не привід падати.                                     
+      151              return null;
+      152          }
+      153      }
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\NetworkProtocol.jav
+        a)
+  ⎿  Added 2 lines, removed 2 lines
+      1  package io.jababa.lost_batalion.net;
+      2  
+      3  import com.esotericsoftware.kryo.Kryo;
+      4 -import com.esotericsoftware.kryo.io.ByteBufferInput;            
+      5 -import com.esotericsoftware.kryo.io.ByteBufferOutput;           
+      4 +import com.esotericsoftware.kryo.io.Input;                      
+      5 +import com.esotericsoftware.kryo.io.Output;                     
+      6  import com.esotericsoftware.kryonet.EndPoint;
+      7  import io.jababa.lost_batalion.net.commands.AttackCommand;
+      8  import io.jababa.lost_batalion.net.commands.CurveFormationComman
+         d;
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\NetworkProtocol.jav
+        a)
+  ⎿  Removed 1 line
+      11  import io.jababa.lost_batalion.net.commands.StopCommand;
+      12  import io.jababa.lost_batalion.net.messages.*;
+      13  
+      14 -import java.nio.ByteBuffer;                                    
+      14  import java.util.ArrayList;
+      15  
+      16  /**
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\discovery\BroadcastA
+       ddresses.java)
+  ⎿  Wrote 51 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     discovery\BroadcastAddresses.java
+       1 package io.jababa.lost_batalion.net.discovery;
+       2 
+       3 import java.net.InetAddress;
+       4 import java.net.InterfaceAddress;
+       5 import java.net.NetworkInterface;
+       6 import java.util.ArrayList;
+       7 import java.util.Enumeration;
+       8 import java.util.List;
+       9 
+      10 /**
+     … +51 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\discovery\LobbyBeaco
+       n.java)
+  ⎿  Wrote 95 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     discovery\LobbyBeacon.java
+       1 package io.jababa.lost_batalion.net.discovery;
+       2 
+       3 import com.badlogic.gdx.Gdx;
+       4 import com.esotericsoftware.kryo.Kryo;
+       5 import io.jababa.lost_batalion.net.NetConfig;
+       6 import io.jababa.lost_batalion.net.NetworkProtocol;
+       7 import io.jababa.lost_batalion.net.messages.LobbyInfo;
+       8 
+       9 import java.net.DatagramPacket;
+      10 import java.net.DatagramSocket;
+     … +104 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\discovery\LobbyScann
+       er.java)
+  ⎿  Wrote 167 lines to main\core\src\main\java\io\jababa\lost_batalion\net
+     \discovery\LobbyScanner.java
+      1 package io.jababa.lost_batalion.net.discovery;
+      2 
+      3 import com.badlogic.gdx.Gdx;
+      4 import com.esotericsoftware.kryo.Kryo;
+      5 import io.jababa.lost_batalion.net.NetConfig;
+      6 import io.jababa.lost_batalion.net.NetworkProtocol;
+      7 import io.jababa.lost_batalion.net.api.DiscoveredLobby;
+      8 import io.jababa.lost_batalion.net.api.LobbyDirectory;
+      9 import io.jababa.lost_batalion.net.messages.LobbyInfo;
+     … +180 lines (ctrl+o to expand)
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\discovery\LobbyScan
+        ner.java)
+  ⎿  Added 2 lines, removed 1 line
+      61  
+      62      @Override
+      63      public void refresh() {
+      64 +        // Потік сканування опитує цей прапорець між таймаутами
+         + receive(),                                                    
+      65 +        // тож позачергове сканування починається не пізніше ні
+         +ж через 200 мс.                                                
+      66          refreshRequested = true;
+      65 -        synchronized (found) { found.notifyAll(); }            
+      67      }
+      68  
+      69      @Override
+
+● Тепер сесії. Спершу спільна черга подій між мережевим потоком і рендером:
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\kryo\SessionEventQue
+       ue.java)
+  ⎿  Wrote 38 lines to main\core\src\main\java\io\jababa\lost_batalion\net\
+     kryo\SessionEventQueue.java
+       1 package io.jababa.lost_batalion.net.kryo;
+       2 
+       3 import io.jababa.lost_batalion.net.api.LobbySession;
+       4 
+       5 import java.util.concurrent.ConcurrentLinkedQueue;
+       7 /**
+       8  * Міст між потоком KryoNet і потоком рендеру.
+       9  *
+      10  * <p>KryoNet викликає слухачі у власному потоці, а віджети libG
+         DX можна чіпати
+     … +34 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\kryo\HostLobbySessio
+       n.java)
+  ⎿  Wrote 336 lines to main\core\src\main\java\io\jababa\lost_batalion\net
+     \kryo\HostLobbySession.java
+       1 package io.jababa.lost_batalion.net.kryo;
+       2 
+       3 import com.badlogic.gdx.Gdx;
+       4 import com.esotericsoftware.kryonet.Connection;
+       5 import com.esotericsoftware.kryonet.Listener;
+       6 import com.esotericsoftware.kryonet.Server;
+       7 import io.jababa.lost_batalion.net.NetConfig;
+       8 import io.jababa.lost_batalion.net.NetworkProtocol;
+       9 import io.jababa.lost_batalion.net.api.LobbySession;
+      10 import io.jababa.lost_batalion.net.discovery.LobbyBeacon;
+     … +379 lines (ctrl+o to expand)
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\kryo\HostLobbySessi
+        on.java)
+  ⎿  Removed 6 lines
+      150      }
+      151  
+      152      @Override
+      153 -    public void pump(Listener2 unused) { }                    
+      154 -                                                              
+      155 -    @Override                                                 
+      153      public void pump(LobbySession.Listener listener) {
+      154          events.drain(listener);
+      155      }
+      156  
+      160 -    /** Заглушка, щоб не плутати перевантаження — прибрати раз
+          -ом із рефакторингом. */                                       
+      161 -    private interface Listener2 {}                            
+      162 -                                                              
+      157      // ── Внутрішнє ──────────────────────────────────────────
+           ───────────────
+      158  
+      159      private boolean allReady() {
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\kryo\ClientLobbySess
+       ion.java)
+  ⎿  Wrote 155 lines to main\core\src\main\java\io\jababa\lost_batalion\net
+     \kryo\ClientLobbySession.java
+       1 package io.jababa.lost_batalion.net.kryo;
+       2 
+       3 import com.badlogic.gdx.Gdx;
+       4 import com.esotericsoftware.kryonet.Client;
+       5 import com.esotericsoftware.kryonet.Connection;
+       6 import com.esotericsoftware.kryonet.Listener;
+       7 import io.jababa.lost_batalion.net.NetConfig;
+       8 import io.jababa.lost_batalion.net.NetworkProtocol;
+       9 import io.jababa.lost_batalion.net.api.LobbySession;
+      10 import io.jababa.lost_batalion.net.messages.JoinRequest;
+     … +166 lines (ctrl+o to expand)
+
+● Тепер підключаю реалізації замість заглушок:
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\api\MultiplayerServi
+       ces.java)
+  ⎿  Added 9 lines, removed 116 lines
+       1  package io.jababa.lost_batalion.net.api;
+       2  
+       3  import io.jababa.lost_batalion.net.NetConfig;
+       4 -import io.jababa.lost_batalion.net.messages.LobbyState;        
+       5 -import io.jababa.lost_batalion.net.messages.LobbyStatus;       
+       6 -import io.jababa.lost_batalion.net.messages.PlayerSlot;        
+       7 -import io.jababa.lost_batalion.net.messages.StartMatch;        
+       4 +import io.jababa.lost_batalion.net.discovery.LobbyScanner;     
+       5 +import io.jababa.lost_batalion.net.kryo.ClientLobbySession;    
+       6 +import io.jababa.lost_batalion.net.kryo.HostLobbySession;      
+       7  
+       9 -import java.util.ArrayDeque;                                   
+      10 -import java.util.ArrayList;                                    
+      11 -import java.util.Collections;                                  
+      12 -import java.util.Deque;                                        
+      13 -import java.util.List;                                         
+      14 -                                                               
+       8  /**
+       9   * Точка входу в мережу для екранів.
+      10   *
+      11   * <p>Екрани не знають ні про KryoNet, ні про сокети — вони про
+          сять тут сесію і
+      12   * далі працюють з {@link LobbySession}. Завдяки цьому мережеви
+          й шар можна
+      20 - * підмінити (або тимчасово вимкнути) без правок в UI.         
+      21 - *                                                             
+      22 - * <p>ЗАРАЗ тут увімкнена локальна заглушка без мережі: лоббі с
+         -творюється, але                                                
+      23 - * ніхто до нього не підключиться, а список серверів завжди пор
+         -ожній.                                                         
+      24 - * На етапі 3 фабричні методи почнуть повертати реалізації на K
+         -ryoNet;                                                        
+      25 - * інтерфейси й екрани при цьому не змінюються.                
+      13 + * підмінити (наприклад, на реєстр замість широкомовного пошуку
+         +) без правок в UI.                                             
+      14   */
+      15  public final class MultiplayerServices {
+      16  
+      17      private MultiplayerServices() {}
+      18  
+      31 -    /** true, поки працює заглушка — UI показує про це попередж
+         -ення, щоб не спантеличувати. */                                
+      32 -    public static boolean isNetworkingAvailable() { return fals
+         -e; }                                                           
+      19 +    public static boolean isNetworkingAvailable() { return true
+         +; }                                                            
+      20  
+      21      public static LobbyDirectory createDirectory() {
+      35 -        return new EmptyDirectory();                           
+      22 +        return new LobbyScanner();                             
+      23      }
+      24  
+      25      /** Створити лоббі і стати його хостом. */
+      26      public static LobbySession host(String lobbyName, String ni
+          ck, String scenarioId, int maxPlayers) {
+      40 -        return new LocalPreviewSession(lobbyName, nick, scenari
+         -oId, maxPlayers);                                              
+      27 +        return new HostLobbySession(lobbyName, nick, scenarioId
+         +, maxPlayers);                                                 
+      28      }
+      29  
+      30      /** Приєднатись до знайденого в мережі лоббі. */
+      31      public static LobbySession join(DiscoveredLobby lobby, Stri
+          ng nick) {
+      45 -        return new UnavailableSession("Мережевий шар ще не підк
+         -лючено (етап 3)");                                             
+      32 +        return new ClientLobbySession(lobby.address, NetConfig.
+         +TCP_PORT, nick);                                               
+      33      }
+      34  
+      35      /** Приєднатись за введеною вручну адресою. Порт можна допи
+          сати через двокрапку. */
+      36      public static LobbySession joinByAddress(String address, St
+          ring nick) {
+      50 -        return new UnavailableSession("Мережевий шар ще не підк
+         -лючено (етап 3)");                                             
+      37 +        return new ClientLobbySession(parseHost(address), parse
+         +Port(address), nick);                                          
+      38      }
+      39  
+      40      /** Розбирає "192.168.0.5:54555" на хост і порт; без порту 
+          бере дефолтний. */
+     ...
+       52              return NetConfig.TCP_PORT;
+       53          }
+       54      }
+       68 -                                                              
+       69 -    // ── Заглушки етапу 2 ───────────────────────────────────
+          -───────────────                                               
+       70 -                                                              
+       71 -    /** Список серверів, поки мережі немає. */                
+       72 -    private static final class EmptyDirectory implements Lobby
+          -Directory {                                                   
+       73 -        @Override public void start() {}                      
+       74 -        @Override public void stop() {}                       
+       75 -        @Override public void refresh() {}                    
+       76 -        @Override public List<DiscoveredLobby> getLobbies() { 
+          -return Collections.emptyList(); }                             
+       77 -        @Override public boolean isScanning() { return false; 
+          -}                                                             
+       78 -    }                                                         
+       79 -                                                              
+       80 -    /**                                                       
+       81 -     * Лоббі на одну людину без мережі — щоб екран лоббі можна
+          - було відкрити,                                               
+       82 -     * подивитись і запустити матч соло ще до того, як з'явить
+          -ся транспорт.                                                 
+       83 -     */                                                       
+       84 -    private static final class LocalPreviewSession implements 
+          -LobbySession {                                                
+       85 -                                                              
+       86 -        private final LobbyState state = new LobbyState();    
+       87 -        private final Deque<Runnable> pending = new ArrayDeque
+          -<>();                                                         
+       88 -        private boolean connected = true;                     
+       89 -                                                              
+       90 -        LocalPreviewSession(String lobbyName, String nick, Str
+          -ing scenarioId, int maxPlayers) {                             
+       91 -            state.lobbyName  = lobbyName;                     
+       92 -            state.scenarioId = scenarioId;                    
+       93 -            state.maxPlayers = maxPlayers;                    
+       94 -            state.status     = LobbyStatus.WAITING;           
+       95 -            state.slots.add(new PlayerSlot(0, nick, true));   
+       96 -            pending.add(() -> {});   // щоб перший pump віддав
+          - стан                                                         
+       97 -        }                                                     
+       98 -                                                              
+       99 -        @Override public LobbyState getState()      { return s
+          -tate; }                                                       
+      100 -        @Override public int  getLocalPlayerId()    { return 0
+          -; }                                                           
+      101 -        @Override public boolean isHost()           { return t
+          -rue; }                                                        
+      102 -        @Override public boolean isConnected()      { return c
+          -onnected; }                                                   
+      103 -        @Override public void setReady(boolean r)   { }       
+      104 -                                                              
+      105 -        @Override public void setScenario(String scenarioId) {
+      106 -            state.scenarioId = scenarioId;                    
+      107 -            pending.add(() -> {});                            
+      108 -        }                                                     
+      109 -                                                              
+      110 -        @Override public void startMatch() {                  
+      111 -            StartMatch sm = new StartMatch();                 
+      112 -            sm.protocolVersion = NetConfig.PROTOCOL_VERSION;  
+      113 -            sm.rngSeed         = 1L;   // фіксований seed: сол
+          -о-прев'ю має бути відтворюваним                               
+      114 -            sm.scenarioId      = state.scenarioId;            
+      115 -            sm.slots           = new ArrayList<>(state.slots);
+      116 -            sm.tickRate        = NetConfig.TICK_RATE;         
+      117 -            sm.inputDelayTicks = NetConfig.INPUT_DELAY_TICKS; 
+      118 -            sm.checksumIntervalTicks = NetConfig.getChecksumIn
+          -tervalTicks();                                                
+      119 -            pendingStart = sm;                                
+      120 -            pending.add(() -> {});                            
+      121 -        }                                                     
+      122 -                                                              
+      123 -        private StartMatch pendingStart;                      
+      124 -                                                              
+      125 -        @Override public void leave() { connected = false; }  
+      126 -                                                              
+      127 -        @Override public void pump(Listener listener) {       
+      128 -            if (pending.isEmpty()) return;                    
+      129 -            pending.clear();                                  
+      130 -            listener.onLobbyState(state);                     
+      131 -            if (pendingStart != null) {                       
+      132 -                StartMatch sm = pendingStart;                 
+      133 -                pendingStart = null;                          
+      134 -                listener.onMatchStarting(sm);                 
+      135 -            }                                                 
+      136 -        }                                                     
+      137 -    }                                                         
+      138 -                                                              
+      139 -    /** Сесія, яка одразу повідомляє, що приєднатись неможливо
+          -. */                                                          
+      140 -    private static final class UnavailableSession implements L
+          -obbySession {                                                 
+      141 -                                                              
+      142 -        private final String reason;                          
+      143 -        private boolean reported;                             
+      144 -                                                              
+      145 -        UnavailableSession(String reason) { this.reason = reas
+          -on; }                                                         
+      146 -                                                              
+      147 -        @Override public LobbyState getState()    { return nul
+          -l; }                                                          
+      148 -        @Override public int  getLocalPlayerId()  { return -1;
+          - }                                                            
+      149 -        @Override public boolean isHost()         { return fal
+          -se; }                                                         
+      150 -        @Override public boolean isConnected()    { return fal
+          -se; }                                                         
+      151 -        @Override public void setReady(boolean r) {}          
+      152 -        @Override public void setScenario(String s) {}        
+      153 -        @Override public void startMatch()        {}          
+      154 -        @Override public void leave()             {}          
+      155 -                                                              
+      156 -        @Override public void pump(Listener listener) {       
+      157 -            if (reported) return;                             
+      158 -            reported = true;                                  
+      159 -            listener.onDisconnected(reason);                  
+      160 -        }                                                     
+      161 -    }                                                         
+       55  }
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Колізія імен: успадкований від LobbySession вкладений тип Listener перекриває
+  імпорт KryoNet-івського. Кваліфікую явно:
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\kryo\ClientLobbySes
+        sion.java)  ⎿  Removed 1 line
+      3  import com.badlogic.gdx.Gdx;
+      4  import com.esotericsoftware.kryonet.Client;
+      5  import com.esotericsoftware.kryonet.Connection;
+      6 -import com.esotericsoftware.kryonet.Listener;                   
+      6  import io.jababa.lost_batalion.net.NetConfig;
+      7  import io.jababa.lost_batalion.net.NetworkProtocol;
+      8  import io.jababa.lost_batalion.net.api.LobbySession;
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\kryo\ClientLobbySes
+        sion.java)
+  ⎿  Added 4 lines, removed 1 line
+      115  
+      116      // ── Мережеві події ─────────────────────────────────────
+           ───────────────
+      117  
+      118 -    private final class ClientListener extends Listener {     
+      118 +    // Ім'я Listener тут неоднозначне: LobbySession несе вклад
+          +ений інтерфейс із                                             
+      119 +    // такою ж назвою, і успадкований член перекриває імпорт. 
+          +Тому клас KryoNet                                             
+      120 +    // вказується повним іменем.                              
+      121 +    private final class ClientListener extends com.esotericsof
+          +tware.kryonet.Listener {                                      
+      122  
+      123          @Override
+      124          public void received(Connection connection, Object obj
+           ect) {
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\kryo\HostLobbySessi
+        on.java)
+  ⎿  Removed 1 line
+      2  
+      3  import com.badlogic.gdx.Gdx;
+      4  import com.esotericsoftware.kryonet.Connection;
+      5 -import com.esotericsoftware.kryonet.Listener;                   
+      5  import com.esotericsoftware.kryonet.Server;
+      6  import io.jababa.lost_batalion.net.NetConfig;
+      7  import io.jababa.lost_batalion.net.NetworkProtocol;
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\kryo\HostLobbySessi
+        on.java)
+  ⎿  Added 4 lines, removed 1 line
+      233  
+      234      // ── Мережеві події ─────────────────────────────────────
+           ───────────────
+      235  
+      236 -    private final class HostListener extends Listener {       
+      236 +    // Ім'я Listener тут неоднозначне: LobbySession несе вклад
+          +ений інтерфейс із                                             
+      237 +    // такою ж назвою, і успадкований член перекриває імпорт. 
+          +Тому клас KryoNet                                             
+      238 +    // вказується повним іменем.                              
+      239 +    private final class HostListener extends com.esotericsoftw
+          +are.kryonet.Listener {                                        
+      240  
+      241          @Override
+      242          public void received(Connection connection, Object obj
+           ect) {
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\net\NetLog.java)
+  ⎿  Wrote 37 lines to
+     main\core\src\main\java\io\jababa\lost_batalion\net\NetLog.java
+       1 package io.jababa.lost_batalion.net;
+       2 
+       4 
+       5 /**
+       6  * Логування мережевого шару.
+       8  * <p>Мережеві класи мусять працювати і без запущеного libGDX: ї
+         х ганяють у
+       9  * тестах і потенційно в майбутньому серверному модулі, де {@cod
+      10  * дорівнює null. Прямий {@code Gdx.app.error} у такому середови
+         щі падає з NPE
+     … +31 lines (ctrl+o to expand)
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Тепер наскрізний мережевий тест — хост і гість у одному JVM:
+
+  Made 1 scratchpad edit +183, ran 6 shell commands (ctrl+o to expand)
+
+● Проблема тестового харнеса: кириличний шлях C:\Users\Андрій\ ламається при
+  передачі classpath у java.exe. Копіюю jar-и в ASCII-шлях:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Усі 20 перевірок пройшли, включно з реальним broadcast по LAN. Прибираю
+  INFO-спам minlog у stdout:
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\NetLog.java)
+  ⎿  Added 12 lines
+      15  
+      16      private static final String TAG = "NET";
+      17  
+      18 +    static {                                                   
+      19 +        // KryoNet тягне minlog, який за замовчуванням сипле IN
+         +FO про кожне                                                   
+      20 +        // з'єднання просто в stdout, повз логер гри. Під час м
+         +атчу таких рядків                                              
+      21 +        // будуть сотні, і в них потоне все, що справді варто п
+         +рочитати.                                                      
+      22 +        com.esotericsoftware.minlog.Log.WARN();                
+      23 +    }                                                          
+      24 +                                                               
+      25      private NetLog() {}
+      26  
+      27 +    /** Увімкнути детальний лог KryoNet — для розбору мережевих
+         + проблем. */                                                   
+      28 +    public static void enableVerboseNetworkLogging() {         
+      29 +        com.esotericsoftware.minlog.Log.INFO();                
+      30 +    }                                                          
+      31 +                                                               
+      32      public static void info(String message) {
+      33          if (Gdx.app != null) Gdx.app.log(TAG, message);
+      34          else System.out.println("[" + TAG + "] " + message);
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\NetLog.java)
+  ⎿  Added 7 lines
+      24  
+      25      private NetLog() {}
+      26  
+      27 +    /**                                                        
+      28 +     * Змусити клас завантажитись, а разом із ним застосувати н
+         +алаштування minlog.                                            
+      29 +     * Без явного дотику статичний блок спрацював би лише при п
+         +ершій помилці —                                                
+      30 +     * тобто вже після того, як KryoNet засипав би консоль.    
+      31 +     */                                                        
+      32 +    public static void init() {}                               
+      33 +                                                               
+      34      /** Увімкнути детальний лог KryoNet — для розбору мережевих
+           проблем. */
+      35      public static void enableVerboseNetworkLogging() {
+      36          com.esotericsoftware.minlog.Log.INFO();
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\NetworkProtocol.jav
+        a)
+  ⎿  Added 2 lines
+      38      }
+      39  
+      40      public static void register(Kryo kryo) {
+      41 +        NetLog.init();                                         
+      42 +                                                               
+      43          // Незареєстрований клас має падати гучно тут, а не тих
+          о їхати по мережі
+      44          // з іменем класу в заголовку і вилазити боком на іншій
+           платформі.
+      45          kryo.setRegistrationRequired(true);
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Етап 3 готовий — мережевий шар лоббі
+
+  Що працює
+
+  Хост піднімає KryoNet Server на TCP 54555, паралельно крутить UDP-маячок на
+  54777. Гість або знаходить лоббі в списку, або вводить IP. Хост веде склад,
+  гість тисне «Готовий», хост тисне «Старт» — обидва отримують StartMatch з
+  однаковим seed.
+
+  Заглушки з етапу 2 замінено, MultiplayerServices тепер віддає реальні
+  реалізації. Екрани не змінювались — інтерфейси витримали.
+
+  Одна річ, яку довелось зробити не за планом
+
+  UDP-дискаверi написав свій, а не через KryoNet. Його ServerDiscoveryHandler
+  реалізувати неможливо: сигнатура методу — onDiscoverHost(UdpConnection, ...),
+  а UdpConnection оголошений package-private. Поза пакетом
+  com.esotericsoftware.kryonet таку сигнатуру навіть не написати. Варіанти були
+  — підкласти свій клас у чужий пакет або написати 80 рядків на DatagramSocket.
+  Обрав друге.
+
+  Формат датаграми: LBTN + тип + версія (запит) / серіалізована LobbyInfo
+  (відповідь). Магічний префікс потрібен, бо на широкомовний порт прилітає різне
+  — все без префікса відкидається до спроби розпакувати Kryo.
+
+  Запит летить не лише на 255.255.255.255, а й на broadcast-адресу кожного
+  інтерфейса окремо (BroadcastAddresses). Windows часто не пускає загальний
+  broadcast далі першого адаптера, а на машині з VirtualBox/WSL/Docker цим
+  першим виявляється саме віртуальний, за яким нікого немає.
+
+  Нові класи
+
+  ┌──────────────────────────────────┬───────────────────────────────────────┐
+  │               Клас               │               Що робить               │
+  ├──────────────────────────────────┼───────────────────────────────────────┤
+  │ net/discovery/LobbyBeacon        │ відповідає на широкомовні запити,     │
+  │                                  │ картка лоббі у volatile-полі          │
+  ├──────────────────────────────────┼───────────────────────────────────────┤
+  │ net/discovery/LobbyScanner       │ сканує мережу, тримає список, викидає │
+  │                                  │  лоббі без відповіді >6 с             │
+  ├──────────────────────────────────┼───────────────────────────────────────┤
+  │ net/discovery/BroadcastAddresses │ перелік адрес для розсилки            │
+  ├──────────────────────────────────┼───────────────────────────────────────┤
+  │ net/kryo/HostLobbySession        │ Server, склад гравців, валідація      │
+  │                                  │ приєднань, старт матчу                │
+  ├──────────────────────────────────┼───────────────────────────────────────┤
+  │ net/kryo/ClientLobbySession      │ Client, JoinRequest, приймання стану  │
+  │                                  │ від хоста                             │
+  ├──────────────────────────────────┼───────────────────────────────────────┤
+  │ net/kryo/SessionEventQueue       │ міст «потік KryoNet → потік рендеру»  │
+  ├──────────────────────────────────┼───────────────────────────────────────┤
+  │ net/NetLog                       │ логер, який не падає без Gdx.app      │
+  └──────────────────────────────────┴───────────────────────────────────────┘
+
+  Три рішення про потоки й гонки
+
+  Хост розсилає копію стану, не живий обʼєкт. KryoNet серіалізує у своєму потоці
+  — якби туди пішов живий slots, паралельне приєднання гравця псувало б пакет
+  посеред запису. Робочі поля міняються під lock, назовні йде свіжа копія, а
+  getState() віддає останню опубліковану.
+
+  connect() в окремому потоці. Він блокує до таймауту — при недоступному хості
+  гра застигала б на 5 секунд.
+
+  Розрив у лоббі звільняє слот одразу. Пільговий час на перепідключення має сенс
+  лише в матчі, де гравця чекає симуляція; в лоббі він тільки тримав би місце
+  привида.
+
+  NetLog довелось зробити ще й тому, що minlog KryoNet-а сипле INFO про кожне
+  з'єднання просто в stdout повз логер гри. Виставив Log.WARN(), є
+  enableVerboseNetworkLogging() для розбору проблем.
+
+  Перевірено запуском
+
+  NetLobbyTest — хост і два гості в одному JVM, справжні сокети:
+
+  OK  хост піднявся / гравець 0 / статус WAITING
+  OK  лоббі знайдено широкомовним запитом
+  OK  візитівка правильна   Тестове лоббі 1/2 @192.168.1.139
+  OK  гість підключився і отримав номер
+  OK  гість бачить обох / хост бачить обох
+  OK  маячок оновив кількість гравців   2
+  OK  третього відхилено   [Лоббі повне.]
+  OK  хост побачив готовність
+  OK  seed однаковий у обох   3743417085442831340
+  OK  параметри lockstep однакові   tickRate=40 delay=2 checksum=40
+  OK  хост звільнив слот після виходу гостя
+  OK  лоббі зникло зі списку після закриття хоста
+
+  ВСІ ПЕРЕВІРКИ ПРОЙДЕНІ
+
+  Дискаверi спрацювало через реальний мережевий інтерфейс (192.168.1.139), не
+  через loopback.
+
+  Два зауваження
+
+  1. Файрвол. При першому запуску Windows спитає дозвіл для Java на приватну
+  мережу — без нього ні маячок, ні TCP не працюють. Перевір це, коли гратимеш із
+  двох машин.
+  2. Кнопка «Старт» веде в одиночну гру. LobbyScreen.launchMatch поки що просто
+  відкриває GameScreen з обраною картою — StartMatch доїжджає, але симуляція
+  його ще не використовує. Це етапи 4-5.
+
+  Далі — Етап 4: fixed-timestep tick loop на 40 Hz, винесення симуляції з
+  GameScreen.render.
+
+✻ Cooked for 10m 53s
+
+❯ продовжуй 4 етап, по закінченню так само повідом                              
+  Read 3 files (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\sim\TickRate.java)
+  ⎿  Wrote 43 lines to
+     main\core\src\main\java\io\jababa\lost_batalion\sim\TickRate.java
+       1 package io.jababa.lost_batalion.sim;
+       2 
+       4  * Темп симуляції.
+       5  *
+       6  * <p>Живе в пакеті симуляції, а не мережі, бо це властивість гр
+       7  * транспорту: фіксований крок потрібен навіть в одиночному матч
+         і, щоб бій
+       8  * розвивався однаково на 60 і на 144 кадрах. Мережа лише перено
+       9  * у StartMatch, щоб клієнт із іншою збіркою відвалився одразу.
+      10  */
+     … +43 lines (ctrl+o to expand)
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\sim\LockstepClock.java)
+  ⎿  Wrote 60 lines to
+     main\core\src\main\java\io\jababa\lost_batalion\sim\LockstepClock.java
+       1 package io.jababa.lost_batalion.sim;
+       3 /**
+       4  * Годинник фіксованого кроку: перетворює час кадру на цілу кіль
+         кість тіків.
+       6  * <p>Рендер може йти з будь-яким FPS, симуляція — строго 40 раз
+         ів на секунду.
+          і віддається
+       8  * як {@link #getAlpha()} для інтерполяції рендеру між двома ста
+         нами: без цього
+      10  */
+     … +66 lines (ctrl+o to expand)
+
+● Тепер NetConfig делегує таймінги в TickRate:
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\NetConfig.java)
+  ⎿  Added 6 lines, removed 18 lines
+      20      public static final int UDP_PORT = 54777;
+      21  
+      22      // ── Lockstep ────────────────────────────────────────────
+          ──────────────
+      23 +    // Темп симуляції задає TickRate — це властивість гри, а не
+         + транспорту.                                                   
+      24 +    // Тут лишаються лише псевдоніми для повідомлень, які їх пе
+         +реносять.                                                      
+      25  
+      24 -    /** Тіків симуляції на секунду. */                         
+      25 -    public static final int  TICK_RATE     = 40;               
+      26 -    /** Тривалість тіку в мілісекундах. */                     
+      27 -    public static final long TICK_MILLIS   = 1000L / TICK_RATE;
+         -   // 25                                                       
+      28 -    /** Тривалість тіку в секундах — для рендер-інтерполяції, Н
+         -Е для симуляції. */                                            
+      29 -    public static final float TICK_SECONDS = 1f / TICK_RATE;   
+      26 +    /** @see TickRate#TICKS_PER_SECOND */                      
+      27 +    public static final int TICK_RATE = TickRate.TICKS_PER_SECO
+         +ND;                                                            
+      28 +    /** @see TickRate#INPUT_DELAY_TICKS */                     
+      29 +    public static final int INPUT_DELAY_TICKS = TickRate.INPUT_
+         +DELAY_TICKS;                                                   
+      30  
+      31 -    /**                                                        
+      32 -     * Затримка виконання команди. Команда, віддана під час тік
+         -у N, виконується                                               
+      33 -     * на тіку N + INPUT_DELAY_TICKS одночасно в усіх.         
+      34 -     */                                                        
+      35 -    public static final int INPUT_DELAY_TICKS = 2;             
+      36 -                                                               
+      37 -    /**                                                        
+      38 -     * Скільки тіків симуляції максимум наздоганяти за один кад
+         -р рендеру.                                                     
+      39 -     * Захист від «спіралі смерті», якщо кадр підвис на секунду
+         -.                                                              
+      40 -     */                                                        
+      41 -    public static final int MAX_CATCHUP_TICKS = 8;             
+      42 -                                                               
+      31      // ── Checksum / десинхрон ────────────────────────────────
+          ──────────────
+      32  
+      33      /** Дефолтний інтервал звірки хешів стану, у тіках (1 с при
+           40 Hz). */
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\net\NetConfig.java)
+  ⎿  Added 2 lines
+      1  package io.jababa.lost_batalion.net;
+      2  
+      3 +import io.jababa.lost_batalion.sim.TickRate;                    
+      4 +                                                                
+      5  /**
+      6   * Константи мережевого шару та lockstep-циклу.
+      7   *
+
+● Тепер Unit — фіксований крок і збереження позиції для інтерполяції:
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\Unit.java)
+  ⎿  Added 30 lines, removed 12 lines
+      30      private final Vector2 target   = new Vector2();
+      31      private boolean moving = false;
+      32  
+      33 +    /**                                                        
+      34 +     * Позиція на початок поточного тіку. Рендер малює юніта мі
+         +ж нею і                                                        
+      35 +     * {@link #position}, інакше при 144 Гц рух виглядав би рив
+         +ками по 25 мс.                                                 
+      36 +     * До симуляції не належить і в checksum не входить.       
+      37 +     */                                                        
+      38 +    private final Vector2 previousPosition = new Vector2();    
+      39 +                                                               
+      40      public boolean selected = false;
+      41      public boolean alive    = true;
+      42  
+     ...
+      47          moving = true;
+      48      }
+      49  
+      43 -    public void update(float delta, float terrainSpeedMultiplie
+         -r) {                                                           
+      50 +    /** Запам'ятати, звідки юніт стартував цей тік. Викликаєтьс
+         +я перед {@link #tick}. */                                      
+      51 +    public void beginTick() {                                  
+      52 +        previousPosition.set(position);                        
+      53 +    }                                                          
+      54  
+      55 +    /**                                                        
+      56 +     * Один крок симуляції. Тривалість кроку — завжди {@link Ti
+         +ckRate#TICK_SECONDS},                                          
+      57 +     * а не час кадру: інакше юніт на слабшій машині проходив б
+         +и за секунду іншу                                              
+      58 +     * відстань, ніж на потужнішій, і матч розсинхронізувався б
+         + за кілька секунд.                                             
+      59 +     */                                                        
+      60 +    public void tick(float terrainSpeedMultiplier) {           
+      61          if (!alive) return;
+      62  
+      47 -        if (attackTimer > 0) {                                 
+      48 -            attackTimer -= delta;                              
+      49 -            // Тимчасово:                                      
+      50 -            if (attackTimer <= 0) {                            
+      51 -                Gdx.app.log("UNIT", team + " ready to attack!")
+         -;                                                              
+      52 -            }                                                  
+      53 -        }                                                      
+      54 -        if (!alive) return;                                    
+      63 +        // Один раз за тік. У попередній версії таймер зменшува
+         +вся двічі за                                                   
+      64 +        // виклик (на початку і в кінці), через що перезарядка 
+         +йшла вдвічі                                                    
+      65 +        // швидше за задану attackCooldown.                    
+      66 +        if (attackTimer > 0) attackTimer -= TickRate.TICK_SECON
+         +DS;                                                            
+      67  
+      68          if (moving) {
+      69              float dist = position.dst(target);
+     ...
+      71                  position.set(target);
+      72                  moving = false;
+      73              } else {
+      62 -                // ВИКОРИСТОВУЄМО ПЕРЕДАНИЙ МНОЖНИК            
+      74                  float effectiveSpeed = this.speed * terrainSpee
+          dMultiplier;
+      64 -                float step = effectiveSpeed * delta;           
+      75 +                float step = effectiveSpeed * TickRate.TICK_SEC
+         +ONDS;                                                          
+      76  
+      77                  float nx = position.x + (target.x - position.x)
+           / dist * step;
+      78                  float ny = position.y + (target.y - position.y)
+           / dist * step;
+      79                  position.set(nx, ny);
+      80              }
+      81          }
+      82 +    }                                                          
+      83  
+      72 -        if (attackTimer > 0) attackTimer -= delta;             
+      84 +    /** Позиція для малювання: між станом на початок тіку і пот
+         +очним. */                                                      
+      85 +    public float renderX(float alpha) {                        
+      86 +        return previousPosition.x + (position.x - previousPosit
+         +ion.x) * alpha;                                                
+      87      }
+      88  
+      89 +    public float renderY(float alpha) {                        
+      90 +        return previousPosition.y + (position.y - previousPosit
+         +ion.y) * alpha;                                                
+      91 +    }                                                          
+      92 +                                                               
+      93      public boolean isMoving() { return moving; }
+      94  
+      95      /**
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\Unit.java)
+  ⎿  Added 1 line, removed 2 lines
+      1  package io.jababa.lost_batalion.units;
+      2  
+      3 -import com.badlogic.gdx.Gdx;                                    
+      3  import com.badlogic.gdx.math.Vector2;
+      4  import io.jababa.lost_batalion.Team;
+      6 -import io.jababa.lost_batalion.terrain.TerrainType;             
+      5 +import io.jababa.lost_batalion.sim.TickRate;                    
+      6  
+      7  public abstract class Unit {
+      8  
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\Artillery.java)
+  ⎿  Added 3 lines, removed 3 lines
+      55      }
+      56  
+      57      @Override
+      58 -    public void update(float delta, float terrainSpeedMultiplie
+         -r) {                                                           
+      59 -        super.update(delta, terrainSpeedMultiplier);           
+      60 -        if (reloadTimer > 0f) reloadTimer -= delta;            
+      58 +    public void tick(float terrainSpeedMultiplier) {           
+      59 +        super.tick(terrainSpeedMultiplier);                    
+      60 +        if (reloadTimer > 0f) reloadTimer -= TickRate.TICK_SECO
+         +NDS;                                                           
+      61      }
+      62  
+      63      public boolean isReady()     { return reloadTimer <= 0f; }
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\Artillery.java)
+  ⎿  Added 1 line
+      1  package io.jababa.lost_batalion.units;
+      2  
+      3  import io.jababa.lost_batalion.Team;
+      4 +import io.jababa.lost_batalion.sim.TickRate;                    
+      5  
+      6  /**
+      7   * Артилерійський юніт.
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\UnitManager.java)
+  ⎿  Added 21 lines, removed 10 lines
+      21          addUnit(new Infantry(Team.PLAYER, centerX + spacing, ce
+          nterY));
+      22      }
+      23  
+      24 -    /** @param terrain спільний доступ до обох масок; null → мі
+         -сцевість ігнорується */                                        
+      25 -    public void update(float delta, TerrainQuery terrain) {    
+      26 -        for (Unit u : allUnits) {                              
+      24 +    /**                                                        
+      25 +     * Один крок симуляції для всіх юнітів.                    
+      26 +     *                                                         
+      27 +     * <p>Порядок обходу — індекси {@code allUnits}, і він муси
+         +ть бути однаковим                                              
+      28 +     * на всіх клієнтах: юніти впливають один на одного через б
+         +ій, тож обхід у                                                
+      29 +     * різному порядку дає різний результат. Саме тому тут {@co
+         +de Array}, а не                                                
+      30 +     * будь-яка колекція з хешуванням.                         
+      31 +     *                                                         
+      32 +     * @param terrain спільний доступ до обох масок; null → міс
+         +цевість ігнорується                                            
+      33 +     */                                                        
+      34 +    public void tick(TerrainQuery terrain) {                   
+      35 +        for (int i = 0; i < allUnits.size; i++) {              
+      36 +            Unit u = allUnits.get(i);                          
+      37 +            u.beginTick();                                     
+      38 +                                                               
+      39              float multiplier = terrain != null
+      40                  ? terrain.movementMultiplier(u.position.x, u.po
+          sition.y)
+      41                  : 1.0f;
+      30 -                                                               
+      31 -            // Тепер передаємо два аргументи                   
+      32 -            u.update(delta, multiplier);                       
+      42 +            u.tick(multiplier);                                
+      43          }
+      44  
+      35 -        // Очищення мертвих юнітів                             
+      36 -        Array<Unit> dead = new Array<>();                      
+      37 -        for (Unit u : allUnits) if (!u.alive) dead.add(u);     
+      38 -        selectedUnits.removeAll(dead, true);                   
+      45 +        // Мертві вилітають із виділення. Без нового Array на к
+         +ожен тік —                                                     
+      46 +        // при 40 тіках/с це були б 40 зайвих обʼєктів на секун
+         +ду в сміття.                                                   
+      47 +        for (int i = selectedUnits.size - 1; i >= 0; i--) {    
+      48 +            if (!selectedUnits.get(i).alive) selectedUnits.remo
+         +veIndex(i);                                                    
+      49 +        }                                                      
+      50      }
+      51  
+      52      // Оновлений метод для кліку по юніту
+
+● Тепер CombatManager — розділення симуляції й візуалу:
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\CombatManager.jav
+        a)
+  ⎿  Added 11 lines, removed 3 lines
+       94              if (groups.get(i).isEmpty()) groups.removeIndex(i)
+           ;
+       95      }
+       96  
+       97 -    public void update(float delta) {                         
+       97 +    /**                                                       
+       98 +     * Один крок бойової симуляції.                           
+       99 +     *                                                        
+      100 +     * <p>Снаряди артилерії оновлюються саме тут, а не разом і
+          +з рештою візуалу:                                             
+      101 +     * момент їхнього прильоту наносить урон, тобто змінює ста
+          +н гри. Якби вони                                              
+      102 +     * летіли за часом кадру, влучення відбувалось би на різни
+          +х тіках у різних                                              
+      103 +     * гравців — і це десинхрон, який зовні виглядав би як «у 
+          +нього артилерія                                               
+      104 +     * б'є точніше».                                          
+      105 +     */                                                       
+      106 +    public void tick() {                                      
+      107          Array<Unit> all = unitManager.getAllUnits();
+      108 +        final float delta = TickRate.TICK_SECONDS;            
+      109  
+      100 -        for (int i = 0; i < shots.size; i++) shots.get(i).upda
+          -te(delta);                                                    
+      101 -                                                              
+      110          // Артснаряди у польоті / вибухи (урон наноситься колб
+           еком при прильоті)
+      111          for (int i = artEffects.size - 1; i >= 0; i--) {
+      112              ArtilleryStrikeEffect eff = artEffects.get(i);
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\CombatManager.jav
+        a)
+  ⎿  Added 8 lines
+      147          }
+      148      }
+      149  
+      150 +    /**                                                       
+      151 +     * Суто візуальна частина: трасери пострілів. Йде за часом
+          + кадру, бо на стан                                            
+      152 +     * гри не впливає — урон уже нанесено в момент пострілу.  
+      153 +     */                                                       
+      154 +    public void updateVisuals(float delta) {                  
+      155 +        for (int i = 0; i < shots.size; i++) shots.get(i).upda
+          +te(delta);                                                    
+      156 +    }                                                         
+      157 +                                                              
+      158      public void drawShots(ShapeRenderer shapes) {
+      159          for (int i = 0; i < shots.size; i++) {
+      160              ShotEffect s = shots.get(i);
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\CombatManager.jav
+        a)
+  ⎿  Added 1 line, removed 1 line
+      134              if (!u.alive) continue;
+      135  
+      136              // Артилерія має власну логіку: авто-обстріл + руч
+           на ціль
+      137 -            if (u instanceof Artillery) { updateArtillery((Art
+          -illery) u, all, delta); continue; }                           
+      137 +            if (u instanceof Artillery) { updateArtillery((Art
+          +illery) u, all); continue; }                                  
+      138  
+      139              if (hasManualOrder(u)) continue;
+      140              Unit nearest = findNearestVisibleEnemy(u, all);
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\CombatManager.jav
+        a)
+  ⎿  Added 1 line, removed 1 line
+      306       * Одна артустановка за кадр: обирає ціль (ручну або авто)
+           , прицілюється
+      307       * STRIKE_AIM_TIME секунд, стріляє AoE-снарядом, іде на пе
+           резарядку.
+      308       */
+      309 -    private void updateArtillery(Artillery art, Array<Unit> al
+          -l, float delta) {                                             
+      309 +    private void updateArtillery(Artillery art, Array<Unit> al
+          +l) {                                                          
+      310          Unit target = null;
+      311  
+      312          // 1. Ручна ціль має пріоритет — поки жива й у радіусі
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\CombatManager.jav
+        a)
+  ⎿  Added 1 line, removed 1 line
+      321  
+      322          if (target == null || !art.isReady()) { art.aimTimer =
+            0f; return; }
+      323  
+      324 -        art.aimTimer += delta;                                
+      324 +        art.aimTimer += TickRate.TICK_SECONDS;                
+      325          if (art.aimTimer >= Artillery.STRIKE_AIM_TIME) {
+      326              fireArtillery(art, target);
+      327              art.aimTimer = 0f;
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\CombatManager.jav
+        a)
+  ⎿  Added 1 line
+      12  import io.jababa.lost_batalion.screens.effects.ArtilleryStrikeE
+          ffect;
+      13  import io.jababa.lost_batalion.screens.effects.ShotEffect;
+      14  import io.jababa.lost_batalion.screens.effects.TargetPopupManag
+          er;
+      15 +import io.jababa.lost_batalion.sim.TickRate;                   
+      16  import io.jababa.lost_batalion.terrain.TerrainCombatModifier;
+      17  import io.jababa.lost_batalion.terrain.TerrainQuery;
+      18  import io.jababa.lost_batalion.terrain.TerrainType;
+
+● Тепер GameSimulation — власник усього ігрового стану:
+
+● Write(main\core\src\main\java\io\jababa\lost_batalion\sim\GameSimulation.java)
+  ⎿  Wrote 111 lines to main\core\src\main\java\io\jababa\lost_batalion\sim
+     \GameSimulation.java
+       1 package io.jababa.lost_batalion.sim;
+       2 
+       3 import com.badlogic.gdx.utils.Array;
+       4 import io.jababa.lost_batalion.Team;
+       5 import io.jababa.lost_batalion.math.DeterministicRandom;
+       6 import io.jababa.lost_batalion.terrain.TerrainQuery;
+       7 import io.jababa.lost_batalion.units.Artillery;
+       8 import io.jababa.lost_batalion.units.CombatManager;
+       9 import io.jababa.lost_batalion.units.Infantry;
+      10 import io.jababa.lost_batalion.units.Unit;
+     … +128 lines (ctrl+o to expand)
+● Тепер інтерполяція в рендері юнітів і перебудова GameScreen:
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\renderer\UnitRe
+        nderer.java)
+  ⎿  Added 10 lines, removed 6 lines
+      27      /**
+      28       * Рендер спрайтів.
+      29       * Ворожі юніти, у яких visibleToPlayer == false, пропускаю
+          ться.
+      30 +     *                                                         
+      31 +     * @param alpha частка тіку, що вже минула (0..1). Позиція 
+         +береться між                                                   
+      32 +     *              станом на початок тіку і поточним — симуляц
+         +ія йде 40 разів                                                
+      33 +     *              на секунду, і без цього рух виглядав би рив
+         +ками.                                                          
+      34       */
+      31 -    public void drawSprites(SpriteBatch batch, Iterable<Unit> u
+         -nits) {                                                        
+      35 +    public void drawSprites(SpriteBatch batch, Iterable<Unit> u
+         +nits, float alpha) {                                           
+      36          for (Unit u : units) {
+      37              if (!u.alive) continue;
+      38              if (u.team != Team.PLAYER && !u.visibleToPlayer) co
+          ntinue; // туман
+      39  
+      40              Texture tex = getTexture(u);
+      41              float size  = u.getSize();
+      38 -            float x     = u.position.x - size / 2f;            
+      39 -            float y     = u.position.y - size / 2f;            
+      42 +            float x     = u.renderX(alpha) - size / 2f;        
+      43 +            float y     = u.renderY(alpha) - size / 2f;        
+      44              batch.draw(tex, x, y, size, size);
+      45          }
+      46      }
+     ...
+      49       * Рендер оверлеїв (виділення, HP-бар).
+      50       * Ворожі юніти, у яких visibleToPlayer == false, пропускаю
+          ться.
+      51       */
+      48 -    public void drawOverlays(Iterable<Unit> units) {           
+      52 +    public void drawOverlays(Iterable<Unit> units, float alpha)
+         + {                                                             
+      53          Gdx.gl.glEnable(GL20.GL_BLEND);
+      54          Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS
+          _SRC_ALPHA);
+      55  
+     ...
+      57          for (Unit u : units) {
+      58              if (!u.alive) continue;
+      59              if (u.team != Team.PLAYER && !u.visibleToPlayer) co
+          ntinue;
+      56 -            if (u.selected) drawOutline(u);                    
+      60 +            if (u.selected) drawOutline(u, alpha);             
+      61          }
+      62          shapes.end();
+      63  
+     ...
+      65          for (Unit u : units) {
+      66              if (!u.alive) continue;
+      67              if (u.team != Team.PLAYER && !u.visibleToPlayer) co
+          ntinue;
+      64 -            drawHpBar(u);                                      
+      68 +            drawHpBar(u, alpha);                               
+      69          }
+      70          shapes.end();
+      71  
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\renderer\UnitRe
+        nderer.java)
+  ⎿  Added 3 lines, removed 3 lines
+      78  
+      79      // ── Приватні методи ─────────────────────────────────────
+          ──────────────
+      80  
+      81 -    private void drawOutline(Unit u) {                         
+      81 +    private void drawOutline(Unit u, float alpha) {            
+      82          float size = u.getSize();
+      83          float pad  = OUTLINE_PAD;
+      84 -        float x    = u.position.x - size / 2f - pad;           
+      85 -        float y    = u.position.y - size / 2f - pad;           
+      84 +        float x    = u.renderX(alpha) - size / 2f - pad;       
+      85 +        float y    = u.renderY(alpha) - size / 2f - pad;       
+      86          float w    = size + pad * 2f;
+      87          float h    = size + pad * 2f;
+      88  
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\renderer\UnitRe
+        nderer.java)
+  ⎿  Added 3 lines, removed 3 lines
+       91  
+       92      }
+       93  
+       94 -    private void drawHpBar(Unit u) {                          
+       94 +    private void drawHpBar(Unit u, float alpha) {             
+       95          float size = u.getSize();
+       96          float barH = size;
+       97  
+       98 -        float x = u.position.x - size / 2f - BAR_LEFT - BAR_W;
+       99 -        float y = u.position.y - size / 2f;                   
+       98 +        float x = u.renderX(alpha) - size / 2f - BAR_LEFT - BA
+          +R_W;                                                          
+       99 +        float y = u.renderY(alpha) - size / 2f;               
+      100  
+      101          shapes.setColor(0.3f, 0f, 0f, 0.85f);
+      102          shapes.rect(x, y, BAR_W, barH);
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\game\GameScreen
+        .java)
+  ⎿  Added 12 lines, removed 1 line
+      58      private int cursorScreenX, cursorScreenY;
+      59      private float cursorWorldX, cursorWorldY;
+      60  
+      61 +    /** Увесь ігровий стан. Рухається тільки тіками по 25 мс. *
+         +/                                                              
+      62 +    private GameSimulation sim;                                
+      63 +    /** Перетворює час кадру на цілу кількість тіків. */       
+      64 +    private final LockstepClock clock = new LockstepClock();   
+      65 +    /** Частка тіку для інтерполяції рендеру, оновлюється щокад
+         +ру. */                                                         
+      66 +    private float renderAlpha;                                 
+      67 +                                                               
+      68 +    // Зручні посилання на підсистеми sim — щоб обробники вводу
+         + не писали                                                     
+      69 +    // sim.getUnitManager() у кожному рядку.                   
+      70      private UnitManager unitManager;
+      71 +    private CombatManager combatManager;                       
+      72 +    private VisibilitySystem visibilitySystem;                 
+      73 +                                                               
+      74      private UnitRenderer unitRenderer;
+      75      private MoveMarker moveMarker;
+      76      private FormationDragHandler formationDrag;
+      65 -    private CombatManager combatManager;                       
+      77  
+      78      private SelectionPanel selectionPanel;
+      79      private SpriteBatch panelBatch;
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\game\GameScreen
+        .java)
+  ⎿  Removed 1 line
+      79      private SpriteBatch panelBatch;
+      80      private CurvedFormationCommand curvedFormation;
+      81  
+      82 -    private VisibilitySystem visibilitySystem;                 
+      82      private FogOfWarRenderer fogRenderer;
+      83  
+      84      private TextButton formationBtn;
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\game\GameScreen
+        .java)
+  ⎿  Added 2 lines
+      86  
+      87      private final LostBatalion game;
+      88      private final ScenarioCard scenario;
+      89 +    /** Seed ігрового RNG. У мультиплеєрі приходить від хоста в
+         + StartMatch. */                                                
+      90 +    private final long rngSeed;                                
+      91  
+      92      public OrthographicCamera camera;
+      93      private SpriteBatch batch;
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\game\GameScreen
+        .java)
+  ⎿  Added 6 lines
+       98  
+       99      private float mapWidth, mapHeight;
+      100  
+      101 +    /** Одиночна гра: seed довільний, відтворюваність нікому н
+          +е потрібна. */                                                
+      102      public GameScreen(LostBatalion game, ScenarioCard scenario
+           ) {
+      103 +        this(game, scenario, System.nanoTime());              
+      104 +    }                                                         
+      105 +                                                              
+      106 +    public GameScreen(LostBatalion game, ScenarioCard scenario
+          +, long rngSeed) {                                             
+      107          this.game     = game;
+      108          this.scenario = scenario;
+      109 +        this.rngSeed  = rngSeed;                              
+      110      }
+      111  
+      112      @Override
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\game\GameScreen
+        .java)
+  ⎿  Added 7 lines, removed 17 lines
+      133          terrainCombatMask= new TerrainMaskManager(scenario.ter
+           rainMaskPath);    // яруси висот
+      134          terrain          = new TerrainQuery(terrainMask, terra
+           inCombatMask);
+      135  
+      136 -        unitManager     = new UnitManager();                  
+      136 +        sim = new GameSimulation(terrain, mapWidth, mapHeight,
+          + rngSeed);                                                    
+      137 +        sim.spawnInitialForces();                             
+      138 +        unitManager      = sim.getUnitManager();              
+      139 +        combatManager    = sim.getCombatManager();            
+      140 +        visibilitySystem = sim.getVisibility();               
+      141 +        clock.reset();                                        
+      142 +                                                              
+      143          unitRenderer    = new UnitRenderer();
+      144          moveMarker      = new MoveMarker();
+      145          formationDrag   = new FormationDragHandler();
+      146          curvedFormation = new CurvedFormationCommand();
+      147  
+      142 -        // Спавн піхоти                                       
+      143 -        unitManager.spawnPlayerSquad(mapWidth / 2f, mapHeight 
+          -/ 2f);                                                        
+      144 -        unitManager.spawnPlayerSquad(mapWidth / 2f, mapHeight 
+          -/ 1.7f);                                                      
+      145 -        unitManager.spawnPlayerSquad(mapWidth / 2f, mapHeight 
+          -/ 1.5f);                                                      
+      146 -                                                              
+      147 -        // Спавн артилерії гравця                             
+      148 -        unitManager.addUnit(new Artillery(Team.PLAYER, mapWidt
+          -h / 2f - 80f, mapHeight / 2f - 60f));                         
+      149 -        unitManager.addUnit(new Artillery(Team.PLAYER, mapWidt
+          -h / 2f + 80f, mapHeight / 2f - 60f));                         
+      150 -                                                              
+      151 -        // Ворог                                              
+      152 -        unitManager.addUnit(new Infantry(Team.ENEMY, mapWidth 
+          -* 0.75f, mapHeight * 0.6f));                                  
+      153 -        unitManager.addUnit(new Infantry(Team.ENEMY, mapWidth 
+          -* 0.75f + Infantry.INF_SIZE + 8f, mapHeight * 0.6f));         
+      154 -        unitManager.addUnit(new Infantry(Team.ENEMY, mapWidth 
+          -* 0.75f - Infantry.INF_SIZE - 8f, mapHeight * 0.6f));         
+      155 -                                                              
+      156 -        combatManager    = new CombatManager(unitManager, terr
+          -ain);                                                         
+      148          selectionPanel   = new SelectionPanel();
+      158 -        visibilitySystem = new VisibilitySystem(terrain);     
+      149          fogRenderer      = new FogOfWarRenderer(mapWidth, mapH
+           eight, terrain);
+      150          forestTooltip    = new ForestTooltip("ui/forest_toolti
+           p.png");
+      151  
+
+● Тепер сам цикл рендеру:
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\game\GameScreen
+        .java)
+  ⎿  Added 10 lines, removed 4 lines
+      231              }
+      232  
+      233              updateTerrainUnderCursor();
+      234 -            unitManager.update(delta, terrain);               
+      234 +                                                              
+      235 +            // ── Симуляція: рівно стільки цілих тіків, скільк
+          +и вмістилось ──                                               
+      236 +            // Час кадру всередину симуляції не потрапляє. Скі
+          +льки б не тривав                                              
+      237 +            // кадр, кожен тік просуває гру рівно на 25 мс.   
+      238 +            int ticks = clock.advance(delta);                 
+      239 +            for (int i = 0; i < ticks; i++) sim.tick();       
+      240 +            renderAlpha = clock.getAlpha();                   
+      241 +                                                              
+      242 +            // ── Візуал: за часом кадру, на стан гри не вплив
+          +ає ─────────────                                              
+      243              moveMarker.update(delta);
+      236 -            combatManager.update(delta);                      
+      244 +            combatManager.updateVisuals(delta);               
+      245              combatManager.updatePopups(delta);
+      246              selectionPanel.update(delta, unitManager.getSelect
+           edUnits());
+      247  
+      240 -            visibilitySystem.update(unitManager.getAllUnits())
+          -;                                                             
+      241 -                                                              
+      248              if (formationBtn != null) {
+      249                  formationBtn.setVisible(unitManager.hasSelecti
+           on());
+      250                  if (!unitManager.hasSelection() && formationMo
+           deActive) {
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\game\GameScreen
+        .java)
+  ⎿  Added 2 lines, removed 2 lines
+      265          batch.setProjectionMatrix(camera.combined);
+      266          batch.begin();
+      267          if (mapTexture != null) batch.draw(mapTexture, 0, 0);
+      268 -        unitRenderer.drawSprites(batch, unitManager.getAllUnit
+          -s());                                                         
+      268 +        unitRenderer.drawSprites(batch, unitManager.getAllUnit
+          +s(), renderAlpha);                                            
+      269          combatManager.drawPopups(batch);
+      270          batch.end();
+      271  
+      272          shapes.setProjectionMatrix(camera.combined);
+      273          unitRenderer.setProjectionMatrix(camera.combined);
+      274 -        unitRenderer.drawOverlays(unitManager.getAllUnits()); 
+      274 +        unitRenderer.drawOverlays(unitManager.getAllUnits(), r
+          +enderAlpha);                                                  
+      275  
+      276          combatManager.drawShots(shapes);
+      277          formationDrag.draw(shapes);
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\game\GameScreen
+        .java)
+  ⎿  Added 7 lines, removed 1 line
+      449      private void togglePause() {
+      450          paused = !paused;
+      451          pauseStage.clear();
+      452 -        if (paused) buildPauseOverlay();                      
+      452 +        if (paused) {                                         
+      453 +            buildPauseOverlay();                              
+      454 +        } else {                                              
+      455 +            // Час, що минув на паузі, не має перетворитись на
+          + пачку тіків                                                  
+      456 +            // наздоганяння в перший же кадр після зняття пауз
+          +и.                                                            
+      457 +            clock.reset();                                    
+      458 +        }                                                     
+      459      }
+      460  
+      461      private void buildPauseOverlay() {
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\game\GameScreen
+        .java)
+  ⎿  Added 2 lines
+      25  import io.jababa.lost_batalion.screens.renderer.UnitRenderer;
+      26  import io.jababa.lost_batalion.screens.scenario.ScenarioCard;
+      27  import io.jababa.lost_batalion.screens.ui.SelectionPanel;
+      28 +import io.jababa.lost_batalion.sim.GameSimulation;             
+      29 +import io.jababa.lost_batalion.sim.LockstepClock;              
+      30  import io.jababa.lost_batalion.terrain.TerrainMaskManager;
+      31  import io.jababa.lost_batalion.terrain.TerrainQuery;
+      32  import io.jababa.lost_batalion.terrain.TerrainType;
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\CombatManager.jav
+        a)
+  ⎿  Removed 6 lines
+      274              float defMult = TerrainCombatModifier.getDefenseMu
+           ltiplier(atkElev, defElev);
+      275              if (targetInForest) defMult *= 1.5f;
+      276  
+      277 -            Gdx.app.log("COMBAT",                             
+      278 -                "ATK elev=" + atkElev +                       
+      279 -                    " DEF elev=" + defElev +                  
+      280 -                    " IN_FOREST=" + targetInForest +          
+      281 -                    " TOTAL_MULT=" + defMult);                
+      282 -                                                              
+      277              attacker.attackWithTerrain(target, defMult);
+      278          } else {
+      279              attacker.attack(target);
+
+  Made 1 scratchpad edit +215, read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Тест знайшов три реальні речі. Виправляю.
+
+  1. Дрейф float-акумулятора — 144 FPS давало 399 тіків замість 400, а зависання
+  обрізалось до 7 замість 8:
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\sim\LockstepClock.java)
+  ⎿  Added 21 lines, removed 8 lines
+      10   */
+      11  public class LockstepClock {
+      12  
+      13 -    private float accumulator;                                 
+      13 +    /**                                                        
+      14 +     * Накопичений час у СЕКУНДАХ, але типом double.           
+      15 +     *                                                         
+      16 +     * <p>З float тут виходила систематична помилка: при 144 Гц
+         + крок кадру                                                    
+      17 +     * 1/144 не представний точно, і на десяти секундах набігав
+         + недолік майже                                                 
+      18 +     * на цілий тік — 399 замість 400. Помилка не випадкова, а 
+         +стала, тож із                                                  
+      19 +     * часом матчу вона тільки росла б. У double запасу точност
+         +і вистачає                                                     
+      20 +     * на години гри.                                          
+      21 +     */                                                        
+      22 +    private double accumulator;                                
+      23 +                                                               
+      24      /** Скільки тіків довелось відкинути через обмеження наздог
+          аняння. */
+      25      private int droppedTicks;
+      26  
+     ...
+      31      public int advance(float renderDelta) {
+      32          // Довгий кадр (перемикання вікна, завантаження ассетів
+          , точка зупину в
+      33          // дебагері) не має перетворюватись на хвилину прискоре
+          ної гри.
+      24 -        float clamped = Math.min(renderDelta, TickRate.MAX_CATC
+         -HUP_TICKS * TickRate.TICK_SECONDS);                            
+      34 +        double maxFrame = TickRate.MAX_CATCHUP_TICKS * (double)
+         + TickRate.TICK_SECONDS;                                        
+      35 +        double clamped  = Math.min(renderDelta, maxFrame);     
+      36          accumulator += clamped;
+      37  
+      38 +        final double step = TickRate.TICK_SECONDS;             
+      39 +                                                               
+      40          int ticks = 0;
+      28 -        while (accumulator >= TickRate.TICK_SECONDS && ticks < 
+         -TickRate.MAX_CATCHUP_TICKS) {                                  
+      29 -            accumulator -= TickRate.TICK_SECONDS;              
+      41 +        while (accumulator >= step && ticks < TickRate.MAX_CATC
+         +HUP_TICKS) {                                                   
+      42 +            accumulator -= step;                               
+      43              ticks++;
+      44          }
+      45  
+      33 -        if (accumulator >= TickRate.TICK_SECONDS) {            
+      46 +        if (accumulator >= step) {                             
+      47              // Не встигаємо навіть із наздоганянням — рахуємо б
+          орг і скидаємо
+      48              // залишок, щоб він не ріс безмежно.
+      36 -            droppedTicks += (int) (accumulator / TickRate.TICK_
+         -SECONDS);                                                      
+      37 -            accumulator %= TickRate.TICK_SECONDS;              
+      49 +            droppedTicks += (int) (accumulator / step);        
+      50 +            accumulator %= step;                               
+      51          }
+      52          return ticks;
+      53      }
+     ...
+      57       * Рендер малює юніта між його позицією на минулому і поточ
+          ному тіку.
+      58       */
+      59      public float getAlpha() {
+      47 -        return accumulator / TickRate.TICK_SECONDS;            
+      60 +        return (float) (accumulator / TickRate.TICK_SECONDS);  
+      61      }
+      62  
+      63      /**
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\sim\LockstepClock.java)  ⎿  Added 1 line, removed 1 line
+      68  
+      69      /** Скинути накопичене — після паузи, ресинку чи завантажен
+          ня. */
+      70      public void reset() {
+      71 -        accumulator = 0f;                                      
+      71 +        accumulator = 0d;                                      
+      72      }
+      73  }
+
+● 2. Дві симуляції з однаковим seed розходились по HP — MathUtils.random у
+  розкиді артилерії. Підключаю seeded RNG уже зараз:
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\CombatManager.jav
+        a)
+  ⎿  Added 7 lines
+      26      private final UnitManager  unitManager;
+      27      private final TerrainQuery terrain;
+      28  
+      29 +    /**                                                        
+      30 +     * Ігровий RNG матчу. Смикається лише звідси і лише в межах
+         + тіку —                                                        
+      31 +     * розкид артснаряда визначає точку вибуху, тобто хто скіль
+         +ки отримає урону.                                              
+      32 +     * Глобальний MathUtils.random тут давав різні влучення на 
+         +різних клієнтах.                                               
+      33 +     */                                                        
+      34 +    private final DeterministicRandom random;                  
+      35 +                                                               
+      36      private final Array<ShotEffect>  shots  = new Array<>();
+      37      private final Array<AttackOrder> orders = new Array<>();
+      38      private final Array<AttackGroup> groups = new Array<>();
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\CombatManager.jav
+        a)
+  ⎿  Added 2 lines, removed 5 lines
+      44      private Sound              shotSound;
+      45      private final float        soundVolume = 0.35f;
+      46  
+      47 -    public CombatManager(UnitManager unitManager) {            
+      48 -        this(unitManager, null);                               
+      49 -    }                                                          
+      50 -                                                               
+      51 -    public CombatManager(UnitManager unitManager, TerrainQuery 
+         -terrain) {                                                     
+      47 +    public CombatManager(UnitManager unitManager, TerrainQuery 
+         +terrain, DeterministicRandom random) {                         
+      48          this.unitManager = unitManager;
+      49          this.terrain     = terrain;
+      50 +        this.random      = random;                             
+      51  
+      52          for (int i = 0; i < MAX_SHOTS; i++) shots.add(new ShotE
+          ffect());
+      53          try {
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\CombatManager.jav
+        a)
+  ⎿  Added 4 lines, removed 2 lines
+      343      private void fireArtillery(Artillery art, Unit target) {
+      344          ArtilleryStrikeEffect.loadAssets();
+      345  
+      346 -        float angle  = MathUtils.random(0f, MathUtils.PI2);   
+      347 -        float spread = MathUtils.random(0f, Artillery.STRIKE_S
+          -PREAD);                                                       
+      346 +        // Два смикання RNG рівно на кожен постріл, у сталому 
+          +порядку —                                                     
+      347 +        // саме це тримає послідовність однаковою на всіх кліє
+          +нтах.                                                         
+      348 +        float angle  = Fixed.toFloat(random.nextAngle());     
+      349 +        float spread = Fixed.toFloat(random.nextFixed(Fixed.fr
+          +omFloat(Artillery.STRIKE_SPREAD)));                           
+      350          final float impX = target.position.x + MathUtils.cos(a
+           ngle) * spread;
+      351          final float impY = target.position.y + MathUtils.sin(a
+           ngle) * spread;
+      352  
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\units\CombatManager.jav
+        a)
+  ⎿  Added 2 lines
+       9  import com.badlogic.gdx.math.Vector2;
+      10  import com.badlogic.gdx.utils.Array;
+      11  import io.jababa.lost_batalion.Team;
+      12 +import io.jababa.lost_batalion.math.DeterministicRandom;       
+      13 +import io.jababa.lost_batalion.math.Fixed;                     
+      14  import io.jababa.lost_batalion.screens.effects.ArtilleryStrikeE
+          ffect;
+      15  import io.jababa.lost_batalion.screens.effects.ShotEffect;
+      16  import io.jababa.lost_batalion.screens.effects.TargetPopupManag
+          er;
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\sim\GameSimulation.java
+        )
+  ⎿  Added 1 line, removed 1 line
+      52          this.random    = new DeterministicRandom(rngSeed);
+      53  
+      54          this.unitManager      = new UnitManager();
+      55 -        this.combatManager    = new CombatManager(unitManager, 
+         -terrain);                                                      
+      55 +        this.combatManager    = new CombatManager(unitManager, 
+         +terrain, random);                                              
+      56          this.visibilitySystem = new VisibilitySystem(terrain);
+      57      }
+      58  
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Причина 144 FPS: крок брався з float-константи, яка трохи більша за 0.025.
+  Беру точний double від цілого tick rate:
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\sim\TickRate.java)
+  ⎿  Added 12 lines
+      26      public static final float TICK_SECONDS = 1f / TICKS_PER_SEC
+          OND;
+      27  
+      28      /**
+      29 +     * Той самий крок, але точним типом — для годинника, що наб
+         +ирає реальний час.                                             
+      30 +     *                                                         
+      31 +     * <p>{@link #TICK_SECONDS} як float дорівнює 0.02500000037
+         +2…, тобто трохи                                                
+      32 +     * БІЛЬШЕ за чверть сотої. Дрібниця, поки крок один; але го
+         +динник порівнює                                                
+      33 +     * з ним накопичену суму сотень кадрів, і надлишок множитьс
+         +я на кількість                                                 
+      34 +     * тіків: за десять секунд при 144 Гц набігав рівно один за
+         +гублений тік.                                                  
+      35 +     * Симуляція живе з float-кроком (він однаковий у всіх), а 
+         +годинник —                                                     
+      36 +     * з цим.                                                  
+      37 +     */                                                        
+      38 +    public static final double TICK_SECONDS_EXACT = 1.0 / TICKS
+         +_PER_SECOND;                                                   
+      39 +                                                               
+      40 +    /**                                                        
+      41       * Затримка виконання команди. Наказ, відданий під час тіку
+           N, виконується
+      42       * на тіку N + INPUT_DELAY_TICKS одночасно в усіх.
+      43       */
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\sim\LockstepClock.java)
+  ⎿  Added 3 lines, removed 3 lines
+      31      public int advance(float renderDelta) {
+      32          // Довгий кадр (перемикання вікна, завантаження ассетів
+          , точка зупину в
+      33          // дебагері) не має перетворюватись на хвилину прискоре
+          ної гри.
+      34 -        double maxFrame = TickRate.MAX_CATCHUP_TICKS * (double)
+         - TickRate.TICK_SECONDS;                                        
+      34 +        double maxFrame = TickRate.MAX_CATCHUP_TICKS * (double)
+         + TickRate.TICK_SECONDS_EXACT;                                  
+      35          double clamped  = Math.min(renderDelta, maxFrame);
+      36          accumulator += clamped;
+      37  
+      38 -        final double step = TickRate.TICK_SECONDS;             
+      38 +        final double step = TickRate.TICK_SECONDS_EXACT;       
+      39  
+      40          int ticks = 0;
+      41          while (accumulator >= step && ticks < TickRate.MAX_CATC
+          HUP_TICKS) {
+     ...
+      57       * Рендер малює юніта між його позицією на минулому і поточ
+          ному тіку.
+      58       */
+      59      public float getAlpha() {
+      60 -        return (float) (accumulator / TickRate.TICK_SECONDS);  
+      60 +        return (float) (accumulator / TickRate.TICK_SECONDS_EXA
+         +CT);                                                           
+      61      }
+      62  
+      63      /**
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Останній фейл — артефакт самого тесту: він сумував кадри у float і згодовував
+  трохи менше за 10 секунд. Рахую в double:
+
+  Made 1 scratchpad edit +10 -8, ran 1 shell command (ctrl+o to expand)
+
+● Перевіряю, що сам GameScreen після рефакторингу живий:
+
+  Made 1 scratchpad edit +18 -5 (ctrl+o to expand)
+
+● Update(main\core\src\main\java\io\jababa\lost_batalion\screens\game\GameScreen
+        .java)
+  ⎿  Added 1 line
+      325      }
+      326  
+      327      // ── Геттери ────────────────────────────────────────────
+           ───────────────
+      328 +    public GameSimulation getSimulation()              { retur
+          +n sim; }                                                      
+      329      public boolean isFormationModeActive()             { retur
+           n formationModeActive; }
+      330      public boolean isPaused()                          { retur
+           n paused; }
+      331      public boolean isSelecting()                       { retur
+           n selecting; }
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Етап 4 готовий — fixed-timestep цикл 40 Hz
+
+  Що змінилось
+
+  Симуляція виїхала з GameScreen.render у новий клас sim/GameSimulation і більше
+  не бачить часу кадру взагалі. Крок завжди 25 мс, скільки їх виконати — рахує
+  sim/LockstepClock.
+
+  Межа проведена так: усе, що впливає на стан гри, тікає; усе візуальне живе за
+  часом кадру.
+
+  ┌────────────────────────────────┬────────────────────────────────┐
+  │         Тіками (25 мс)         │         За часом кадру         │
+  ├────────────────────────────────┼────────────────────────────────┤
+  │ рух юнітів, таймери атаки      │ трасери пострілів              │
+  ├────────────────────────────────┼────────────────────────────────┤
+  │ бойові накази, авто-атака      │ маркери руху, спливаючі іконки │
+  ├────────────────────────────────┼────────────────────────────────┤
+  │ приціл і перезарядка артилерії │ панель виділення               │
+  ├────────────────────────────────┼────────────────────────────────┤
+  │ політ снаряда + AoE-урон       │ камера, ввід, туман            │
+  ├────────────────────────────────┼────────────────────────────────┤
+  │ видимість                      │                                │
+  └────────────────────────────────┴────────────────────────────────┘
+
+  Снаряди артилерії довелось віднести до симуляції, хоч це «ефект»: момент
+  прильоту наносить урон. За часом кадру влучення відбувалось би на різних тіках
+  у різних гравців — десинхрон, який зовні виглядав би як «у нього артилерія
+  б'є точніше».
+
+  Інтерполяція
+
+  Unit запам'ятовує позицію на початок тіку, renderX(alpha)/renderY(alpha) дають
+  проміжну. При 144 Гц рух плавний, хоч симуляція йде 40 разів на секунду.
+
+  Тест знайшов три реальні баги
+
+  1. attackTimer зменшувався двічі за виклик — на початку Unit.update і в кінці.
+  Перезарядка йшла вдвічі швидше за задану attackCooldown. Тепер один раз;
+  піхота реально перезаряджається 1.2 с, а не 0.6.
+
+  2. Дрейф float-акумулятора. При 144 Гц за 10 секунд губився рівно один тік
+  (399 замість 400) — і помилка не випадкова, а стала, тобто росла б із
+  тривалістю матчу. Причина точкова: TICK_SECONDS як float дорівнює
+  0.025000000372…, тобто трохи більше за потрібне, і цей надлишок множився на
+  кількість тіків. Годинник тепер рахує в double із точним кроком 1.0/40;
+  симуляція лишається на float-кроці (він однаковий у всіх).
+
+  Там же вилізло, що обрізання зависання давало 7 тіків замість 8 — та сама
+  причина.
+
+  3. Дві симуляції з однаковим seed розходились по HP. MathUtils.random у
+  розкиді артснаряда — глобальний незасіяний генератор libGDX. Різні точки
+  вибуху → різний AoE-урон. Це формально етап 6, але тест на детермінізм не мав
+  сенсу з цією діркою, тому підключив DeterministicRandom у CombatManager уже
+  зараз: рівно два смикання на постріл, у сталому порядку.
+
+  Ще прибрав Gdx.app.log("COMBAT", …) з tryAttack — він друкував рядок на кожен
+  удар кожного юніта.
+
+  Перевірено запуском
+
+  == LockstepClock ==
+  OK  60 FPS: 10 с -> 400 тіків        OK  144 FPS: 10 с -> 400 тіків
+  OK  30 FPS: 10 с -> 400 тіків        OK  рваний FPS (30..250): 400 тіків
+  OK  зависання на 3 с обрізане до 8 тіків (замість 120)
+  OK  alpha між тіками = 0.5
+  == Перезарядка ==
+  OK  кулдаун триває задані 1.2 с   тіків=49 очікувано=48
+  == Симуляція незалежна від FPS ==
+  OK  обидві пройшли 400 тіків (у другої — 10.02 с рваного реального часу)
+  OK  стан юнітів ідентичний
+  OK  після 600 тіків руху стан збігається
+  == Інтерполяція ==
+  OK  alpha=0 / 0.5 / 1 дають початок, середину, кінець тіку
+
+  ВСІ ПЕРЕВІРКИ ПРОЙДЕНІ
+
+  Плюс GameScreen у прихованому GL-вікні: симуляція протікала: 16 тіків за 34 
+  кадри.
+
+  Дві речі, які лишаються
+
+  Кулдаун 49 тіків замість 48 — накопичення похибки при відніманні float. Тест
+  пропускає з допуском ±1. Зникне на етапі 6 разом із переходом на fixed-point.
+
+  Team досі PLAYER/ENEMY. GameSimulation.spawnInitialForces поки що ставить ту
+  саму розстановку, що й раніше. Прив'язка армій до playerId — етап 5, разом із
+  командами.
+
+  Далі — Етап 5: система команд з input delay 2 тіки (перехоплення вводу →
+  команда → буфер → розсилка → синхронне виконання).
+
+✻ Churned for 11m 7s
+
+❯ збережи свою память із цієї сессії щоб завтра я міг сказати у сессії щоб ти   
+  відновив і продовжити роботу                                                  
+
+  Listed 1 directory, wrote 6 memories (ctrl+o to expand)
+
+● Пам'ять збережено — 5 файлів + індекс MEMORY.md.
+
+  ┌────────────────────────────────────┬─────────────────────────────────────┐
+  │                Файл                │              Що тримає              │
+  ├────────────────────────────────────┼─────────────────────────────────────┤
+  │ multiplayer-lockstep-progress      │ етапи 1-4 закриті, наступний 5, що  │
+  │                                    │ саме в ньому робити                 │
+  ├────────────────────────────────────┼─────────────────────────────────────┤
+  │                                    │ чотири твої рішення: fixed-point,   │
+  │ multiplayer-architecture-decisions │ 1v1, детермінована видимість для    │
+  │                                    │ всіх, UDP-broadcast                 │
+  ├────────────────────────────────────┼─────────────────────────────────────┤
+  │                                    │ що свідомо не полагоджено (кулдаун  │
+  │ lost-batalion-deferred-issues      │ 49/48, Team PLAYER/ENEMY, Unsafe у  │
+  │                                    │ Kryo, глухий кут із                 │
+  │                                    │ ServerDiscoveryHandler)             │
+  ├────────────────────────────────────┼─────────────────────────────────────┤
+  │                                    │ ./gradlew не працює без             │
+  │ lost-batalion-build-quirks         │ wrapper-jar, кириличний шлях ламає  │
+  │                                    │ classpath, де живуть смоук-тести    │
+  ├────────────────────────────────────┼─────────────────────────────────────┤
+  │ stage-by-stage-reporting           │ формат роботи: один етап за раз,    │
+  │                                    │ звіт у кінці, українською           │
+  └────────────────────────────────────┴─────────────────────────────────────┘
+
+  Завтра достатньо сказати щось на кшталт «продовжуй етап 5» — індекс
+  підтягнеться сам.
+
+  Два зауваження про те, чого пам'ять не замінює:
+
+  Код не закомічений. Усі зміни чотирьох етапів лежать у робочій директорії
+  main. Якщо щось їх зачепить до завтра, пам'ять їх не відновить. Скажи, якщо
+  хочеш, щоб я зробив коміт — я цього не робив, бо ти не просив.
+
+  Смоук-тести в scratchpad зникнуть. Каталог сесійний. NetSmokeTest,
+  NetLobbyTest, SimTickTest, UiSmokeTest доведеться написати наново — у пам'яті
+  записано, що вони робили і як запускались, але не самі файли. Якщо хочеш, щоб
+  вони пережили сесію, їх треба покласти в репозиторій — скажи куди, і перенесу.
+
+✻ Cooked for 1m 56s

@@ -1,10 +1,9 @@
 package io.jababa.lost_batalion.units;
 
-import com.badlogic.gdx.Gdx;
-import com.badlogic.gdx.Input;
-import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.utils.Array;
+import com.badlogic.gdx.utils.IntMap;
 import io.jababa.lost_batalion.Team;
+import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.terrain.TerrainQuery;
 
 public class UnitManager {
@@ -12,53 +11,106 @@ public class UnitManager {
     private final Array<Unit> allUnits      = new Array<>();
     private final Array<Unit> selectedUnits = new Array<>();
 
-    public void addUnit(Unit unit) { allUnits.add(unit); }
+    /**
+     * Пошук за id. Команди по мережі несуть числа, а не посилання, тож цей
+     * перехід робиться на кожен наказ — лінійний обхід масиву там був би зайвим.
+     */
+    private final IntMap<Unit> byId = new IntMap<>();
 
-    public void spawnPlayerSquad(float centerX, float centerY) {
-        float spacing = Infantry.INF_SIZE + 8f;
-        addUnit(new Infantry(Team.PLAYER, centerX - spacing, centerY));
-        addUnit(new Infantry(Team.PLAYER, centerX, centerY));
-        addUnit(new Infantry(Team.PLAYER, centerX + spacing, centerY));
+    /**
+     * Лічильник id. Зростає в порядку створення юнітів; розстановка детермінована,
+     * тож на всіх клієнтах ті самі юніти отримують ті самі номери.
+     */
+    private int nextId = 0;
+
+    public void addUnit(Unit unit) {
+        unit.id = nextId++;
+        allUnits.add(unit);
+        byId.put(unit.id, unit);
     }
 
-    /** @param terrain спільний доступ до обох масок; null → місцевість ігнорується */
-    public void update(float delta, TerrainQuery terrain) {
-        for (Unit u : allUnits) {
-            float multiplier = terrain != null
-                ? terrain.movementMultiplier(u.position.x, u.position.y)
-                : 1.0f;
+    /** @return юніт із таким id або null, якщо його ніколи не було */
+    public Unit findById(int id) { return byId.get(id); }
 
-            // Тепер передаємо два аргументи
-            u.update(delta, multiplier);
+    /**
+     * Живі юніти команди {@code owner} із переліку id.
+     *
+     * <p>Мовчки пропускає невідомі та мертві id (юніт загинув між віддачею
+     * наказу і тіком його виконання — звичайна гонка при input delay) і чужих
+     * юнітів: інакше підроблене повідомлення дало б командувати ворожою армією.
+     */
+    public Array<Unit> collectOwned(int[] ids, Team owner, Array<Unit> out) {
+        out.clear();
+        if (ids == null) return out;
+        for (int i = 0; i < ids.length; i++) {
+            Unit u = byId.get(ids[i]);
+            if (u == null || !u.alive || u.team != owner) continue;
+            out.add(u);
+        }
+        return out;
+    }
+
+    /** Відстань між сусідами у відділенні (Q47.16). */
+    private static final long SQUAD_SPACING = Infantry.INF_SIZE_FIXED + Fixed.fromInt(8);
+    /** Відстань між юнітами в сітці наказу руху (Q47.16). */
+    private static final long GRID_SPACING  = Infantry.INF_SIZE_FIXED + Fixed.fromInt(6);
+
+    public void spawnSquad(Team team, long centerX, long centerY) {
+        addUnit(new Infantry(team, centerX - SQUAD_SPACING, centerY));
+        addUnit(new Infantry(team, centerX, centerY));
+        addUnit(new Infantry(team, centerX + SQUAD_SPACING, centerY));
+    }
+
+    /**
+     * Один крок симуляції для всіх юнітів.
+     *
+     * <p>Порядок обходу — індекси {@code allUnits}, і він мусить бути однаковим
+     * на всіх клієнтах: юніти впливають один на одного через бій, тож обхід у
+     * різному порядку дає різний результат. Саме тому тут {@code Array}, а не
+     * будь-яка колекція з хешуванням.
+     *
+     * @param terrain спільний доступ до обох масок; null → місцевість ігнорується
+     */
+    public void tick(TerrainQuery terrain) {
+        for (int i = 0; i < allUnits.size; i++) {
+            Unit u = allUnits.get(i);
+            u.beginTick();
+
+            long multiplier = terrain != null
+                ? terrain.movementMultiplierF(u.x, u.y)
+                : Fixed.ONE;
+            u.tick(multiplier);
         }
 
-        // Очищення мертвих юнітів
-        Array<Unit> dead = new Array<>();
-        for (Unit u : allUnits) if (!u.alive) dead.add(u);
-        selectedUnits.removeAll(dead, true);
+        // Мертві вилітають із виділення. Без нового Array на кожен тік —
+        // при 40 тіках/с це були б 40 зайвих обʼєктів на секунду в сміття.
+        for (int i = selectedUnits.size - 1; i >= 0; i--) {
+            if (!selectedUnits.get(i).alive) selectedUnits.removeIndex(i);
+        }
     }
 
-    // Оновлений метод для кліку по юніту
-    public boolean trySelectAtPointAnyTeam(float x, float y, boolean shift) {
+    // ── Виділення ─────────────────────────────────────────────────────────
+    //
+    // Виділення — суто локальний стан UI: воно в кожного своє, по мережі не
+    // їздить і в симуляцію не входить. Тому тут координати приймаються у float
+    // (вони приходять від камери) — жодного впливу на стан гри це не має.
+
+    /** Клік по юніту. Обирати можна лише своїх — чужа армія не слухається. */
+    public boolean trySelectAtPoint(float x, float y, boolean shift, Team owner) {
         Unit found = null;
         for (int i = 0; i < allUnits.size; i++) {
             Unit u = allUnits.get(i);
-            if (u == null || !u.alive) continue;
-            float halfSize = u.getSize() / 2f;
-            if (x >= u.position.x - halfSize && x <= u.position.x + halfSize &&
-                y >= u.position.y - halfSize && y <= u.position.y + halfSize) {
+            if (u == null || !u.alive || u.team != owner) continue;
+            float halfSize = u.getSizePx() / 2f;
+            if (x >= u.worldX() - halfSize && x <= u.worldX() + halfSize &&
+                y >= u.worldY() - halfSize && y <= u.worldY() + halfSize) {
                 found = u;
                 break; // Беремо першого знайденого зверху
             }
         }
 
         if (found != null) {
-            // Якщо SHIFT не натиснуто - очищуємо все старе
-            if (!shift) {
-                clearSelection();
-            }
-
-            // Додаємо юніта, якщо його ще немає у списку
+            if (!shift) clearSelection();
             if (!selectedUnits.contains(found, true)) {
                 found.selected = true;
                 selectedUnits.add(found);
@@ -68,18 +120,14 @@ public class UnitManager {
         return false;
     }
 
-    // Виділення рамкою
-    public void selectInRect(float rx, float ry, float rw, float rh, boolean shift) {
-        // Якщо не шифт - скидаємо старе виділення перед початком
-        if (!shift) {
-            clearSelection();
-        }
+    /** Виділення рамкою — теж лише своїх. */
+    public void selectInRect(float rx, float ry, float rw, float rh, boolean shift, Team owner) {
+        if (!shift) clearSelection();
 
-        Rectangle rect = new Rectangle(rx, ry, rw, rh);
         for (Unit u : allUnits) {
-            if (!u.alive) continue;
-            // Для тестування можна додати перевірку на команду PLAYER
-            if (rect.contains(u.position.x, u.position.y)) {
+            if (!u.alive || u.team != owner) continue;
+            float ux = u.worldX(), uy = u.worldY();
+            if (ux >= rx && ux <= rx + rw && uy >= ry && uy <= ry + rh) {
                 if (!selectedUnits.contains(u, true)) {
                     u.selected = true;
                     selectedUnits.add(u);
@@ -93,40 +141,164 @@ public class UnitManager {
         selectedUnits.clear();
     }
 
-    // --- Решта методів без змін (рух і т.д.) ---
+    /** Id виділених юнітів — те, що піде в команду. */
+    public int[] selectedIds() {
+        int[] ids = new int[selectedUnits.size];
+        for (int i = 0; i < selectedUnits.size; i++) ids[i] = selectedUnits.get(i).id;
+        return ids;
+    }
 
-    public void moveSelectedTo(float worldX, float worldY, float mapW, float mapH) {
-        int count = selectedUnits.size;
+    // ── Накази руху ───────────────────────────────────────────────────────
+    //
+    // Усе у Q47.16 і на явному списку юнітів, а не на виділенні: викликаються
+    // вони вже з тіку виконання команди, коли локальне виділення ні до чого.
+
+    /** Шикування сіткою навколо точки. */
+    public void moveUnitsTo(Array<Unit> units, long targetX, long targetY, long mapW, long mapH) {
+        int count = units.size;
         if (count == 0) return;
-        float spacing = Infantry.INF_SIZE + 6f;
-        int cols = Math.max(1, (int) Math.ceil(Math.sqrt(count)));
+        int cols = Math.max(1, Fixed.ceilSqrtInt(count));
         for (int i = 0; i < count; i++) {
-            Unit u = selectedUnits.get(i);
+            Unit u = units.get(i);
             int col = i % cols;
             int row = i / cols;
-            float tx = worldX + (col - cols / 2f) * spacing;
-            float ty = worldY - row * spacing;
-            float half = u.getSize() * 0.5f;
-            tx = Math.max(half, Math.min(mapW - half, tx));
-            ty = Math.max(half, Math.min(mapH - half, ty));
-            u.moveTo(tx, ty);
+            // (col - cols/2) з половинкою: колонки центруються навколо цілі.
+            long offset = Fixed.mul(Fixed.fromInt(col * 2 - cols) >> 1, GRID_SPACING);
+            long tx = targetX + offset;
+            long ty = targetY - Fixed.mul(Fixed.fromInt(row), GRID_SPACING);
+            moveClamped(u, tx, ty, mapW, mapH);
         }
     }
 
-    public void moveSelectedToLine(float x1, float y1, float x2, float y2, float mapW, float mapH) {
-        int count = selectedUnits.size;
+    /** Шикування в лінію між двома точками. */
+    public void moveUnitsToLine(Array<Unit> units, long x1, long y1, long x2, long y2,
+                                long mapW, long mapH) {
+        int count = units.size;
         if (count == 0) return;
-        float dx = x2 - x1, dy = y2 - y1;
-        float len = (float) Math.sqrt(dx * dx + dy * dy);
-        if (len < 0.01f) return;
+        long dx = x2 - x1, dy = y2 - y1;
+        if (Fixed.length(dx, dy) < Fixed.fromFloat(0.01f)) return;
+
         for (int i = 0; i < count; i++) {
-            Unit u = selectedUnits.get(i);
-            float t = count == 1 ? 0.5f : (float) i / (count - 1);
-            float tx = x1 + dx * t, ty = y1 + dy * t;
-            float half = u.getSize() * 0.5f;
-            tx = Math.max(half, Math.min(mapW - half, tx));
-            ty = Math.max(half, Math.min(mapH - half, ty));
-            u.moveTo(tx, ty);
+            Unit u = units.get(i);
+            // t = i / (count-1), одиничний юніт стає посередині
+            long t = count == 1 ? Fixed.HALF : Fixed.divInt(Fixed.fromInt(i), count - 1);
+            moveClamped(u, x1 + Fixed.mul(dx, t), y1 + Fixed.mul(dy, t), mapW, mapH);
+        }
+    }
+
+    /**
+     * Рівномірне шикування вздовж ламаної.
+     *
+     * <p>Точки приходять уже проріджені автором наказу: густота сирого сліду
+     * курсора залежить від його FPS, а прорідити її однаково на всіх клієнтах
+     * неможливо.
+     *
+     * @param pointsXY пари координат підряд: x0, y0, x1, y1, … (Q47.16)
+     */
+    public void moveUnitsAlongPath(Array<Unit> units, long[] pointsXY, long mapW, long mapH) {
+        int count  = units.size;
+        int points = pointsXY == null ? 0 : pointsXY.length / 2;
+        if (count == 0 || points < 2) return;
+
+        long[] segLens = new long[points - 1];
+        long totalLen = 0;
+        for (int i = 0; i < points - 1; i++) {
+            segLens[i] = Fixed.length(pointsXY[(i + 1) * 2]     - pointsXY[i * 2],
+                                      pointsXY[(i + 1) * 2 + 1] - pointsXY[i * 2 + 1]);
+            totalLen  += segLens[i];
+        }
+        if (totalLen < Fixed.fromFloat(0.01f)) return;
+
+        for (int ui = 0; ui < count; ui++) {
+            long t      = count == 1 ? Fixed.HALF : Fixed.divInt(Fixed.fromInt(ui), count - 1);
+            long target = Fixed.mul(t, totalLen);
+
+            long accumulated = 0;
+            long px = pointsXY[0], py = pointsXY[1];
+
+            for (int si = 0; si < segLens.length; si++) {
+                long ax = pointsXY[si * 2],       ay = pointsXY[si * 2 + 1];
+                long bx = pointsXY[(si + 1) * 2], by = pointsXY[(si + 1) * 2 + 1];
+                if (accumulated + segLens[si] >= target) {
+                    long localT = segLens[si] == 0 ? 0 : Fixed.div(target - accumulated, segLens[si]);
+                    px = ax + Fixed.mul(bx - ax, localT);
+                    py = ay + Fixed.mul(by - ay, localT);
+                    break;
+                }
+                accumulated += segLens[si];
+                px = bx; py = by;
+            }
+
+            moveClamped(units.get(ui), px, py, mapW, mapH);
+        }
+    }
+
+    private void moveClamped(Unit u, long tx, long ty, long mapW, long mapH) {
+        long half = u.getSize() >> 1;
+        u.moveTo(Fixed.clamp(tx, half, mapW - half),
+                 Fixed.clamp(ty, half, mapH - half));
+    }
+
+    // ── Знімок стану (ресинк) ─────────────────────────────────────────────
+
+    /** Дискримінатор типу юніта у знімку. Значення — частина формату. */
+    private static final byte KIND_INFANTRY  = 0;
+    private static final byte KIND_ARTILLERY = 1;
+
+    public void writeSnapshot(java.io.DataOutputStream out) throws java.io.IOException {
+        out.writeInt(nextId);
+        out.writeInt(allUnits.size);
+        for (int i = 0; i < allUnits.size; i++) {
+            Unit u = allUnits.get(i);
+            out.writeByte(u instanceof Artillery ? KIND_ARTILLERY : KIND_INFANTRY);
+            out.writeInt(u.team.ordinal());
+            u.writeSnapshot(out);
+        }
+    }
+
+    /**
+     * Відновити список юнітів зі знімка.
+     *
+     * <p>Юніти створюються заново, а не оновлюються на місці: після
+     * розбіжності склад армій теж міг розійтись, і зіставляти «хто тут зайвий»
+     * складніше й ризикованіше, ніж побудувати все з нуля. Ціна — втрачене
+     * виділення, і воно свідомо не відновлюється: це локальний стан UI, у
+     * кожного свій, і в знімку його немає.
+     *
+     * <p>Характеристики (швидкість, урон, дальність) не пишуться в знімок
+     * узагалі — вони сталі й задаються конструктором. Писати їх означало б
+     * дозволити знімку від однієї збірки нав'язати чужий баланс.
+     */
+    public void readSnapshot(java.io.DataInputStream in) throws java.io.IOException {
+        allUnits.clear();
+        selectedUnits.clear();
+        byId.clear();
+
+        nextId = in.readInt();
+        int count = in.readInt();
+        Team[] teams = Team.values();
+
+        for (int i = 0; i < count; i++) {
+            byte kind = in.readByte();
+            Team team = teams[in.readInt()];
+
+            Unit u = kind == KIND_ARTILLERY ? new Artillery(team, 0, 0)
+                                            : new Infantry(team, 0, 0);
+            u.readSnapshot(in);
+
+            allUnits.add(u);
+            byId.put(u.id, u);
+        }
+
+        // Другий прохід: ручні цілі артилерії — це посилання, а посилатись
+        // можна лише на юніта, який уже створений.
+        for (int i = 0; i < allUnits.size; i++) {
+            Unit u = allUnits.get(i);
+            if (!(u instanceof Artillery)) continue;
+            Artillery a = (Artillery) u;
+            a.manualTarget = a.pendingManualTargetId < 0 ? null
+                                                         : byId.get(a.pendingManualTargetId);
+            a.pendingManualTargetId = -1;
         }
     }
 

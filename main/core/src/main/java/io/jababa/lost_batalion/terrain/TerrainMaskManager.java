@@ -202,12 +202,23 @@ public class TerrainMaskManager {
         return NONE_ORD;
     }
 
-    public boolean isForestAt(float worldX, float worldY) {
-        return ordinalAt(worldX, worldY) == FOREST_ORD;
+    /**
+     * Запит за ІНДЕКСОМ пікселя.
+     *
+     * <p>Основний вхід для симуляції: вона тримає координати у fixed-point і
+     * переводить їх у піксель відкиданням дробової частини — точною
+     * цілочисельною операцією. Приймати тут float означало б, що межа пікселя
+     * залежить від округлення, а різні клієнти можуть опинитись по різні боки
+     * цієї межі.
+     *
+     * @param worldPy Y у СВІТОВИХ пікселях (вгору), а не в координатах pixmap
+     */
+    public boolean isForestAtPixel(int px, int worldPy) {
+        return ordinalAtPixel(px, worldPy) == FOREST_ORD;
     }
 
-    public TerrainType getElevationAt(float worldX, float worldY) {
-        byte ord = ordinalAt(worldX, worldY);
+    public TerrainType getElevationAtPixel(int px, int worldPy) {
+        byte ord = ordinalAtPixel(px, worldPy);
         // Ліс не несе даних про висоту (він з іншої маски) — трактуємо як NONE,
         // так само як раніше робив старий getElevationAt, що просто його не перевіряв.
         if (ord == FOREST_ORD) return TerrainType.NONE;
@@ -215,14 +226,13 @@ public class TerrainMaskManager {
     }
 
     /**
-     * Тип місцевості (ordinal) у світових координатах.
+     * Тип місцевості (ordinal) за індексом пікселя.
      * Y перевертається: світ — Y вгору, pixmap — Y вниз.
      */
-    private byte ordinalAt(float worldX, float worldY) {
+    private byte ordinalAtPixel(int px, int worldPy) {
         if (!loaded) return NONE_ORD;
 
-        int px = (int) worldX;
-        int py = height - 1 - (int) worldY;
+        int py = height - 1 - worldPy;
         if (px < 0 || py < 0 || px >= width || py >= height) return NONE_ORD;
 
         return typeGrid[py * width + px];

@@ -1,22 +1,34 @@
 package io.jababa.lost_batalion.terrain;
 
-public class TerrainMovementModifier {
-    // Коефіцієнти (1.0 = повна швидкість)
-    public static final float FOREST_PENALTY = 0.70f; // -30%
-    public static final float RIVER_PENALTY  = 0.40f; // -60%
-    public static final float HILL_PENALTY   = 0.85f; // -15% (для височин)
+import io.jababa.lost_batalion.math.Fixed;
 
-    public static float getMultiplier(TerrainType terrain, boolean isInForest) {
-        float multiplier = 1.0f;
+/**
+ * Множник швидкості від місцевості.
+ *
+ * <p>Коефіцієнти — константи у Q47.16. Це не педантизм: множник потрапляє
+ * прямо в крок руху юніта кожен тік, тобто це найгарячіше місце симуляції.
+ */
+public class TerrainMovementModifier {
+
+    /** -30% у лісі. */
+    public static final long FOREST_PENALTY = Fixed.fromFloat(0.70f);
+    /** -60% у річці. */
+    public static final long RIVER_PENALTY  = Fixed.fromFloat(0.40f);
+    /** -15% на височинах. */
+    public static final long HILL_PENALTY   = Fixed.fromFloat(0.85f);
+
+    /** @return множник у Q47.16, {@link Fixed#ONE} = повна швидкість */
+    public static long getMultiplier(TerrainType terrain, boolean isInForest) {
+        long multiplier = Fixed.ONE;
 
         // Ефекти накладаються (множаться)
-        if (isInForest) multiplier *= FOREST_PENALTY;
+        if (isInForest) multiplier = Fixed.mul(multiplier, FOREST_PENALTY);
 
         if (terrain == TerrainType.RIVER) {
-            multiplier *= RIVER_PENALTY;
+            multiplier = Fixed.mul(multiplier, RIVER_PENALTY);
         } else if (terrain == TerrainType.HIGHLANDS || terrain == TerrainType.PRE_HIGHLANDS) {
             // Юніти трохи повільніші на крутих підйомах
-            multiplier *= HILL_PENALTY;
+            multiplier = Fixed.mul(multiplier, HILL_PENALTY);
         }
 
         return multiplier;

@@ -70,6 +70,10 @@ public class LostBatalion extends Game {
 
         public static boolean isFullscreen() { return getPrefs().getBoolean("fullscreen", false); }
         public static void setFullscreen(boolean val) { getPrefs().putBoolean("fullscreen", val).flush(); }
+
+        /** Нік для мультиплеєра. Запам'ятовується, щоб не вводити його щоразу. */
+        public static String getNick() { return getPrefs().getString("nick", ""); }
+        public static void setNick(String val) { getPrefs().putString("nick", val == null ? "" : val).flush(); }
     }
 
     @Override

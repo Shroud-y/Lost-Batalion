@@ -7,6 +7,7 @@ import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.FloatArray;
 import io.jababa.lost_batalion.Team;
+import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.terrain.TerrainQuery;
 import io.jababa.lost_batalion.units.Unit;
 
@@ -103,6 +104,13 @@ public class FogOfWarRenderer {
     private final float mapHeight;
     private final TerrainQuery terrain;
 
+    /**
+     * Чиїми очима малюється туман. Раніше було жорстко Team.PLAYER — в одиночній
+     * грі спостерігач один. У матчі 1v1 гість дивиться зі свого боку, тож
+     * сторона задається ззовні.
+     */
+    private Team viewer = Team.PLAYER;
+
     // Cached ALT-overlay fan, as a boundary polygon in increasing-angle order.
     // The masks are immutable, so the fan depends only on the cursor position —
     // recomputed only when the cursor actually moves. Size varies with how much
@@ -122,6 +130,9 @@ public class FogOfWarRenderer {
         this.mapHeight = mapHeight;
         this.terrain   = terrain;
     }
+
+    /** Сторона, з чиєї позиції малюється туман. */
+    public void setViewer(Team viewer) { this.viewer = viewer; }
 
     /**
      * Render fog. Call AFTER map and units, BEFORE HUD.
@@ -146,9 +157,9 @@ public class FogOfWarRenderer {
         shapes.setColor(1f, 1f, 1f, 1f);
         for (int i = 0; i < allUnits.size; i++) {
             Unit u = allUnits.get(i);
-            if (u.team != Team.PLAYER || !u.alive) continue;
+            if (u.team != viewer || !u.alive) continue;
             float sight = computeEffectiveSight(u);
-            shapes.circle(u.position.x, u.position.y, sight, CIRCLE_SEGMENTS);
+            shapes.circle(u.worldX(), u.worldY(), sight, CIRCLE_SEGMENTS);
         }
         shapes.end();
 
@@ -169,7 +180,7 @@ public class FogOfWarRenderer {
         shapes.begin(ShapeRenderer.ShapeType.Filled);
         for (int i = 0; i < allUnits.size; i++) {
             Unit u = allUnits.get(i);
-            if (u.team != Team.PLAYER || !u.alive) continue;
+            if (u.team != viewer || !u.alive) continue;
             drawSoftEdge(shapes, u);
         }
         shapes.end();
@@ -474,8 +485,8 @@ public class FogOfWarRenderer {
     private void drawSoftEdge(ShapeRenderer shapes, Unit observer) {
         float sight      = computeEffectiveSight(observer);
         float innerBound = Math.max(0f, sight - SOFT_ZONE);
-        float cx         = observer.position.x;
-        float cy         = observer.position.y;
+        float cx         = observer.worldX();
+        float cy         = observer.worldY();
 
         for (int s = 0; s < SOFT_STEPS; s++) {
             float t     = (float) s       / SOFT_STEPS;
@@ -511,8 +522,10 @@ public class FogOfWarRenderer {
      * Mirrors VisibilitySystem.sightMod so the visual circle matches detection.
      */
     private float computeEffectiveSight(Unit observer) {
-        float x = observer.position.x;
-        float y = observer.position.y;
+        // sightRange живе у fixed-point (це стан гри) — на межі рендеру
+        // переводимо його у float рівно один раз, тут.
+        float x = observer.worldX();
+        float y = observer.worldY();
 
         float mod = isForestAt(x, y) ? FOREST_SIGHT_PENALTY : 1f;
 
@@ -526,7 +539,7 @@ public class FogOfWarRenderer {
             }
         }
 
-        return observer.sightRange * mod;
+        return Fixed.toFloat(observer.sightRange) * mod;
     }
 
     private boolean isForestAt(float x, float y) {

@@ -1,0 +1,163 @@
+package io.jababa.lost_batalion.sim;
+
+import com.badlogic.gdx.utils.Array;
+import io.jababa.lost_batalion.Team;
+import io.jababa.lost_batalion.units.Artillery;
+import io.jababa.lost_batalion.units.CombatManager;
+import io.jababa.lost_batalion.units.Unit;
+
+/**
+ * Хеш стану симуляції — детектор десинхрону.
+ *
+ * <h3>Навіщо, якщо симуляція вже детермінована</h3>
+ * Детермінізм доведений на двох клієнтах в одному процесі й на одній JVM. У
+ * реальному матчі це різні машини, різні збірки, іноді різні платформи. Тиха
+ * розбіжність — найгірший можливий результат: гравці ще годину бачать різні
+ * бої й дізнаються про це, коли один святкує перемогу, а другий поразку.
+ * Хеш ловить це за секунду.
+ *
+ * <h3>Чому не один число, а компоненти</h3>
+ * Один хеш відповідає лише «розійшлось». Розбитий на частини — відповідає
+ * «розійшлись позиції, а hp збіглись», і це майже завжди одразу вказує на
+ * підсистему. Коштує це п'ять зайвих {@code long} раз на секунду, тобто нічого.
+ *
+ * <h3>Що входить і що ні</h3>
+ * Входить усе, що впливає на майбутні тіки: позиції, здоров'я, таймери, накази
+ * атаки, снаряди в польоті, видимість ОБОХ сторін і стан RNG. Не входить нічого
+ * візуального й нічого локального — виділення юнітів у кожного своє, і різне
+ * виділення це не десинхрон.
+ *
+ * <p>Стан RNG входить окремим компонентом навмисно: якщо розійшлась лише
+ * кількість смикань генератора, решта ще збігається, і саме цей компонент
+ * назве причину, поки її ще видно.
+ */
+public final class StateChecksum {
+
+    private StateChecksum() {}
+
+    // ── Компоненти ────────────────────────────────────────────────────────
+
+    public static final int C_POSITIONS  = 0;
+    public static final int C_HEALTH     = 1;
+    public static final int C_TIMERS     = 2;
+    public static final int C_ORDERS     = 3;
+    public static final int C_VISIBILITY = 4;
+    public static final int C_RNG        = 5;
+    public static final int COMPONENTS   = 6;
+
+    private static final String[] NAMES = {
+        "позиції", "здоров'я", "таймери", "накази", "видимість", "RNG"
+    };
+
+    public static String componentName(int index) {
+        return index >= 0 && index < NAMES.length ? NAMES[index] : "?" + index;
+    }
+
+    // ── Обчислення ────────────────────────────────────────────────────────
+
+    private static final long FNV_OFFSET = 0xcbf29ce484222325L;
+    private static final long FNV_PRIME  = 0x100000001b3L;
+
+    /**
+     * Домішати значення до хеша.
+     *
+     * <p>Порядок домішування — частина результату: два клієнти мусять обходити
+     * юнітів однаково. Це виконується автоматично, бо обхід іде по індексах
+     * {@code Array}, а порядок створення юнітів детермінований.
+     */
+    private static long mix(long h, long v) {
+        h ^= v;
+        h *= FNV_PRIME;
+        h ^= h >>> 32;
+        return h;
+    }
+
+    private static long mix(long h, boolean v) { return mix(h, v ? 1L : 0L); }
+
+    /**
+     * Порахувати компоненти хеша у переданий масив довжини {@link #COMPONENTS}.
+     *
+     * @return зведений хеш усіх компонентів разом
+     */
+    public static long compute(GameSimulation sim, long[] out) {
+        long positions = FNV_OFFSET;
+        long health    = FNV_OFFSET;
+        long timers    = FNV_OFFSET;
+        long visible   = FNV_OFFSET;
+
+        Array<Unit> all = sim.getUnitManager().getAllUnits();
+        for (int i = 0; i < all.size; i++) {
+            Unit u = all.get(i);
+
+            // Id домішується в кожен компонент, щоб перестановка юнітів
+            // місцями не давала того самого хеша.
+            positions = mix(positions, u.id);
+            positions = mix(positions, u.x);
+            positions = mix(positions, u.y);
+            positions = mix(positions, u.isMoving());
+
+            health = mix(health, u.id);
+            health = mix(health, u.hp);
+            health = mix(health, u.alive);
+
+            timers = mix(timers, u.id);
+            timers = mix(timers, u.attackTimerTicks);
+            if (u instanceof Artillery) {
+                Artillery a = (Artillery) u;
+                timers = mix(timers, a.aimTicks);
+                timers = mix(timers, a.reloadTicks);
+                // Ручна ціль теж стан: від неї залежить, куди полетить наступний снаряд.
+                timers = mix(timers, a.manualTarget == null ? -1 : a.manualTarget.id);
+            }
+
+            visible = mix(visible, u.id);
+            visible = mix(visible, u.isVisibleTo(Team.PLAYER));
+            visible = mix(visible, u.isVisibleTo(Team.ENEMY));
+        }
+
+        CombatManager combat = sim.getCombatManager();
+        long orders = combat == null ? FNV_OFFSET : combat.stateDigest(FNV_OFFSET);
+
+        long rng = FNV_OFFSET;
+        rng = mix(rng, sim.getRandom().getState());
+        rng = mix(rng, sim.getRandom().getCalls());
+
+        out[C_POSITIONS]  = positions;
+        out[C_HEALTH]     = health;
+        out[C_TIMERS]     = timers;
+        out[C_ORDERS]     = orders;
+        out[C_VISIBILITY] = visible;
+        out[C_RNG]        = rng;
+
+        long total = mix(FNV_OFFSET, sim.getTickNumber());
+        for (int i = 0; i < COMPONENTS; i++) total = mix(total, out[i]);
+        return total;
+    }
+
+    /** Те саме, коли компоненти не потрібні. */
+    public static long compute(GameSimulation sim) {
+        return compute(sim, new long[COMPONENTS]);
+    }
+
+    /** Домішування для підсистем, що рахують свою частину самі. */
+    public static long fold(long h, long v)    { return mix(h, v); }
+    public static long fold(long h, boolean v) { return mix(h, v); }
+
+    /**
+     * Назви компонентів, що розійшлися між двома наборами.
+     *
+     * @return людський опис для лога; порожній рядок, якщо все збіглось
+     */
+    public static String describeMismatch(long[] mine, long[] theirs) {
+        if (mine == null || theirs == null) return "компоненти невідомі";
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < COMPONENTS && i < mine.length && i < theirs.length; i++) {
+            if (mine[i] == theirs[i]) continue;
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(componentName(i));
+        }
+        return sb.length() == 0 ? "усі компоненти збіглись (розійшовся лише зведений хеш)"
+                                : sb.toString();
+    }
+}

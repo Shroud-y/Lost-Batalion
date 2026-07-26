@@ -7,8 +7,7 @@ import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.Array;
-import io.jababa.lost_batalion.units.Unit;
-import io.jababa.lost_batalion.units.UnitManager;
+import io.jababa.lost_batalion.math.Fixed;
 
 public class CurvedFormationCommand {
 
@@ -60,15 +59,34 @@ public class CurvedFormationCommand {
         addPoint(worldX, worldY);
     }
 
-    public boolean finishAndApply(UnitManager unitManager, float mapW, float mapH) {
+    /**
+     * Завершити малювання і віддати намальовану ламану у fixed-point.
+     *
+     * <p>Раніше цей метод сам розставляв виділених юнітів. Тепер він лише
+     * повертає точки: розстановка — це зміна стану гри, а вона мусить статись
+     * на тіку виконання команди й однаково в усіх, а не в момент відпускання
+     * кнопки в автора.
+     *
+     * <p>Слід уже проріджений: {@link #addPoint} відкидає точки ближчі за
+     * {@code SAMPLE_DIST}. Прорідження робиться один раз тут, на боці автора,
+     * бо густота сирого сліду курсора залежить від його FPS.
+     *
+     * @return пари координат підряд (x0, y0, x1, y1, …) або null, якщо крива
+     *         надто коротка
+     */
+    public long[] finishAndCollect() {
         drawing = false;
-        if (path.size < 2) { cancel(); return false; }
-        Array<Unit> selected = unitManager.getSelectedUnits();
-        if (selected.size == 0) { cancel(); return false; }
-        placeUnitsAlongPath(selected, mapW, mapH);
+        if (path.size < 2) { cancel(); return null; }
+
+        long[] points = new long[path.size * 2];
+        for (int i = 0; i < path.size; i++) {
+            points[i * 2]     = Fixed.fromFloat(path.get(i).x);
+            points[i * 2 + 1] = Fixed.fromFloat(path.get(i).y);
+        }
+
         active = false;
         path.clear();
-        return true;
+        return points;
     }
 
     public void cancel() {
@@ -206,37 +224,4 @@ public class CurvedFormationCommand {
         return t > eps && t < 1f-eps && u > eps && u < 1f-eps;
     }
 
-    private void placeUnitsAlongPath(Array<Unit> units, float mapW, float mapH) {
-        float totalLen = 0f;
-        float[] segLens = new float[path.size - 1];
-        for (int i = 0; i < path.size - 1; i++) {
-            segLens[i] = path.get(i).dst(path.get(i + 1));
-            totalLen  += segLens[i];
-        }
-        if (totalLen < 0.01f) return;
-
-        int count = units.size;
-        for (int ui = 0; ui < count; ui++) {
-            float t      = count == 1 ? 0.5f : (float) ui / (count - 1);
-            float target = t * totalLen;
-            float accumulated = 0f;
-            Vector2 pos = new Vector2(path.get(0));
-
-            for (int si = 0; si < segLens.length; si++) {
-                if (accumulated + segLens[si] >= target) {
-                    float localT = (target - accumulated) / segLens[si];
-                    Vector2 a = path.get(si), b = path.get(si + 1);
-                    pos.set(a.x + (b.x-a.x)*localT, a.y + (b.y-a.y)*localT);
-                    break;
-                }
-                accumulated += segLens[si];
-                pos.set(path.get(si + 1));
-            }
-
-            float half = units.get(ui).getSize() * 0.5f;
-            units.get(ui).moveTo(
-                Math.max(half, Math.min(mapW-half, pos.x)),
-                Math.max(half, Math.min(mapH-half, pos.y)));
-        }
-    }
 }

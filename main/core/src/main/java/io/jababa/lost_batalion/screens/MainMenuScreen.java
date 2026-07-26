@@ -29,6 +29,7 @@ public class MainMenuScreen extends BaseScreen {
         Label subtitle = new Label("Real-Time Strategy", UIFactory.createSubtitleStyle());
 
         TextButton btnScenario = createButton("Select Scenario");
+        TextButton btnMultiplayer = createButton("Мультиплеєр");
         TextButton btnSettings = createButton("Settings");
         TextButton btnExit = createButton("Exit");
 
@@ -36,6 +37,13 @@ public class MainMenuScreen extends BaseScreen {
             @Override
             public void changed(ChangeEvent event, Actor actor) {
                 game.setScreen(new io.jababa.lost_batalion.screens.scenario.ScenarioScreen(game));
+            }
+        });
+
+        btnMultiplayer.addListener(new ChangeListener() {
+            @Override
+            public void changed(ChangeEvent event, Actor actor) {
+                game.setScreen(new io.jababa.lost_batalion.screens.multiplayer.MultiplayerScreen(game));
             }
         });
 
@@ -60,6 +68,7 @@ public class MainMenuScreen extends BaseScreen {
         root.add(subtitle).padBottom(60f).row();
 
         root.add(btnScenario).size(BUTTON_WIDTH, BUTTON_HEIGHT).padBottom(BUTTON_SPACING).row();
+        root.add(btnMultiplayer).size(BUTTON_WIDTH, BUTTON_HEIGHT).padBottom(BUTTON_SPACING).row();
         root.add(btnSettings).size(BUTTON_WIDTH, BUTTON_HEIGHT).padBottom(BUTTON_SPACING).row();
         root.add(btnExit).size(BUTTON_WIDTH, BUTTON_HEIGHT).row();
 

@@ -1,5 +1,7 @@
 package io.jababa.lost_batalion.terrain;
 
+import io.jababa.lost_batalion.math.Fixed;
+
 /**
  * Рахує модифікатор захисту цілі залежно від місцевості атакуючого і цілі.
  *
@@ -22,11 +24,12 @@ package io.jababa.lost_batalion.terrain;
  */
 public class TerrainCombatModifier {
 
-    // Відсотки (значення понад 1.0 = баф захисту, менше = дебаф)
-    private static final float BUFF_SMALL  = 1.20f; // +20% захист
-    private static final float BUFF_LARGE  = 1.30f; // +30% захист
-    private static final float DEBUFF      = 0.70f; // -30% захист (вразливість)
-    private static final float NEUTRAL     = 1.00f;
+    // Відсотки у Q47.16 (значення понад ONE = баф захисту, менше = дебаф).
+    // Множник ділить вхідний урон, тобто впливає на hp — це стан гри, не візуал.
+    private static final long BUFF_SMALL  = Fixed.fromFloat(1.20f); // +20% захист
+    private static final long BUFF_LARGE  = Fixed.fromFloat(1.30f); // +30% захист
+    private static final long DEBUFF      = Fixed.fromFloat(0.70f); // -30% захист (вразливість)
+    private static final long NEUTRAL     = Fixed.ONE;
 
     private TerrainCombatModifier() {}
 
@@ -35,10 +38,11 @@ public class TerrainCombatModifier {
      *
      * @param attackerTerrain місцевість атакуючого юніта
      * @param defenderTerrain місцевість юніта-цілі
-     * @return множник: > 1 = більший захист (менше damage), < 1 = менший захист
+     * @return множник у Q47.16: > ONE = більший захист (менше damage),
+     *         < ONE = менший захист
      */
-    public static float getDefenseMultiplier(TerrainType attackerTerrain,
-                                             TerrainType defenderTerrain) {
+    public static long getDefenseMultiplier(TerrainType attackerTerrain,
+                                            TerrainType defenderTerrain) {
         switch (defenderTerrain) {
 
             case LOWLANDS: // 1а — дебаф від 2а,2б,3а,3б

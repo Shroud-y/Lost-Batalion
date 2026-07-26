@@ -25,43 +25,48 @@ public class UnitRenderer {
     }
 
     /**
-     * Рендер спрайтів.
-     * Ворожі юніти, у яких visibleToPlayer == false, пропускаються.
+     * Рендер спрайтів очима сторони {@code viewer}.
+     *
+     * <p>Видимість рахується для обох сторін і належить симуляції; рендер лише
+     * бере той її бік, за який грає локальний гравець. Кольори спрайтів при
+     * цьому абсолютні (хост синій, гість червоний) — гість бачить свою армію
+     * червоною, зате обидва бачать однакову картинку.
+     *
+     * @param alpha частка тіку, що вже минула (0..1). Позиція береться між
+     *              станом на початок тіку і поточним — симуляція йде 40 разів
+     *              на секунду, і без цього рух виглядав би ривками.
      */
-    public void drawSprites(SpriteBatch batch, Iterable<Unit> units) {
+    public void drawSprites(SpriteBatch batch, Iterable<Unit> units, float alpha, Team viewer) {
         for (Unit u : units) {
             if (!u.alive) continue;
-            if (u.team != Team.PLAYER && !u.visibleToPlayer) continue; // туман
+            if (!u.isVisibleTo(viewer)) continue; // туман
 
             Texture tex = getTexture(u);
             float size  = u.getSize();
-            float x     = u.position.x - size / 2f;
-            float y     = u.position.y - size / 2f;
+            float x     = u.renderX(alpha) - size / 2f;
+            float y     = u.renderY(alpha) - size / 2f;
             batch.draw(tex, x, y, size, size);
         }
     }
 
-    /**
-     * Рендер оверлеїв (виділення, HP-бар).
-     * Ворожі юніти, у яких visibleToPlayer == false, пропускаються.
-     */
-    public void drawOverlays(Iterable<Unit> units) {
+    /** Рендер оверлеїв (виділення, HP-бар) очима сторони {@code viewer}. */
+    public void drawOverlays(Iterable<Unit> units, float alpha, Team viewer) {
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
 
         shapes.begin(ShapeRenderer.ShapeType.Line);
         for (Unit u : units) {
             if (!u.alive) continue;
-            if (u.team != Team.PLAYER && !u.visibleToPlayer) continue;
-            if (u.selected) drawOutline(u);
+            if (!u.isVisibleTo(viewer)) continue;
+            if (u.selected) drawOutline(u, alpha);
         }
         shapes.end();
 
         shapes.begin(ShapeRenderer.ShapeType.Filled);
         for (Unit u : units) {
             if (!u.alive) continue;
-            if (u.team != Team.PLAYER && !u.visibleToPlayer) continue;
-            drawHpBar(u);
+            if (!u.isVisibleTo(viewer)) continue;
+            drawHpBar(u, alpha);
         }
         shapes.end();
 
@@ -74,11 +79,11 @@ public class UnitRenderer {
 
     // ── Приватні методи ───────────────────────────────────────────────────
 
-    private void drawOutline(Unit u) {
+    private void drawOutline(Unit u, float alpha) {
         float size = u.getSize();
         float pad  = OUTLINE_PAD;
-        float x    = u.position.x - size / 2f - pad;
-        float y    = u.position.y - size / 2f - pad;
+        float x    = u.renderX(alpha) - size / 2f - pad;
+        float y    = u.renderY(alpha) - size / 2f - pad;
         float w    = size + pad * 2f;
         float h    = size + pad * 2f;
 
@@ -87,17 +92,18 @@ public class UnitRenderer {
 
     }
 
-    private void drawHpBar(Unit u) {
+    private void drawHpBar(Unit u, float alpha) {
         float size = u.getSize();
         float barH = size;
 
-        float x = u.position.x - size / 2f - BAR_LEFT - BAR_W;
-        float y = u.position.y - size / 2f;
+        float x = u.renderX(alpha) - size / 2f - BAR_LEFT - BAR_W;
+        float y = u.renderY(alpha) - size / 2f;
 
         shapes.setColor(0.3f, 0f, 0f, 0.85f);
         shapes.rect(x, y, BAR_W, barH);
 
-        float ratio = u.hp / u.maxHp;
+        // hp і maxHp — цілі (Q47.16), тож пряме ділення дало б 1 або 0.
+        float ratio = u.hpRatio();
         if (ratio > 0.5f)       shapes.setColor(0.2f, 0.8f, 0.2f, 0.9f);
         else if (ratio > 0.25f) shapes.setColor(0.9f, 0.8f, 0.1f, 0.9f);
         else                    shapes.setColor(0.9f, 0.2f, 0.1f, 0.9f);
