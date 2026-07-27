@@ -63,10 +63,13 @@ public class TerrainQuery {
     public static final float PLAINS_BASELINE_HEIGHT     = PLAINS_BASELINE_HEIGHT_INT;
 
     /**
-     * Крок вибірки вздовж променя/відрізка. 1 світова одиниця = 1 піксель маски,
-     * тобто це межа роздільності даних — дрібніше немає чого шукати.
+     * Крок вибірки вздовж відрізка в СИМУЛЯЦІЇ. 1 світова одиниця = 1 піксель
+     * маски, тобто це межа роздільності даних — дрібніше немає чого шукати.
+     *
+     * <p>Рендер ALT-оверлея цим не користується: там промінь перетинає межі
+     * пікселів аналітично (див. {@code FogOfWarRenderer.walkPixels}), бо йому
+     * потрібна точна відстань до перешкоди, а не факт «щось є на відрізку».
      */
-    public static final float LOS_FINE_STEP       = 1f;
     public static final long  LOS_FINE_STEP_FIXED = Fixed.ONE;
 
     /**
@@ -79,6 +82,25 @@ public class TerrainQuery {
      */
     public static final float LOS_ORIGIN_FOREST_SKIP       = 12f;
     public static final long  LOS_ORIGIN_FOREST_SKIP_FIXED = Fixed.fromInt(12);
+
+    /**
+     * Мінімальна довжина (у світових одиницях) суцільного підйому, щоб він
+     * рахувався за гребінь і перекривав огляд.
+     *
+     * <p>Межі ярусів у масці — піксельні «сходинки». Промінь, що йде майже по
+     * дотичній до такої межі, зачіпає один кутовий піксель і обривався на ньому,
+     * тоді як сусідній промінь той самий піксель проминав. На екрані це давало
+     * тонкі «штрихи» — смуги тіні завширшки в один промінь. Один піксель — не
+     * хребет, тому підйом має протриматись хоча б стільки, щоб перекрити огляд.
+     *
+     * <p>Заміряно на масках Жовтих Вод: 3 одиниці прибирають ~80% таких штрихів,
+     * а середня довжина променя зростає менш ніж на 1% — тіні від справжніх
+     * хребтів лишаються на місці. Без цього правила дрібніший крок вибірки лише
+     * ПОГІРШУВАВ картинку (крок 0.25 давав удвічі-втричі більше штрихів, бо
+     * переставав випадково перестрибувати кутові пікселі).
+     */
+    public static final float LOS_CREST_MIN_RUN       = 3f;
+    public static final long  LOS_CREST_MIN_RUN_FIXED = Fixed.fromInt(3);
 
     /** Заглушка «нескінченно далеко» для DDA. З запасом на додавання без переповнення. */
     private static final long FAR = Long.MAX_VALUE >> 2;
@@ -225,29 +247,42 @@ public class TerrainQuery {
     /**
      * Чи перетинає відрізок ліс. Координати у Q47.16.
      *
+     * <p>Обидва кінці мають власну «сліпу зону»: ліс упритул до спостерігача не
+     * закриває йому огляд, і так само ліс упритул до цілі не ховає її додатково —
+     * те, що ціль стоїть у лісі, вже враховано окремим множником. Без другого
+     * скіпу будь-яка ціль у лісі автоматично рахувалась би за перекриту, бо
+     * промінь неминуче зачепить її власні дерева.
+     *
      * @param skipNearStart перші стільки одиниць від початку ігноруються
+     * @param skipNearEnd   останні стільки одиниць перед кінцем ігноруються
      *                      (див. {@link #LOS_ORIGIN_FOREST_SKIP_FIXED})
      */
-    public boolean hasForestOnSegmentF(long x1, long y1, long x2, long y2, long skipNearStart) {
-        return segmentHits(x1, y1, x2, y2, true, 0, skipNearStart);
+    public boolean hasForestOnSegmentF(long x1, long y1, long x2, long y2,
+                                       long skipNearStart, long skipNearEnd) {
+        return segmentHits(x1, y1, x2, y2, true, 0, skipNearStart, skipNearEnd);
     }
 
     /**
-     * Чи є на відрізку земля з ярусом не нижчим за {@code blockingHeight} —
-     * тобто гребінь, що перекриває лінію зору. Обидва кінці виключені: юніт не
-     * перекриває сам себе.
+     * Чи є на відрізку гребінь з ярусом не нижчим за {@code blockingHeight}, що
+     * перекриває лінію зору. Обидва кінці виключені: юніт не перекриває сам себе.
+     *
+     * <p>Одного пікселя замало — підйом має протриматись
+     * {@link #LOS_CREST_MIN_RUN} одиниць поспіль, інакше зубчаста межа ярусу
+     * рвала б видимість від кожного кутового пікселя (та сама причина, що й
+     * «штрихи» в ALT-оверлеї).
      */
     public boolean hasGroundAboveOnSegmentF(long x1, long y1, long x2, long y2,
                                             int blockingHeight) {
-        return segmentHits(x1, y1, x2, y2, false, blockingHeight, 0);
+        return segmentHits(x1, y1, x2, y2, false, blockingHeight, 0, 0);
     }
 
     /** Float-обгортки для рендеру. */
     public boolean hasForestOnSegment(float x1, float y1, float x2, float y2,
-                                      float skipNearStart) {
+                                      float skipNearStart, float skipNearEnd) {
         return hasForestOnSegmentF(Fixed.fromFloat(x1), Fixed.fromFloat(y1),
                                    Fixed.fromFloat(x2), Fixed.fromFloat(y2),
-                                   Fixed.fromFloat(skipNearStart));
+                                   Fixed.fromFloat(skipNearStart),
+                                   Fixed.fromFloat(skipNearEnd));
     }
 
     public boolean hasGroundAboveOnSegment(float x1, float y1, float x2, float y2,
@@ -270,13 +305,23 @@ public class TerrainQuery {
      * шукати. Це простіше за промінь ALT-оверлея, де поріг залежить від
      * поточної точки, а гребінь накопичується.
      *
+     * <p>У режимі висот блокує не окремий піксель, а лише суцільний підйом
+     * завдовжки {@link #LOS_CREST_MIN_RUN} — лічильник {@code crestRun}. Він
+     * обнуляється і на пікселі нижче порога, і на пропущеному блоці: пропуск
+     * дозволений лише тоді, коли в блоці гарантовано немає жодного пікселя від
+     * порога, тобто підйом там точно уривається.
+     *
      * @param forestMode true → шукаємо ліс; false → шукаємо землю від порога
      */
     private boolean segmentHits(long x1, long y1, long x2, long y2,
-                                boolean forestMode, int blockingHeight, long skipNearStart) {
+                                boolean forestMode, int blockingHeight,
+                                long skipNearStart, long skipNearEnd) {
         long dx = x2 - x1, dy = y2 - y1;
         long dist = Fixed.length(dx, dy);
-        if (dist <= LOS_FINE_STEP_FIXED) return false;
+
+        // Сліпа зона біля цілі: обхід просто закінчується раніше.
+        long limit = dist - skipNearEnd;
+        if (limit <= LOS_FINE_STEP_FIXED) return false;
 
         long ux = Fixed.div(dx, dist), uy = Fixed.div(dy, dist);
 
@@ -298,9 +343,10 @@ public class TerrainQuery {
 
         final int nBx = blocksX(), nBy = blocksY();
         long dEnter = 0;
+        long crestRun = 0;      // довжина поточного суцільного підйому (режим висот)
 
-        while (dEnter < dist) {
-            long dExit = Fixed.min(Fixed.min(tMaxX, tMaxY), dist);
+        while (dEnter < limit) {
+            long dExit = Fixed.min(Fixed.min(tMaxX, tMaxY), limit);
 
             boolean inRange = bx >= 0 && by >= 0 && bx < nBx && by < nBy;
             boolean mustWalk = !inRange
@@ -318,9 +364,16 @@ public class TerrainQuery {
                     if (forestMode) {
                         if (isForestF(wx, wy)) return true;
                     } else if (heightF(wx, wy) >= blockingHeight) {
-                        return true;
+                        crestRun += LOS_FINE_STEP_FIXED;
+                        if (crestRun >= LOS_CREST_MIN_RUN_FIXED) return true;
+                    } else {
+                        crestRun = 0;
                     }
                 }
+            } else if (!forestMode) {
+                // Блок пропущено, бо в ньому НЕМАЄ пікселів від порога — отже
+                // підйом на ньому гарантовано уривається.
+                crestRun = 0;
             }
 
             if (tMaxX < tMaxY) { dEnter = tMaxX; tMaxX += tDeltaX; bx += stepX; }

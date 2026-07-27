@@ -32,10 +32,14 @@ import io.jababa.lost_batalion.units.Unit;
  * scenario's two masks holds what (rivers live in the forest mask, height tiers
  * in the topography mask).
  *
- * Forest LOS (losForestMod):
+ * Forest LOS (losForestMod) — the two multiply, they are not alternatives:
  *   target in forest           → × FOREST_STEALTH_BONUS  (1.8)  — target is hidden
  *   forest on path to target   → × FOREST_LOS_BLOCK_MOD  (4.0)  — sight is blocked
- *   (path check skips observer position, so observer's own forest handled by sightMod only)
+ *   (path check has a blind zone at BOTH ends: each unit's own trees are already
+ *    priced in — the observer's by sightMod, the target's by the 1.8 above)
+ *
+ *   So depth into forest matters: on the treeline 1.8 → seen at 0.64 × sight;
+ *   deep inside 1.8 × 4.0 = 7.2 → stealth clamps to 0.9 → seen at 0.1 × sight.
  *
  * Observer terrain (sightMod):
  *   forest × 0.55 | lowlands × 0.80 | pre-lowlands × 0.92
@@ -146,21 +150,37 @@ public class VisibilitySystem {
 
     /**
      * Forest concealment multiplier for stealthRating.
-     * Checks whether the target is in forest, and — separately — whether any
-     * forest lies on the path between the observer and the target.
-     * The path check starts LOS_ORIGIN_FOREST_SKIP away from the observer so the
-     * observer's own forest position is handled solely by sightMod, not doubled.
+     *
+     * <p>Two independent effects, MULTIPLIED — they are not alternatives:
+     * <ul>
+     *   <li>the target stands in forest → ×1.8 (its own cover);</li>
+     *   <li>forest lies on the path between the two → ×4.0 (sight is blocked).</li>
+     * </ul>
+     *
+     * <p>This used to return early on the first check, so a target in forest never
+     * ran the second one — and depth into the forest changed nothing: a unit on the
+     * treeline and a unit 300 units deep were both spotted at 0.64 × sight. The
+     * opposite direction (observer in forest, target outside) had no early return
+     * and therefore behaved correctly, which is exactly the asymmetry that showed
+     * up in play.
+     *
+     * <p>The path check has a blind zone of LOS_ORIGIN_FOREST_SKIP at BOTH ends:
+     * the observer's own trees are already priced into sightMod, and the target's
+     * own trees are already priced into the ×1.8 above. Without the second skip
+     * every forest target would count as path-blocked, since the ray cannot help
+     * hitting the trees it is standing in.
      */
     private long losForestMod(Unit observer, Unit target) {
         if (terrain == null) return Fixed.ONE;
 
-        if (terrain.isForestF(target.x, target.y)) return FOREST_STEALTH_BONUS;
+        long mod = terrain.isForestF(target.x, target.y) ? FOREST_STEALTH_BONUS : Fixed.ONE;
 
         if (terrain.hasForestOnSegmentF(observer.x, observer.y, target.x, target.y,
+                                        TerrainQuery.LOS_ORIGIN_FOREST_SKIP_FIXED,
                                         TerrainQuery.LOS_ORIGIN_FOREST_SKIP_FIXED))
-            return FOREST_LOS_BLOCK_MOD;
+            mod = Fixed.mul(mod, FOREST_LOS_BLOCK_MOD);
 
-        return Fixed.ONE;
+        return mod;
     }
 
     /** Target elevation: high ground exposes a unit, low ground gives cover. */

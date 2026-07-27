@@ -1,0 +1,88 @@
+{
+  "session": {
+    "date": "2026-07-25",
+    "project": "Lost Batalion",
+    "repo": "E:/GitReps/Lost-Batalion",
+    "summary": "Analyzed the libGDX RTS codebase (wrote CLAUDE.md), then implemented elevation-based line-of-sight: units and the ALT sight overlay now occlude behind hills. Fixed two latent bugs along the way."
+  },
+  "project_facts": {
+    "engine": "libGDX 1.14.0",
+    "language": "Java (sourceCompatibility 23; Android module Java 17)",
+    "build": "Gradle wrapper, Android plugin 8.9.3, construo 2.1.0",
+    "gradle_root": "main/ (NOT repo root) - run gradle from main/",
+    "base_package": "io.jababa.lost_batalion",
+    "modules": ["core (all logic)", "lwjgl3 (desktop, primary run)", "android", "server (unused stub)"],
+    "run_command": "cd main && ./gradlew lwjgl3:run",
+    "unused_deps": "ashley (ECS) and gdx-box2d are on classpath but NOT used - units are plain OOP, no ECS, no physics, no pathfinding",
+    "comments_language": "Ukrainian (comments + commit messages); match it",
+    "tests": "none exist",
+    "scenarios": "one only - Zhovti Vody (ScenarioScreen.buildScenarios)"
+  },
+  "environment_limitation": {
+    "cannot_compile_locally": true,
+    "reason": "Only JDK 21 installed (Eclipse Adoptium/jdk-21); project targets release 23. Also gradle/wrapper/gradle-wrapper.jar is absent (only .properties present) and no system gradle.",
+    "implication": "Verify changes by inspection here; user compiles/runs in IntelliJ."
+  },
+  "terrain_system": {
+    "two_masks_per_scenario": {
+      "forest_mask": "*_mask.png - forest tiles (isForestAt): movement/stealth/LOS-forest",
+      "elevation_mask": "*_terrain_mask.png (topography) - getElevationAt: elevation tiers + rivers"
+    },
+    "critical_note": "The forest mask carries NO elevation data and vice-versa. Elevation queries MUST use the elevation/topography mask. Passing the forest mask to elevation code makes getElevationAt return NONE (inert).",
+    "elevation_tiers_heights": {
+      "RIVER": 0,
+      "LOWLANDS": 1,
+      "PRE_LOWLANDS": 2,
+      "PLAINS / PLAINS_ALT": 3,
+      "PRE_HIGHLANDS": 4,
+      "HIGHLANDS": 5,
+      "NONE / FOREST": "3 (plains baseline)"
+    },
+    "GameScreen_masks": {
+      "terrainMask": "forest mask (buildMaskPath -> *_mask.png)",
+      "terrainCombatMask": "topography/elevation mask (scenario.terrainMaskPath)"
+    }
+  },
+  "work_done": {
+    "1_CLAUDE_md": {
+      "file": "CLAUDE.md (repo root)",
+      "note": "Full architecture doc. User asked for 'claude/CLAUDE.md'; put at repo root (auto-loaded). Documents stack, modules, subsystems, gaps (no base building / economy / enemy AI / win-lose / pathfinding), conventions."
+    },
+    "2_elevation_sight": {
+      "goal": "Finish sight system: hills block line of sight. On plain you see a unit ON a hill, but not one BEHIND the hill.",
+      "files_changed": [
+        "core/.../visibility/VisibilitySystem.java",
+        "core/.../visibility/FogOfWarRenderer.java",
+        "core/.../screens/game/GameScreen.java"
+      ],
+      "latent_bug_fixed": "VisibilitySystem AND FogOfWarRenderer were both constructed with only the FOREST mask, so their elevation tiers/stealth were inert. Now both take (forestMask, elevationMask); GameScreen passes terrainMask + terrainCombatMask.",
+      "occlusion_rule_FINAL": "A tile blocks sight only if it is taller than BOTH the observer and the target by more than ELEVATION_BLOCK_MARGIN (= 1.0). Lower/equal terrain never blocks -> high ground sees across and down freely; only a ridge taller than both endpoints hides what is behind it.",
+      "rejected_approaches": [
+        "Linear-interpolated sightline height + margin: blocked a unit standing in a large highland from seeing out (rim self-occlusion).",
+        "Running max-SLOPE viewshed for the ALT overlay: locked the horizon at observer height across a flat highland top, so on high ground the overlay showed 'nothing visible'. This was the reported bug."
+      ],
+      "constant": "ELEVATION_BLOCK_MARGIN = 1.0f, duplicated in BOTH VisibilitySystem and FogOfWarRenderer - keep equal so overlay matches detection. Lower it to make gentler slopes (PRE_HIGHLANDS) also occlude.",
+      "ALT_overlay": "FogOfWarRenderer.renderCursorSightOverlay casts 720 rays; each ray breaks on forest, map edge, or when a passed crest exceeds max(cursorHeight, pointHeight)+margin. Heavier now (samples getElevationAt per 6px step) but only runs while ALT held; drop RAY_COUNT or raise STEP if laggy."
+    }
+  },
+  "verified_behavior": [
+    "Observer on HIGHLANDS region: sees across + down onto lower ground (was: nothing)",
+    "Observer on plain, hill ahead: sees up-slope + crest, area BEHIND hill hidden",
+    "Enemy on hilltop: visible from lower ground",
+    "Gentle PRE_HIGHLANDS rise (1 tier): does not block (under margin)",
+    "Observer in lowland pit ringed by higher ground: blocked by rim (consistent both systems)"
+  ],
+  "known_gaps_next": [
+    "isPointVisible() (fog tile check) still range-only - ignores forest AND elevation. Fog reveals terrain behind hills even though units there are hidden. Candidate follow-up.",
+    "No enemy AI, no base building, no resources/economy, no win/lose, no pathfinding, no tests.",
+    "Debug Gdx.app.log calls in combat/unit hot path (Unit.update, CombatManager.tryAttack).",
+    "ELEVATION_BLOCK_MARGIN duplicated in two files - could centralize."
+  ],
+  "conventions": [
+    "Dispose everything: each subsystem owns and disposes its SpriteBatch/ShapeRenderer/Texture/Pixmap.",
+    "Terrain masks sampled with Y flipped (world Y up, pixmap Y down) - see TerrainMaskManager.getPixelFromMask.",
+    "Artillery is excluded from the normal attack()/order pipeline - guard combat code with 'instanceof Artillery'.",
+    "visibleToPlayer gates BOTH rendering and targeting - respect it everywhere.",
+    "Comments/log tags often Ukrainian (COMBAT, UNIT)."
+  ]
+}

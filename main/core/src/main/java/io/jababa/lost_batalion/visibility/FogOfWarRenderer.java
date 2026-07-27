@@ -36,6 +36,19 @@ public class FogOfWarRenderer {
     /** @see TerrainQuery#ELEVATION_BLOCK_MARGIN — single source of truth. */
     private static final float ELEVATION_BLOCK_MARGIN = TerrainQuery.ELEVATION_BLOCK_MARGIN;
 
+    // ── ALT sight overlay colours ─────────────────────────────────────────────
+    /** Opaque light brown, drawn along the fan boundary. */
+    private static final float EDGE_R = 0.78f, EDGE_G = 0.61f, EDGE_B = 0.42f;
+    /** Half-transparent dark brown, covering the BLOCKED ground outside the fan. */
+    private static final float FILL_R = 0.23f, FILL_G = 0.14f, FILL_B = 0.09f;
+    private static final float FILL_ALPHA = 0.5f;
+    /**
+     * Boundary thickness in SCREEN pixels. Converted to world units against the
+     * current zoom before drawing, so the outline keeps the same weight whether
+     * the camera is pulled back over the whole map or pushed into a treeline.
+     */
+    private static final float EDGE_WIDTH_PX = 2f;
+
     // ── ALT sight overlay tuning ──────────────────────────────────────────────
     /**
      * Rays cast at uniform angles before refinement. Deliberately low: open
@@ -48,49 +61,54 @@ public class FogOfWarRenderer {
      * Endpoint distance gap (world units) between neighbouring rays that marks a
      * silhouette worth resolving. Below this the boundary is treated as smooth.
      */
-    private static final float SUBDIV_THRESHOLD   = 6f;
+    private static final float SUBDIV_THRESHOLD   = 5f;
     /**
-     * Bisection depth at a silhouette. 5 levels split one base step 32 ways, so
-     * edges resolve as if 360 × 32 = 11520 rays had been cast — but only there.
+     * Bisection depth at a silhouette. 7 levels split one base step 128 ways, so
+     * edges resolve as if 360 × 128 = 46080 rays had been cast — but only there.
      */
-    private static final int   SUBDIV_MAX_DEPTH   = 5;
+    private static final int   SUBDIV_MAX_DEPTH   = 7;
 
     /*
      * These three were measured against a dense reference sweep on the Zhovti Vody
-     * masks, not guessed. Mean error of the RENDERED boundary (the straight
-     * segments between endpoints — i.e. what is actually visible on screen),
-     * at ELEVATION_BLOCK_MARGIN = 0.5:
+     * masks, not guessed. Error of the RENDERED boundary (the straight segments
+     * between endpoints — i.e. what is actually visible on screen), averaged over
+     * two cursor positions at ELEVATION_BLOCK_MARGIN = 0.5:
      *
-     *   base  thresh  depth |  points   mean err   build
-     *   ------------------- + ----------------------------
-     *    360     6      5   |    719     1.02 px   1.22 ms   ← current
-     *    360     6      8   |    902     1.02 px   1.36 ms
-     *    360     4      8   |   1083     0.91 px   1.61 ms
-     *    360     3      8   |   1266     0.84 px   2.86 ms
-     *    480     4      8   |   1220     0.87 px   2.22 ms
+     *   base  thresh  depth |  points   mean err   p99 err
+     *   ------------------- + -----------------------------
+     *    360     6      5   |    825     1.09 px    4.03 px   ← was
+     *    360     5      7   |   1042     0.94 px    2.01 px   ← current
+     *    360     4      7   |   1187     0.92 px    1.79 px
+     *    360     3      7   |   1463     0.85 px    1.55 px
      *
-     * For reference the previous implementation (720 uniform rays, 6px fixed
-     * march) measured 7.94 px mean on the same sweep — so this is ~8x tighter
-     * for the same number of points.
+     * Depth used to plateau at 5 because hit distances were quantised to a
+     * 1-unit sampling lattice — that quantisation WAS the error floor, so finer
+     * angles had nothing to resolve. Now that walkPixels returns the exact pixel
+     * edge, depth pays again: the p99 (the worst visible edge, which is what the
+     * eye actually catches) halves for +26% points, while the mean barely moves.
+     * Past threshold 5 the trade goes bad — hundreds more rays for hundredths of
+     * a pixel, and 1 world unit = 1 mask pixel is the data floor regardless.
      *
-     * Depth past 5 buys nothing at this threshold. Tightening the threshold
-     * trades a lot of time for fractions of a pixel, and 1 world unit = 1 mask
-     * pixel is the resolution floor anyway, so there is nothing real below ~1 px.
-     * Raising the base ray count is the wrong lever — it costs everywhere and
-     * helps only where the terrain is flat.
+     * Raising the base ray count is still the wrong lever — it costs everywhere
+     * and helps only where the terrain is flat.
      *
-     * Re-measure these if ELEVATION_BLOCK_MARGIN changes: more occlusion means
-     * more silhouette edges sharing the same subdivision budget.
+     * Re-measure these if ELEVATION_BLOCK_MARGIN or LOS_CREST_MIN_RUN changes:
+     * both change how many silhouette edges share the subdivision budget.
      */
     /** Hard ceiling on fan vertices, so pathological terrain cannot stall a frame. */
     private static final int   MAX_FAN_POINTS     = 4096;
     /**
-     * Sample spacing inside a block that might stop the ray. 1 world unit = 1 mask
-     * pixel, so this is the finest the masks can resolve — hit points are exact.
-     * Shared with VisibilitySystem so the overlay resolves detail at exactly the
-     * same granularity as real detection.
+     * How long a rise must persist along the ray before it counts as a crest that
+     * blocks sight. Shared with VisibilitySystem via TerrainQuery, so the overlay
+     * shows exactly what detection computes.
+     * @see TerrainQuery#LOS_CREST_MIN_RUN
      */
-    private static final float FINE_STEP          = TerrainQuery.LOS_FINE_STEP;
+    private static final float CREST_MIN_RUN      = TerrainQuery.LOS_CREST_MIN_RUN;
+    /**
+     * Nudge used to decide which pixel a boundary-landing distance belongs to.
+     * Far below one mask pixel, far above float noise at map scale.
+     */
+    private static final float PIXEL_EPS          = 1e-3f;
     /**
      * Forest within this distance of the cursor does not stop a ray. Without it,
      * placing the cursor in a forest tile would collapse the whole fan to a point.
@@ -124,6 +142,12 @@ public class FogOfWarRenderer {
     // Scratch state for the recursive build, so subdivide() need not thread the
     // observer through every call.
     private float buildCx, buildCy, buildHCursor;
+
+    // Scratch state for one ray's pixel walk, so it survives across the blocks the
+    // ray crosses (castRay drives the blocks, walkPixels the pixels inside them).
+    private float rayCrest;     // tallest ground CONFIRMED as a crest so far
+    private float rayCand;      // height of the rise currently being measured
+    private float rayCandLen;   // how far that rise has persisted, world units
 
     public FogOfWarRenderer(float mapWidth, float mapHeight, TerrainQuery terrain) {
         this.mapWidth  = mapWidth;
@@ -194,13 +218,15 @@ public class FogOfWarRenderer {
     /**
      * Renders a cursor-centred line-of-sight overlay when Alt is held.
      *
-     * Casts OVERLAY_RAY_COUNT rays from the cursor. Each ray marches in
-     * OVERLAY_STEP-px steps and stops the first time it enters a forest pixel,
-     * is occluded by rising terrain (a hill crest), or leaves the map — rays are
+     * Casts OVERLAY_BASE_RAYS rays from the cursor, refined at silhouettes. Each
+     * ray walks the mask pixel by pixel and stops the first time it enters a
+     * forest pixel, is occluded by a hill crest, or leaves the map — rays are
      * deliberately not range-limited, they must reach across the whole map. The
      * resulting "visibility fan" is stamped into the stencil buffer; then:
-     *   - blocked areas (stencil == 0) receive a dark overlay
-     *   - visible areas (stencil == 1) receive a faint green tint
+     *   - blocked areas (stencil == 0) receive a half-transparent dark brown wash
+     *   - visible areas (stencil == 1) are left untouched — they must look exactly
+     *     as they do without the overlay
+     *   - the fan boundary itself is traced in opaque light brown
      *
      * Elevation occlusion mirrors VisibilitySystem: a point is hidden only when a
      * crest already passed on the ray is taller than BOTH the cursor and that
@@ -213,7 +239,8 @@ public class FogOfWarRenderer {
      *
      * Requires an 8-bit stencil buffer (set in Lwjgl3Launcher).
      */
-    public void renderCursorSightOverlay(ShapeRenderer shapes, float cx, float cy) {
+    public void renderCursorSightOverlay(ShapeRenderer shapes, OrthographicCamera camera,
+                                         float cx, float cy) {
         updateSightFan(cx, cy);
 
         final float[] epx = fanX.items;
@@ -250,17 +277,13 @@ public class FogOfWarRenderer {
         Gdx.gl.glStencilOp(GL20.GL_KEEP, GL20.GL_KEEP, GL20.GL_KEEP);
         Gdx.gl.glStencilMask(0x00);
 
-        // Pass 2 – dark shadow over blocked (stencil == 0) areas
+        // Pass 2 – half-transparent dark brown over blocked (stencil == 0) areas.
+        // Visible ground (stencil == 1) is deliberately left alone: the overlay
+        // marks what is HIDDEN, so terrain the cursor can see must read exactly as
+        // it does with ALT released.
         Gdx.gl.glStencilFunc(GL20.GL_EQUAL, 0, 0xFF);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
-        shapes.setColor(0f, 0f, 0f, 0.68f);
-        shapes.rect(0, 0, mapWidth, mapHeight);
-        shapes.end();
-
-        // Pass 3 – faint green tint over visible (stencil == 1) areas
-        Gdx.gl.glStencilFunc(GL20.GL_EQUAL, 1, 0xFF);
-        shapes.begin(ShapeRenderer.ShapeType.Filled);
-        shapes.setColor(0.15f, 0.85f, 0.25f, 0.12f);
+        shapes.setColor(FILL_R, FILL_G, FILL_B, FILL_ALPHA);
         shapes.rect(0, 0, mapWidth, mapHeight);
         shapes.end();
 
@@ -268,16 +291,38 @@ public class FogOfWarRenderer {
         Gdx.gl.glStencilMask(0xFF);
         Gdx.gl.glDisable(GL20.GL_STENCIL_TEST);
 
-        // Cursor marker
+        // Pass 4 – opaque light brown along the fan boundary.
+        // Drawn with the stencil already off: the line straddles the boundary, so
+        // masking it to either side would shave it in half lengthwise.
+        float edgeWidth = EDGE_WIDTH_PX * worldPerPixel(camera);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
-        shapes.setColor(1f, 0.9f, 0.1f, 1f);
-        shapes.circle(ox, oy, 5f, 16);
+        shapes.setColor(EDGE_R, EDGE_G, EDGE_B, 1f);
+        for (int i = 0; i < pointCount; i++) {
+            int j = (i + 1) % pointCount;
+            shapes.rectLine(epx[i], epy[i], epx[j], epy[j], edgeWidth);
+            // rectLine is a plain quad, so consecutive segments leave a notch
+            // wherever the boundary turns — and at a silhouette it turns by nearly
+            // 180°. A dot on the joint fills it.
+            shapes.circle(epx[i], epy[i], edgeWidth * 0.5f, 8);
+        }
         shapes.end();
 
         Gdx.gl.glDisable(GL20.GL_BLEND);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /**
+     * World units covered by one screen pixel at the current zoom — the factor
+     * that turns a thickness in pixels into one the world-space ShapeRenderer can
+     * draw. {@code viewportWidth} is already in world units, so this is just how
+     * many of them each pixel of the backbuffer is showing.
+     */
+    private float worldPerPixel(OrthographicCamera camera) {
+        int screenW = Gdx.graphics.getWidth();
+        if (camera == null || screenW <= 0) return 1f;
+        return camera.viewportWidth * camera.zoom / screenW;
+    }
 
     /**
      * Recomputes the cursor visibility fan into rayEndX/rayEndY.
@@ -369,7 +414,8 @@ public class FogOfWarRenderer {
      * Instead the ray walks BLOCK_SIZE-sized blocks (a DDA traversal, so every
      * block on the line is visited exactly once, in order) and consults each
      * block's precomputed summary. A block is skipped whole when it provably
-     * cannot stop the ray; only blocks that might are re-walked pixel by pixel.
+     * cannot stop the ray; only blocks that might are re-walked pixel by pixel
+     * (see {@link #walkPixels}).
      *
      * <h3>Why the skip test is exact</h3>
      * A block is skipped only when walking it could change nothing:
@@ -422,8 +468,10 @@ public class FogOfWarRenderer {
                     : dy < 0 ? (by * B - cy) / dy
                     : Float.MAX_VALUE;
 
-        float crest   = -Float.MAX_VALUE;   // tallest ground passed so far
-        float dEnter  = 0f;
+        rayCrest   = -Float.MAX_VALUE;   // tallest ground confirmed as a crest
+        rayCand    = -Float.MAX_VALUE;
+        rayCandLen = 0f;
+        float dEnter = 0f;
 
         while (dEnter < maxDist) {
             if (bx < 0 || by < 0 || bx >= blocksX || by >= blocksY) return dEnter;
@@ -433,30 +481,17 @@ public class FogOfWarRenderer {
             int blockMin = terrain.blockMinHeight(bx, by);
             int blockMax = terrain.blockMaxHeight(bx, by);
             boolean canSkip = !terrain.blockHasForest(bx, by)
-                && blockMax <= crest
-                && crest <= Math.max(hCursor, blockMin) + ELEVATION_BLOCK_MARGIN;
+                && blockMax <= rayCrest
+                && rayCrest <= Math.max(hCursor, blockMin) + ELEVATION_BLOCK_MARGIN;
 
-            if (!canSkip) {
-                // Walk this block a pixel at a time to find the exact stopping point.
-                // Samples are snapped to a global multiple-of-FINE_STEP lattice, so
-                // where a block boundary happens to fall cannot shift them — the
-                // result is identical to marching the whole ray finely.
-                float dStart = Math.max(dEnter, FINE_STEP);
-                dStart = (float) Math.ceil(dStart / FINE_STEP) * FINE_STEP;
-
-                for (float d = dStart; d < dExit; d += FINE_STEP) {
-                    float wx = cx + dx * d;
-                    float wy = cy + dy * d;
-
-                    // Forest right under the cursor must not blind it: mirrors
-                    // VisibilitySystem, where the observer's own tile is excluded
-                    // from the LOS forest check and handled by sightMod instead.
-                    if (d >= ORIGIN_FOREST_SKIP && terrain.isForest(wx, wy)) return d;
-
-                    float hGround = terrain.height(wx, wy);
-                    if (crest > Math.max(hCursor, hGround) + ELEVATION_BLOCK_MARGIN) return d;
-                    if (hGround > crest) crest = hGround;
-                }
+            if (canSkip) {
+                // Nothing here reaches above the confirmed crest, so any rise that
+                // was being measured provably breaks off inside this block.
+                rayCand    = -Float.MAX_VALUE;
+                rayCandLen = 0f;
+            } else {
+                float hit = walkPixels(cx, cy, dx, dy, dEnter, dExit, hCursor);
+                if (hit >= 0f) return hit;
             }
 
             // Advance to the next block along the ray.
@@ -465,6 +500,87 @@ public class FogOfWarRenderer {
         }
 
         return maxDist;
+    }
+
+    /**
+     * Walks the ray pixel by pixel between two distances, returning the exact
+     * distance at which something stops it, or -1 when nothing does.
+     *
+     * <h3>Why a DDA rather than fixed-step sampling</h3>
+     * This used to sample every FINE_STEP (= 1 world unit) along the ray. Two
+     * costs: the reported hit distance was quantised to that lattice, which shows
+     * up as stair-stepping along the fan boundary once the camera is zoomed in;
+     * and a diagonal ray advances only 0.71 units per axis per step, so it could
+     * step straight over pixels it actually passes through. Crossing pixel
+     * boundaries analytically fixes both — every pixel the ray touches is visited
+     * exactly once, and the returned distance is the true edge of the blocking
+     * pixel. It is not more expensive: the same pixels, visited once each.
+     *
+     * <h3>Why a crest must persist</h3>
+     * Height tiers are pixel data with jagged, staircase boundaries. A ray running
+     * nearly tangent to one clips a single corner pixel while its neighbour misses
+     * it, and under the old rule that one pixel raised the crest permanently and
+     * cut the rest of the ray — a one-ray-wide stripe of shadow reaching across the
+     * map. Requiring the rise to hold for CREST_MIN_RUN removes those without
+     * touching real ridges, which persist far longer. Measured on the Zhovti Vody
+     * masks: ~80% fewer such stripes, mean ray length within 1%.
+     *
+     * <p>Run length is accumulated as traversed distance, not as a sample count,
+     * so it means the same thing at every ray angle — a corner clipped at a shallow
+     * angle contributes the sliver it really covers.
+     */
+    private float walkPixels(float cx, float cy, float dx, float dy,
+                             float dStart, float dEnd, float hCursor) {
+        if (dEnd <= dStart) return -1f;
+
+        // Probe just inside the interval, so a dStart sitting exactly on a pixel
+        // boundary resolves to the pixel being entered, not the one being left.
+        float probe = dStart + PIXEL_EPS;
+        int px = (int) Math.floor(cx + dx * probe);
+        int py = (int) Math.floor(cy + dy * probe);
+
+        int stepX = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
+        int stepY = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
+
+        // Distances measured from the ray ORIGIN, not from dStart: recomputing them
+        // per block would let rounding drift the lattice between blocks.
+        float tDeltaX = dx != 0f ? Math.abs(1f / dx) : Float.MAX_VALUE;
+        float tDeltaY = dy != 0f ? Math.abs(1f / dy) : Float.MAX_VALUE;
+        float tMaxX = dx > 0 ? (px + 1 - cx) / dx : dx < 0 ? (px - cx) / dx : Float.MAX_VALUE;
+        float tMaxY = dy > 0 ? (py + 1 - cy) / dy : dy < 0 ? (py - cy) / dy : Float.MAX_VALUE;
+
+        float d = dStart;
+        while (d < dEnd) {
+            float dNext = Math.min(Math.min(tMaxX, tMaxY), dEnd);
+
+            // Pixel centre: exact, and independent of where inside the pixel the
+            // ray happens to run.
+            float sx = px + 0.5f;
+            float sy = py + 0.5f;
+
+            // Forest right under the cursor must not blind it: mirrors
+            // VisibilitySystem, where the observer's own tile is excluded from the
+            // LOS forest check and handled by sightMod instead.
+            if (dNext > ORIGIN_FOREST_SKIP && terrain.isForest(sx, sy))
+                return Math.max(d, ORIGIN_FOREST_SKIP);
+
+            float hGround = terrain.height(sx, sy);
+            if (rayCrest > Math.max(hCursor, hGround) + ELEVATION_BLOCK_MARGIN) return d;
+
+            if (hGround > rayCrest) {
+                if (hGround == rayCand) rayCandLen += dNext - d;
+                else { rayCand = hGround; rayCandLen = dNext - d; }
+                if (rayCandLen >= CREST_MIN_RUN) rayCrest = rayCand;
+            } else {
+                rayCand    = -Float.MAX_VALUE;
+                rayCandLen = 0f;
+            }
+
+            if (tMaxX < tMaxY) { tMaxX += tDeltaX; px += stepX; }
+            else               { tMaxY += tDeltaY; py += stepY; }
+            d = dNext;
+        }
+        return -1f;
     }
 
     /**

@@ -415,7 +415,8 @@ public class GameScreen implements Screen {
             fogRenderer.render(shapes, camera, unitManager.getAllUnits());
             boolean altHeld = Gdx.input.isKeyPressed(Input.Keys.ALT_LEFT)
                 || Gdx.input.isKeyPressed(Input.Keys.ALT_RIGHT);
-            if (altHeld) fogRenderer.renderCursorSightOverlay(shapes, cursorWorldX, cursorWorldY);
+            if (altHeld) fogRenderer.renderCursorSightOverlay(shapes, camera,
+                                                              cursorWorldX, cursorWorldY);
         }
 
         // Підказка лісу
