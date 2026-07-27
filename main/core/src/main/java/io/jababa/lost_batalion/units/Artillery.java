@@ -19,7 +19,7 @@ import io.jababa.lost_batalion.sim.TickRate;
 public class Artillery extends Unit {
 
     /** Розмір у світових одиницях (Q47.16) і в пікселях — для рендеру. */
-    public static final long  ART_SIZE_FIXED = Fixed.fromInt(32);
+    public static final long  ART_SIZE_FIXED = Fixed.fromInt(16);
     public static final float ART_SIZE       = 32f;
 
     private static final long ART_SPEED   = Fixed.fromInt(45);

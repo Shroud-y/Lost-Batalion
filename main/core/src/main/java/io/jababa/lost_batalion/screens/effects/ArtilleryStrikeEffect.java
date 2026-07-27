@@ -40,13 +40,36 @@ public class ArtilleryStrikeEffect {
     private static final float SHELL_W        = 20f;
     private static final float SHELL_H        = 10f;
 
-    /** Розмір анімації вибуху (px). Злегка більший від splashRadius. */
-    private static final float EXPLOSION_SIZE_MULT = 3.2f;
+    /**
+     * У скільки разів сторона кадру вибуху більша за splashRadius.
+     *
+     * <p>Множник залежить від того, наскільки щільно вибух заповнює свій кадр.
+     * У поточному листі полум'я на піку займає приблизно 7 пікселів із 16, а
+     * решта — прозорі поля. Тому кадр малюється помітно більшим за радіус
+     * ураження: інакше видимий вибух вийшов би вдвічі меншим за зону, яку
+     * артилерія насправді накриває, і гравець не розумів би, кого зачепило.
+     * Міняючи лист, звіряй заповнення кадру й підправляй це число.
+     *
+     * <p>Геометрично «під зону ураження» виходило 4.5, але на екрані такий
+     * вибух перекривав пів строю. Тут виграє читабельність бою, а не
+     * буквальна відповідність радіусу: 1.5 показує, КУДИ прилетіло, не
+     * ховаючи під собою тих, кого зачепило.
+     */
+    private static final float EXPLOSION_SIZE_MULT = 0.5f;
 
     // ── Spritesheet налаштування (відредагуй під свій файл) ──────────────
-    private static final int   SHEET_COLS = 8;   // кількість кадрів у рядку (640px кожен)
-    private static final int   SHEET_ROWS = 10;  // кількість рядків (426px кожен)
-    private static final float ANIM_FPS   = 16f; // кадрів/сек
+    // Поточний лист: effects/explosion_sheet.png, 112x16 — 7 кадрів по 16x16
+    // в один рядок. Останній кадр порожній: ним анімація згасає.
+    private static final int   SHEET_COLS = 7;   // кількість кадрів у рядку (16px кожен)
+    private static final int   SHEET_ROWS = 1;   // кількість рядків (16px кожен)
+    private static final float ANIM_FPS   = 16f; // кадрів/сек → 7 кадрів ≈ 0.44 с
+
+    /**
+     * Кадр 16x16 розтягується на екрані в рази. З лінійною фільтрацією від
+     * такого спрайта лишається кольорова пляма, тож піксельний лист треба
+     * малювати {@code Nearest} — краї кадру лишаються краями, а не градієнтом.
+     */
+    private static final boolean EXPLOSION_PIXEL_ART = true;
 
     // ── Стан ─────────────────────────────────────────────────────────────
     public enum Phase { INCOMING, EXPLODE, DONE }
@@ -81,7 +104,8 @@ public class ArtilleryStrikeEffect {
 
         // Explosion: спробуємо spritesheet
         explosionAnim = ExplosionAnimation.fromSheet(
-            "effects/explosion_sheet.png", SHEET_COLS, SHEET_ROWS, ANIM_FPS);
+            "effects/explosion_sheet.png", SHEET_COLS, SHEET_ROWS, ANIM_FPS,
+            EXPLOSION_PIXEL_ART);
 
         // Якщо немає spritesheet — спробуємо окремі файли
         if (explosionAnim == null) {

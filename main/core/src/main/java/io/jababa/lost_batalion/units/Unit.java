@@ -191,14 +191,6 @@ public abstract class Unit {
     }
 
     /**
-     * Поріг «дійшов»: ближче за це до цілі юніт просто стає в неї.
-     *
-     * <p>Потрібен, бо крок за тік скінченний і рівно в точку майже ніколи не
-     * потрапляє — без порога юніт вічно смикався б навколо цілі.
-     */
-    private static final long ARRIVE_EPSILON = Fixed.fromInt(2);
-
-    /**
      * Радіус, у якому проміжна точка маршруту вважається пройденою.
      *
      * <p>Набагато більший за {@link #ARRIVE_EPSILON} — і це не недбалість.
@@ -223,33 +215,58 @@ public abstract class Unit {
         // виклик, через що перезарядка йшла вдвічі швидше за задану.
         if (attackTimerTicks > 0) attackTimerTicks--;
 
-        if (moving) {
+        if (!moving) return;
+
+        // Бюджет кроку на цей тік. Він витрачається, а не «застосовується до
+        // цілі»: інакше перемикання на наступну точку маршруту коштувало б
+        // юніту зайвий крок або, навпаки, дарувало б йому цілий відрізок.
+        long budget = Fixed.mul(speedPerTick, terrainSpeedMultiplier);
+
+        for (int guard = 0; moving && guard <= MAX_WAYPOINTS_PER_TICK; guard++) {
             long dx = targetX - x, dy = targetY - y;
             long dist = Fixed.length(dx, dy);
 
-            // Поки попереду ще є точки маршруту, повз них можна проходити;
-            // ставати точно треба лише в кінцеву.
-            long arriveAt = hasPath() ? WAYPOINT_RADIUS : ARRIVE_EPSILON;
+            if (hasPath()) {
+                // Проміжну точку треба ПРОМИНУТИ, а не стати в неї. Стрибок у
+                // точку зсував юніта на цілий WAYPOINT_RADIUS за тік — при
+                // швидкості 0.5/тік це до 28 швидкостей, і саме так виглядало
+                // «юніти смикаються й летять» при русі з пошуком шляху.
+                if (dist < WAYPOINT_RADIUS) {
+                    if (!advanceWaypoint()) moving = false;
+                    continue;   // бюджет не витрачено — йдемо далі цього ж тіку
+                }
+            }
 
-            if (dist < arriveAt) {
+            if (budget <= 0) break;
+
+            if (budget >= dist) {
+                // Крок дістає до цілі — стаємо в неї, решта бюджету йде далі.
+                // Окремий поріг «дійшов» тут не потрібен: саме ця гілка й
+                // ставить юніта рівно в точку, і робить це не раніше, ніж
+                // до неї справді лишився один крок. Раніше тут стояв
+                // ARRIVE_EPSILON = 2, і кожен рух завершувався стрибком на
+                // цілих дві одиниці — вчетверо більше за крок піхоти.
+                budget -= dist;
                 x = targetX;
                 y = targetY;
-                if (!advanceWaypoint()) moving = false;
+                if (!advanceWaypoint()) { moving = false; break; }
             } else {
-                long step = Fixed.mul(speedPerTick, terrainSpeedMultiplier);
-                // Крок, що перестрибнув би ціль, обрізається до неї — інакше
-                // повільна ціль і швидкий юніт дають нескінченне коливання.
-                if (step >= dist) {
-                    x = targetX;
-                    y = targetY;
-                    if (!advanceWaypoint()) moving = false;
-                } else {
-                    x += Fixed.mul(Fixed.div(dx, dist), step);
-                    y += Fixed.mul(Fixed.div(dy, dist), step);
-                }
+                x += Fixed.mul(Fixed.div(dx, dist), budget);
+                y += Fixed.mul(Fixed.div(dy, dist), budget);
+                break;
             }
         }
     }
+
+    /**
+     * Скільки точок маршруту юніт може перемкнути за один тік.
+     *
+     * <p>Перемикання без витрати бюджету скінченне за побудовою — маршрут
+     * колись закінчиться, — але цикл, вихід з якого залежить від даних, у
+     * симуляції лишати не можна. Точки стоять по сітці 8 px, а крок за тік
+     * менший за одиницю, тож реально їх перемикається одна-дві.
+     */
+    private static final int MAX_WAYPOINTS_PER_TICK = 64;
 
     /**
      * Перейти до наступної точки маршруту.

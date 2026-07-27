@@ -7,31 +7,6 @@ import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.utils.Array;
 
-/**
- * Програвач анімації вибуху.
- *
- * libGDX не підтримує GIF напряму, але підтримує два варіанти:
- *
- * Варіант A — Spritesheet (рекомендований):
- *   Один PNG файл з усіма кадрами в рядку/сітці.
- *   Наприклад: effects/explosion_sheet.png  розміром 512x64 (8 кадрів по 64x64).
- *   Виклик: ExplosionAnimation.fromSheet("effects/explosion_sheet.png", cols, rows, fps)
- *
- * Варіант B — Окремі файли:
- *   effects/explosion_0.png, effects/explosion_1.png, ...
- *   Виклик: ExplosionAnimation.fromFrames("effects/explosion_", count, ".png", fps)
- *
- * Якщо жоден файл не знайдено — повертає null, і ArtilleryStrikeEffect
- * не малює нічого (вибух залишається невидимим, допоки ти не додаси PNG).
- *
- * ── Як конвертувати GIF → spritesheet ──────────────────────────────────────
- * 1. Онлайн: https://ezgif.com/gif-to-sprite  (завантажуєш GIF, отримуєш PNG sheet)
- * 2. ImageMagick: convert explosion.gif +append explosion_sheet.png
- * 3. GIMP: Filters → Animation → Flatten
- *
- * Після конвертації поклади файл у  assets/effects/explosion_sheet.png
- * і передай правильну кількість колонок/рядків у fromSheet().
- */
 public class ExplosionAnimation {
 
     private final Animation<TextureRegion> animation;
@@ -45,19 +20,43 @@ public class ExplosionAnimation {
 
     /**
      * Завантажити зі spritesheet.
-     * @param path   шлях до PNG (assets/effects/explosion_sheet.png)
-     * @param cols   кількість колонок кадрів
-     * @param rows   кількість рядків кадрів
-     * @param fps    кадрів на секунду
+     *
+     * @param path     шлях до PNG (assets/effects/explosion_sheet.png)
+     * @param cols     кількість колонок кадрів
+     * @param rows     кількість рядків кадрів
+     * @param fps      кадрів на секунду
+     * @param pixelArt true — {@code Nearest}-фільтр (дрібний піксельний лист),
+     *                 false — {@code Linear} (великі згладжені кадри)
      */
-    public static ExplosionAnimation fromSheet(String path, int cols, int rows, float fps) {
+    public static ExplosionAnimation fromSheet(String path, int cols, int rows, float fps,
+                                               boolean pixelArt) {
         if (!Gdx.files.internal(path).exists()) return null;
+        if (cols < 1 || rows < 1) return null;
 
         Texture sheet = new Texture(Gdx.files.internal(path));
-        sheet.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
+        Texture.TextureFilter filter = pixelArt
+            ? Texture.TextureFilter.Nearest
+            : Texture.TextureFilter.Linear;
+        sheet.setFilter(filter, filter);
 
         int frameW = sheet.getWidth()  / cols;
         int frameH = sheet.getHeight() / rows;
+
+        // Сітка, що не ділить лист націло, — це майже завжди застарілі
+        // константи після заміни спрайта. Мовчки нарізати з такої сітки не
+        // можна: попередній лист був 8x10, і на листі 112x16 це давало 80
+        // кадрів завтовшки в один піксель — вибух малювався смужкою, і
+        // причину було не видно ніде, крім самої картинки.
+        if (frameW < 1 || frameH < 1
+            || frameW * cols != sheet.getWidth()
+            || frameH * rows != sheet.getHeight()) {
+            Gdx.app.error("EFFECTS", "Лист " + path + " має розмір "
+                + sheet.getWidth() + "x" + sheet.getHeight()
+                + ", а сітка задана " + cols + "x" + rows
+                + " — розміри не збігаються. Анімацію не завантажено.");
+            sheet.dispose();
+            return null;
+        }
 
         TextureRegion[][] grid = TextureRegion.split(sheet, frameW, frameH);
         Array<TextureRegion> frames = new Array<>();
