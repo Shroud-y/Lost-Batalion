@@ -128,7 +128,15 @@ Two grayscale/colour PNG masks per scenario, sampled by pixel colour
 - `SelectionPanel` — bottom-left slide-in panel: unit portraits + formation
   button (+ artillery button when artillery selected). Custom SpriteBatch draw,
   not scene2d.
-- `PauseOverlay`, `MoveMarker`, `ForestTooltip`, `TargetPopup`.
+- `PauseOverlay`, `ForestTooltip`, `TargetPopup`.
+- `screens/effects/MoveMarker` — glowing cross at the move-order destination.
+  Sprite `ui/movemarker.png` (procedural pixmap fallback), drawn twice with
+  `glBlendFuncSeparate`: overlay pass + additive pass, weighted by the animation
+  phase. Separate alpha factors because the PNG is straight-alpha while the
+  bloom buffer is premultiplied.
+- `screens/effects/BloomEffect` — generic FBO post-process (separable gaussian at
+  half res, sharp layer + additive halo). `begin(viewport)` / `end()`; silently
+  self-disables if the shader won't compile. Currently only wraps `MoveMarker`.
 
 ### Mobile (`mobile/`)
 - `MobileTouchHandler` — long-press = box select, drag = pan camera, double-tap =

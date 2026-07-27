@@ -17,7 +17,7 @@ public class Infantry extends Unit {
     private static final int  INF_COOLDOWN_TICKS = 48;
 
     /** Розмір у світових одиницях (Q47.16). */
-    public static final long INF_SIZE_FIXED = Fixed.fromInt(10);
+    public static final long INF_SIZE_FIXED = Fixed.fromInt(15);
     /** Той самий розмір у пікселях — для розкладки й рендеру. */
     public static final float INF_SIZE       = 10f;
     private static final long INF_HIT_RADIUS = Fixed.fromInt(8);

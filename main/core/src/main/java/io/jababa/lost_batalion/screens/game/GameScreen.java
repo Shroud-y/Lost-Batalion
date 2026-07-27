@@ -31,6 +31,8 @@ import io.jababa.lost_batalion.net.commands.MoveLineCommand;
 import io.jababa.lost_batalion.net.commands.PathMoveCommand;
 import io.jababa.lost_batalion.net.commands.StopCommand;
 import io.jababa.lost_batalion.net.kryo.LocalMatchTransport;
+import io.jababa.lost_batalion.screens.effects.BloomEffect;
+import io.jababa.lost_batalion.screens.effects.MoveMarker;
 import io.jababa.lost_batalion.screens.renderer.UnitRenderer;
 import io.jababa.lost_batalion.screens.scenario.ScenarioCard;
 import io.jababa.lost_batalion.screens.ui.SelectionPanel;
@@ -137,6 +139,8 @@ public class GameScreen implements Screen {
 
     private UnitRenderer unitRenderer;
     private MoveMarker moveMarker;
+    /** Пост-обробка світіння для позначки наказу. */
+    private BloomEffect bloom;
     private FormationDragHandler formationDrag;
 
     private SelectionPanel selectionPanel;
@@ -228,6 +232,7 @@ public class GameScreen implements Screen {
 
         unitRenderer    = new UnitRenderer();
         moveMarker      = new MoveMarker();
+        bloom           = new BloomEffect(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         formationDrag   = new FormationDragHandler();
         curvedFormation = new CurvedFormationCommand();
 
@@ -405,7 +410,13 @@ public class GameScreen implements Screen {
             curvedFormation.draw(batch, camera.zoom);
         }
 
-        if (moveMarker.isActive()) moveMarker.draw(shapes);
+        if (moveMarker.isActive()) {
+            // Позначка йде в окремий буфер, звідти повертається вже зі світінням.
+            bloom.begin(gameViewport);
+            batch.setProjectionMatrix(camera.combined);
+            moveMarker.draw(batch);
+            bloom.end();
+        }
         if (selecting && !paused && !clickConsumedByUnit) drawSelectionRect();
 
         // Артилерія: снаряди в польоті + вибухи + індикатор заряджання
@@ -681,6 +692,7 @@ public class GameScreen implements Screen {
 
     @Override public void resize(int w, int h) {
         gameViewport.update(w, h, false);
+        if (bloom != null) bloom.resize(w, h);
         hudStage.getViewport().update(w, h, true);
         pauseStage.getViewport().update(w, h, true);
         if (modalStage != null) modalStage.getViewport().update(w, h, true);
@@ -710,6 +722,8 @@ public class GameScreen implements Screen {
         if (terrainMask     != null) terrainMask.dispose();
         if (forestTooltip   != null) forestTooltip.dispose();
         if (unitRenderer    != null) unitRenderer.dispose();
+        if (bloom           != null) bloom.dispose();
+        if (moveMarker      != null) moveMarker.dispose();
         if (combatManager   != null) combatManager.dispose();
         if (selectionPanel  != null) selectionPanel.dispose();
         if (curvedFormation != null) curvedFormation.dispose();
