@@ -256,6 +256,11 @@ public class LobbyScreen extends BaseScreen {
         // Мережеві події приходять у чужому потоці; тут вони перетворюються на
         // зміни віджетів — у потоці рендеру, єдиному, де це дозволено.
         session.pump(listener);
+
+        // Серед цих подій є StartMatch: він перемикає екран, а перехід одразу
+        // звільняє цей. Малювати вже нічого.
+        if (stage == null) return;
+
         super.render(delta);
     }
 

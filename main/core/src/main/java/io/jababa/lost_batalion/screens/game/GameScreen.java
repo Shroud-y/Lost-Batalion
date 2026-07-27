@@ -329,6 +329,12 @@ public class GameScreen implements Screen {
 
     @Override
     public void render(float delta) {
+        // Кнопки «Меню» і «Вийти» живуть у модалках і на HUD, тобто спрацьовують
+        // усередині цього ж кадру, під час stage.act(). Перехід на інший екран
+        // звільняє GameScreen негайно, разом із батчами й текстурами —
+        // усе, що після цього, малювало б уже нічим.
+        if (disposed) return;
+
         Gdx.gl.glClearColor(0f, 0f, 0f, 1f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
 
@@ -354,6 +360,7 @@ public class GameScreen implements Screen {
         if (dropNoticeTimer > 0f) dropNoticeTimer -= delta;
         updateWaitHint();
         updateModals();
+        if (disposed) return;
 
         if (!paused) {
             // ── Візуал: за часом кадру, на стан гри не впливає ─────────────
@@ -431,17 +438,20 @@ public class GameScreen implements Screen {
 
         hudStage.getViewport().update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
         hudStage.act(delta);
+        if (disposed) return;
         hudStage.draw();
 
         if (paused) {
             pauseStage.getViewport().update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
             pauseStage.act(delta);
+            if (disposed) return;
             pauseStage.draw();
         }
 
         if (modalActive()) {
             modalStage.getViewport().update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
             modalStage.act(delta);
+            if (disposed) return;
             modalStage.draw();
         }
     }

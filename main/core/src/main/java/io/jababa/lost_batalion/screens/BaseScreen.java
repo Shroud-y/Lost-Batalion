@@ -61,13 +61,29 @@ public abstract class BaseScreen implements Screen {
         rebuildStage(width, height);
     }
 
+    /**
+     * Екран може згаснути просто посеред власного кадру.
+     *
+     * <p>Слухач кнопки або мережева подія викликає {@code game.setScreen()}, а
+     * той звільняє попередній екран НЕГАЙНО — тобто {@code dispose()} відпрацює
+     * ще до того, як цей метод дійде до наступного рядка. Далі чіпати сцену не
+     * можна: від неї лишився {@code null} (або вже інша, якщо стався
+     * {@code rebuildStage}). Тому сцена береться в локальну змінну і звіряється
+     * після кожного місця, звідки міг піти перехід.
+     */
     @Override
     public void render(float delta) {
+        Stage current = stage;
+        if (current == null) return;
+
         Gdx.gl.glClearColor(0.08f, 0.08f, 0.12f, 1f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
-        game.batch.setProjectionMatrix(stage.getCamera().combined);
-        stage.act(delta);
-        stage.draw();
+        game.batch.setProjectionMatrix(current.getCamera().combined);
+        current.act(delta);
+
+        // act() міг виконати слухач кнопки, а той — перемкнути екран.
+        if (stage != current) return;
+        current.draw();
     }
 
     @Override public void pause()  {}
