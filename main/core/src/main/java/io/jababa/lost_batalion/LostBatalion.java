@@ -9,6 +9,15 @@ import io.jababa.lost_batalion.screens.MainMenuScreen;
  */
 public class LostBatalion extends Game {
 
+    /**
+     * Версія гри — те, що показує підвал головного меню.
+     *
+     * <p>ПЛЕЙСХОЛДЕР: число проставлене вручну і ні з чим не звірене. Коли
+     * зʼявиться нормальна збірка, значення має приїхати з Gradle (властивість
+     * проєкту або згенерований клас), а не правитись тут перед кожним релізом.
+     */
+    public static final String VERSION = "0.1.0";
+
     public SpriteBatch batch;
 
     private InputMultiplexer inputMultiplexer;

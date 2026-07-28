@@ -1,22 +1,47 @@
 package io.jababa.lost_batalion.screens;
 
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.scenes.scene2d.Actor;
+import com.badlogic.gdx.scenes.scene2d.InputEvent;
+import com.badlogic.gdx.scenes.scene2d.actions.Actions;
+import com.badlogic.gdx.scenes.scene2d.ui.Button;
+import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
-import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
+import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
 import io.jababa.lost_batalion.LostBatalion;
+import io.jababa.lost_batalion.screens.menu.MenuBackdrop;
 import io.jababa.lost_batalion.ui.UIFactory;
 
 /**
- * Екран головного меню
+ * Головне меню.
+ *
+ * <p>Колонка стоїть ліворуч, а не по центру: карта на тлі — половина того, що
+ * меню повідомляє про гру, і центрований стовпчик кнопок затуляв би її саме
+ * посередині, де вона найцікавіша.
  */
 public class MainMenuScreen extends BaseScreen {
 
-    private static final float BUTTON_WIDTH = 280f;
-    private static final float BUTTON_HEIGHT =  50f;
-    private static final float BUTTON_SPACING = 14f;
+    private static final String MAP_PATH = "scenarios/Zhovty_Vodu.png";
+
+    private static final float COLUMN_X     = 72f;
+    private static final float PLATE_WIDTH  = 330f;
+    private static final float PLATE_HEIGHT = 50f;
+    private static final float PLATE_GAP    = 10f;
+
+    private static final float FADE_IN = 0.55f;
+
+    /** Колір назви пункту під курсором. */
+    private static final Color ITEM_HOVER = new Color(0.96f, 0.93f, 0.84f, 1f);
+
+    /**
+     * Тло живе довше за сцену: {@code BaseScreen} перебудовує сцену на кожній
+     * зміні розміру вікна, і перечитувати з диска карту 1440×1440 щоразу, коли
+     * користувач тягне край вікна, — це помітні ривки на рівному місці.
+     */
+    private MenuBackdrop backdrop;
 
     public MainMenuScreen(LostBatalion game) {
         super(game);
@@ -24,58 +49,119 @@ public class MainMenuScreen extends BaseScreen {
 
     @Override
     protected void buildUI() {
-
-        Label title = new Label("LOST BATTALION", UIFactory.createTitleStyle());
-        Label subtitle = new Label("Real-Time Strategy", UIFactory.createSubtitleStyle());
-
-        TextButton btnScenario = createButton("Select Scenario");
-        TextButton btnMultiplayer = createButton("Мультиплеєр");
-        TextButton btnSettings = createButton("Settings");
-        TextButton btnExit = createButton("Exit");
-
-        btnScenario.addListener(new ChangeListener() {
-            @Override
-            public void changed(ChangeEvent event, Actor actor) {
-                game.setScreen(new io.jababa.lost_batalion.screens.scenario.ScenarioScreen(game));
-            }
-        });
-
-        btnMultiplayer.addListener(new ChangeListener() {
-            @Override
-            public void changed(ChangeEvent event, Actor actor) {
-                game.setScreen(new io.jababa.lost_batalion.screens.multiplayer.MultiplayerScreen(game));
-            }
-        });
-
-        btnSettings.addListener(new ChangeListener() {
-            @Override
-            public void changed(ChangeEvent event, Actor actor) {
-                game.setScreen(new SettingsScreen(game));
-            }
-        });
-
-        btnExit.addListener(new ChangeListener() {
-            @Override
-            public void changed(ChangeEvent event, Actor actor) {
-                Gdx.app.exit();
-            }
-        });
+        if (backdrop == null) backdrop = new MenuBackdrop(MAP_PATH);
+        stage.addActor(backdrop);   // розмір тло тримає саме, див. MenuBackdrop.act
 
         Table root = new Table();
         root.setFillParent(true);
+        root.left();
 
-        root.add(title).padBottom(4f).row();
-        root.add(subtitle).padBottom(60f).row();
+        Table column = new Table();
+        column.add(buildTitleBlock()).left().padBottom(34f).row();
 
-        root.add(btnScenario).size(BUTTON_WIDTH, BUTTON_HEIGHT).padBottom(BUTTON_SPACING).row();
-        root.add(btnMultiplayer).size(BUTTON_WIDTH, BUTTON_HEIGHT).padBottom(BUTTON_SPACING).row();
-        root.add(btnSettings).size(BUTTON_WIDTH, BUTTON_HEIGHT).padBottom(BUTTON_SPACING).row();
-        root.add(btnExit).size(BUTTON_WIDTH, BUTTON_HEIGHT).row();
+        column.add(plate("КАМПАНІЯ", () ->
+            game.setScreen(new io.jababa.lost_batalion.screens.scenario.ScenarioScreen(game))))
+            .size(PLATE_WIDTH, PLATE_HEIGHT).padBottom(PLATE_GAP).row();
 
+        column.add(plate("МУЛЬТИПЛЕЄР", () ->
+            game.setScreen(new io.jababa.lost_batalion.screens.multiplayer.MultiplayerScreen(game))))
+            .size(PLATE_WIDTH, PLATE_HEIGHT).padBottom(PLATE_GAP).row();
+
+        column.add(plate("НАЛАШТУВАННЯ", () ->
+            game.setScreen(new SettingsScreen(game))))
+            .size(PLATE_WIDTH, PLATE_HEIGHT).padBottom(PLATE_GAP).row();
+
+        column.add(plate("ВИЙТИ", Gdx.app::exit))
+            .size(PLATE_WIDTH, PLATE_HEIGHT).row();
+
+        root.add(column).expand().left().padLeft(COLUMN_X);
         stage.addActor(root);
+
+        stage.addActor(buildFooter());
+
+        // Поява: різкий показ готового меню виглядає як смикання, надто коли
+        // тло вже почало рухатись.
+        stage.getRoot().getColor().a = 0f;
+        stage.getRoot().addAction(Actions.fadeIn(FADE_IN));
     }
 
-    private TextButton createButton(String text) {
-        return new TextButton(text, UIFactory.createMenuButtonStyle());
+    // ── Складові ──────────────────────────────────────────────────────────
+
+    private Table buildTitleBlock() {
+        Label lost   = new Label("LOST",      UIFactory.createMenuWordStyle(UIFactory.COLOR_TEXT));
+        Label batalt = new Label("BATTALION", UIFactory.createMenuWordStyle(UIFactory.COLOR_ACCENT));
+
+        Table words = new Table();
+        words.add(lost).left().row();
+        words.add(batalt).left().padTop(-6f).row();   // рядки заголовка стоять щільно
+        // Лінійка тягнеться по найширшому рядку — це «BATTALION».
+        words.add(rule()).left().height(1f).fillX().padTop(14f).row();
+
+        // Вертикальна засічка ліворуч — те саме, чим у меню позначений вибраний
+        // пункт. Заголовок і список так читаються як одна колонка.
+        Image mark = new Image(UIFactory.createColorDrawable(UIFactory.COLOR_ACCENT));
+
+        Table block = new Table();
+        block.add(mark).width(4f).growY().padRight(18f);
+        block.add(words).left().top();
+        return block;
+    }
+
+    private Image rule() {
+        return new Image(UIFactory.createColorDrawable(UIFactory.COLOR_MENU_RULE));
+    }
+
+    /**
+     * Плитка меню.
+     *
+     * @param action що зробити по натисканню
+     */
+    private Button plate(String title, Runnable action) {
+        final Label name = new Label(title, UIFactory.createMenuItemStyle());
+        final Color rest = UIFactory.menuItemRestColor();
+        name.setColor(rest);
+
+        Button button = new Button(UIFactory.createMenuPlateStyle());
+        button.add(name).left().padLeft(18f).expandX();
+
+        button.addListener(new ChangeListener() {
+            @Override public void changed(ChangeEvent event, Actor actor) { action.run(); }
+        });
+
+        // Тло під курсором міняє сам стиль; підсвітити треба ще й підпис,
+        // інакше плитка світлішає, а текст на ній лишається тьмяним.
+        button.addListener(new ClickListener() {
+            @Override public void enter(InputEvent e, float x, float y, int pointer, Actor from) {
+                super.enter(e, x, y, pointer, from);
+                if (pointer == -1) name.setColor(ITEM_HOVER);
+            }
+            @Override public void exit(InputEvent e, float x, float y, int pointer, Actor to) {
+                super.exit(e, x, y, pointer, to);
+                if (pointer == -1) name.setColor(rest);
+            }
+        });
+        return button;
+    }
+
+    private Table buildFooter() {
+        Table footer = new Table();
+        footer.setFillParent(true);
+        footer.bottom();
+
+        footer.add(new Label("v" + LostBatalion.VERSION, UIFactory.createMenuNoteStyle()))
+              .left().expandX().padLeft(COLUMN_X);
+        footer.add(new Label("Жовті Води, 1648", UIFactory.createMenuNoteStyle()))
+              .right().padRight(COLUMN_X);
+        footer.padBottom(28f);
+        return footer;
+    }
+
+    @Override
+    public void dispose() {
+        super.dispose();
+        if (backdrop != null) {
+            backdrop.dispose();
+            backdrop = null;
+        }
     }
 }
