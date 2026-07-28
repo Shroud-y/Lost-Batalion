@@ -92,6 +92,11 @@ public class UnitRenderer {
         for (Unit u : units) {
             if (!u.alive) continue;
             if (!u.isVisibleTo(viewer)) continue;
+            // Ціле здоров'я бара не малює: смужка має привертати увагу до того,
+            // хто вже отримав по зубах, а не стояти над кожним юнітом завжди.
+            // Порівняння цілих (Q47.16), а не hpRatio(): ratio міг би дати 1.0
+            // після округлення при подряпині в кілька одиниць.
+            if (u.hp >= u.maxHp) continue;
             drawHpBar(u, alpha);
         }
         shapes.end();

@@ -34,6 +34,7 @@ import io.jababa.lost_batalion.net.commands.StopCommand;
 import io.jababa.lost_batalion.net.kryo.LocalMatchTransport;
 import io.jababa.lost_batalion.screens.effects.BloomEffect;
 import io.jababa.lost_batalion.screens.effects.MoveMarker;
+import io.jababa.lost_batalion.screens.renderer.TerrainIndicatorRenderer;
 import io.jababa.lost_batalion.screens.renderer.UnitRenderer;
 import io.jababa.lost_batalion.screens.scenario.ScenarioCard;
 import io.jababa.lost_batalion.screens.ui.Minimap;
@@ -140,6 +141,7 @@ public class GameScreen implements Screen {
     private VisibilitySystem visibilitySystem;
 
     private UnitRenderer unitRenderer;
+    private TerrainIndicatorRenderer terrainIndicators;
     private MoveMarker moveMarker;
     /** Пост-обробка світіння для позначки наказу. */
     private BloomEffect bloom;
@@ -236,7 +238,8 @@ public class GameScreen implements Screen {
                             mapHeight / 2f, 0);
         camera.update();
 
-        unitRenderer    = new UnitRenderer();
+        unitRenderer      = new UnitRenderer();
+        terrainIndicators = new TerrainIndicatorRenderer();
         moveMarker      = new MoveMarker();
         bloom           = new BloomEffect(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         formationDrag   = new FormationDragHandler();
@@ -402,6 +405,9 @@ public class GameScreen implements Screen {
         batch.begin();
         if (mapTexture != null) batch.draw(mapTexture, 0, 0);
         unitRenderer.drawSprites(batch, unitManager.getAllUnits(), renderAlpha, localTeam);
+        // Значки місцевості — поверх юнітів, але під бойовими попапами.
+        terrainIndicators.draw(batch, unitManager.getSelectedUnits(), renderAlpha,
+                               localTeam, terrain);
         combatManager.drawPopups(batch);
         batch.end();
 
@@ -738,6 +744,7 @@ public class GameScreen implements Screen {
         if (terrainMask     != null) terrainMask.dispose();
         if (forestTooltip   != null) forestTooltip.dispose();
         if (unitRenderer    != null) unitRenderer.dispose();
+        if (terrainIndicators != null) terrainIndicators.dispose();
         if (bloom           != null) bloom.dispose();
         if (moveMarker      != null) moveMarker.dispose();
         if (combatManager   != null) combatManager.dispose();
