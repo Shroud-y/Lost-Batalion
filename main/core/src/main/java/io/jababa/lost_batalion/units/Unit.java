@@ -101,6 +101,77 @@ public abstract class Unit {
     public boolean selected = false;
     public boolean alive    = true;
 
+    // ── Напрямок ──────────────────────────────────────────────────────────
+
+    /**
+     * Куди юніт дивиться: радіани Q47.16, 0 = вправо (+X), проти годинникової.
+     *
+     * <p>Це СТАН симуляції, а не рендер: поки гармата не довернулась, вона не
+     * їде і не стріляє, тож від кута залежить момент пострілу. Входить у
+     * checksum і в знімок.
+     */
+    public long facing = 0;
+
+    /**
+     * Швидкість розвороту в радіанах за тік (Q47.16).
+     *
+     * <p>{@code 0} означає «напрямку немає»: піхота розвертається миттєво і
+     * взагалі не малюється повернутою. Перевіряти напрямок дорого лише там,
+     * де він щось значить — тому за замовчуванням механіка вимкнена.
+     */
+    public long turnRatePerTick() { return 0; }
+
+    public boolean hasFacing() { return turnRatePerTick() > 0; }
+
+    /**
+     * Допуск «дивиться куди треба» — трохи більший за крок розвороту не
+     * потрібен, але й нуль не годиться: наближення atan2 має свою похибку,
+     * і без допуску юніт міг би довертатись вічно.
+     */
+    private static final long FACING_EPSILON = Fixed.fromFloat(0.02f);
+
+    /**
+     * Довернути на кут {@code desired} на один тік.
+     *
+     * @return true, якщо юніт уже дивиться в потрібний бік
+     */
+    public boolean turnTo(long desired) {
+        if (!hasFacing()) { facing = Fixed.wrapAngle(desired); return true; }
+
+        long diff = Fixed.angleDiff(desired, facing);
+        if (Fixed.abs(diff) <= FACING_EPSILON) { facing = Fixed.wrapAngle(desired); return true; }
+
+        long step = Fixed.min(turnRatePerTick(), Fixed.abs(diff));
+        facing = Fixed.wrapAngle(facing + (diff > 0 ? step : -step));
+        return false;
+    }
+
+    /** Те саме, але ціль задана точкою. Точка «під собою» вважається досягнутою. */
+    public boolean turnToward(long tx, long ty) {
+        long dx = tx - x, dy = ty - y;
+        if (dx == 0 && dy == 0) return true;
+        return turnTo(Fixed.atan2(dy, dx));
+    }
+
+    /** Чи дивиться юніт на точку зараз (без спроби довернутись). */
+    public boolean isFacingPoint(long tx, long ty) {
+        if (!hasFacing()) return true;
+        long dx = tx - x, dy = ty - y;
+        if (dx == 0 && dy == 0) return true;
+        return Fixed.abs(Fixed.angleDiff(Fixed.atan2(dy, dx), facing)) <= FACING_EPSILON;
+    }
+
+    /**
+     * Кут спрайту в градусах для рендеру: 0 = так, як намальовано у файлі.
+     * Спрайт артилерії дивиться вгору, тобто його «нуль» — це +90°.
+     */
+    public float facingDegrees() {
+        return (float) Math.toDegrees(Fixed.toFloat(facing)) + spriteFacingOffsetDeg();
+    }
+
+    /** Наскільки картинка вже повернута відносно напрямку «вправо». */
+    public float spriteFacingOffsetDeg() { return 0f; }
+
     /**
      * Чи бачить цього юніта кожна зі сторін; індекс — {@link Team#ordinal()}.
      *
@@ -216,6 +287,11 @@ public abstract class Unit {
         if (attackTimerTicks > 0) attackTimerTicks--;
 
         if (!moving) return;
+
+        // Спершу розворот, і тільки потім рух: юніт з обмеженим розворотом
+        // (артилерія) не повзе боком — тік, у якому він довертається,
+        // витрачається саме на розворот.
+        if (hasFacing() && !turnToward(targetX, targetY)) return;
 
         // Бюджет кроку на цей тік. Він витрачається, а не «застосовується до
         // цілі»: інакше перемикання на наступну точку маршруту коштувало б
@@ -382,6 +458,7 @@ public abstract class Unit {
         out.writeBoolean(visibleTo[0]);
         out.writeBoolean(visibleTo[1]);
 
+        out.writeLong(facing);
         out.writeLong(finalX);
         out.writeLong(finalY);
         out.writeInt(pathIndex);
@@ -402,6 +479,7 @@ public abstract class Unit {
         visibleTo[0]     = in.readBoolean();
         visibleTo[1]     = in.readBoolean();
 
+        facing    = in.readLong();
         finalX    = in.readLong();
         finalY    = in.readLong();
         pathIndex = in.readInt();
@@ -441,6 +519,15 @@ public abstract class Unit {
 
     /** Розмір у пікселях — єдине, що можна брати в рендер. */
     public float getSizePx() { return Fixed.toFloat(sizeFixed()); }
+
+    /** Радіус влучання в пікселях — для UI-пікінгу (клік/рамка). */
+    public float getHitRadiusPx() { return Fixed.toFloat(hitRadiusFixed()); }
+
+    /**
+     * Зсув HP-бару по X у пікселях (додатне — правіше). Чисто косметика:
+     * у частини спрайтів фігура зміщена від центру, і бар «відлипає».
+     */
+    public float hpBarOffsetX() { return 0f; }
 
     public abstract String getTexturePath();
 }

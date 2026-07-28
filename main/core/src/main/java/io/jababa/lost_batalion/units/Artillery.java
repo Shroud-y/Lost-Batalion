@@ -7,9 +7,12 @@ import io.jababa.lost_batalion.sim.TickRate;
 /**
  * Артилерійський юніт.
  *
- * - Автоматично обстрілює всіх ворогів у радіусі STRIKE_RANGE (AoE-снаряд).
+ * - Автоматично обстрілює ворогів у радіусі STRIKE_RANGE, яких БАЧИТЬ САМА
+ *   (AoE-снаряд). Чужа розвідка їй не допомагає: сторонової видимості замало.
  * - Якщо гравець виділив артилерію і клікнув ПКМ по ворогу — б'є саме по ньому
- *   (manualTarget), поки той живий і в радіусі; інакше повертається до авто-цілі.
+ *   (manualTarget), поки той живий; якщо ціль поза радіусом або її не видно,
+ *   гармата сама йде на позицію з пошуком шляху й відкриває вогонь звідти.
+ *   Скидається наказ лише смертю цілі або наказом руху/зупинки.
  * - Менший розмір спрайту та хітбоксу (32px).
  *
  * <p>Усі таймери — в тіках. Секунди тут були найгіршим місцем для float: час
@@ -21,8 +24,16 @@ public class Artillery extends Unit {
     /** Розмір у світових одиницях (Q47.16) і в пікселях — для рендеру. */
     public static final long  ART_SIZE_FIXED = Fixed.fromInt(16);
     public static final float ART_SIZE       = 32f;
+    /**
+     * Хітбокс менший за спрайт: за замовчуванням це size/2 = 8, але гармата
+     * на спрайті займає лише середину — стріляти й клікати по порожніх кутах
+     * не мало б працювати.
+     */
+    private static final long ART_HIT_RADIUS = Fixed.fromInt(6);
+    /** Спрайт гармати зміщений вліво від центру — бар зсуваємо правіше. */
+    private static final float ART_HP_BAR_OFFSET_X = 2f;
 
-    private static final long ART_SPEED   = Fixed.fromInt(45);
+    private static final long ART_SPEED   = Fixed.fromInt(17);
     private static final long ART_HP      = Fixed.fromInt(180);
     private static final long ART_DEFENSE = Fixed.fromInt(5);
 
@@ -32,13 +43,24 @@ public class Artillery extends Unit {
     /** Час прицілювання до пострілу — 3 с при 40 Гц. */
     public static final int  STRIKE_AIM_TICKS     = 3 * TickRate.TICKS_PER_SECOND;
     /** Радіус вибуху (AoE), Q47.16. */
-    public static final long STRIKE_SPLASH_RADIUS = Fixed.fromInt(45);
+    public static final long STRIKE_SPLASH_RADIUS = Fixed.fromInt(15);
     /** Базовий урон у центрі вибуху, Q47.16. */
-    public static final long STRIKE_DAMAGE        = Fixed.fromInt(120);
+    public static final long STRIKE_DAMAGE        = Fixed.fromInt(50);
     /** Максимальний розкид снаряду від точки прицілу, Q47.16. */
-    public static final long STRIKE_SPREAD        = Fixed.fromInt(18);
+    public static final long STRIKE_SPREAD        = Fixed.fromInt(24);
     /** Час перезарядки між пострілами — 8 с при 40 Гц. */
     public static final int  STRIKE_RELOAD_TICKS  = 8 * TickRate.TICKS_PER_SECOND;
+
+    // ── Розворот ──────────────────────────────────────────────────────────
+    /**
+     * Повний оберт за 1.5 с. Гармата не їде і не стріляє, поки не стане
+     * лицем у потрібний бік, тож це фактично затримка перед кожною дією:
+     * розворот на 180° коштує 0.75 с.
+     */
+    public static final int  ART_TURN_TICKS_FULL   = 4 * TickRate.TICKS_PER_SECOND / 2;
+    private static final long ART_TURN_RATE_PER_TICK = Fixed.divInt(Fixed.PI2, ART_TURN_TICKS_FULL);
+    /** Спрайт намальований стволом угору, тобто вже повернутий на +90°. */
+    private static final float ART_SPRITE_FACING_OFFSET = -90f;
 
     /** Швидкість снаряду в світових одиницях за секунду — використовує і сим, і рендер. */
     public static final float SHELL_SPEED_PX = 700f;
@@ -97,6 +119,41 @@ public class Artillery extends Unit {
         pendingManualTargetId = in.readInt();
     }
 
+    // ── Віддача (чистий візуал) ──────────────────────────────────────────
+    //
+    // У знімок і в checksum НЕ входить: гармата відкочується лише на екрані,
+    // її позиція в симуляції під час пострілу не змінюється. Інакше довелось
+    // би або гнати відкат по мережі, або отримати десинхрон на рівному місці.
+
+    /** Скільки секунд триває весь відкат із поверненням. */
+    private static final float RECOIL_DURATION = 0.55f;
+    /** На скільки пікселів гармату відкидає назад на піку. */
+    private static final float RECOIL_DISTANCE = 6f;
+    /** Частка відкату, за яку гармату кидає назад; решта — повільне повернення. */
+    private static final float RECOIL_KICK_FRAC = 0.16f;
+    /** Від центру до зрізу ствола — звідти вилітає спалах. */
+    public static final float MUZZLE_OFFSET = 9f;
+
+    private float recoilTimer = 0f;
+
+    /** Запустити відкат. Викликається в момент пострілу. */
+    public void kickRecoil() { recoilTimer = RECOIL_DURATION; }
+
+    /** Просунути відкат за часом КАДРУ (це візуал, не тік). */
+    public void updateRecoil(float delta) {
+        if (recoilTimer > 0f) recoilTimer = Math.max(0f, recoilTimer - delta);
+    }
+
+    /** Зсув назад уздовж ствола в пікселях: різкий кидок, плавне повернення. */
+    public float recoilOffsetPx() {
+        if (recoilTimer <= 0f) return 0f;
+        float t = 1f - recoilTimer / RECOIL_DURATION;   // 0 → 1
+        float k = t < RECOIL_KICK_FRAC
+            ? t / RECOIL_KICK_FRAC
+            : 1f - (t - RECOIL_KICK_FRAC) / (1f - RECOIL_KICK_FRAC);
+        return RECOIL_DISTANCE * k * k;
+    }
+
     public boolean isReady()     { return reloadTicks <= 0; }
     public void    startReload() { reloadTicks = STRIKE_RELOAD_TICKS; }
 
@@ -105,6 +162,11 @@ public class Artillery extends Unit {
         return Math.min(1f, aimTicks / (float) STRIKE_AIM_TICKS);
     }
 
+    @Override public long   turnRatePerTick()      { return ART_TURN_RATE_PER_TICK; }
+    @Override public float  spriteFacingOffsetDeg() { return ART_SPRITE_FACING_OFFSET; }
+
     @Override public long   sizeFixed()      { return ART_SIZE_FIXED; }
+    @Override public long   hitRadiusFixed() { return ART_HIT_RADIUS; }
+    @Override public float  hpBarOffsetX()   { return ART_HP_BAR_OFFSET_X; }
     @Override public String getTexturePath() { return "units/artillery.png"; }
 }

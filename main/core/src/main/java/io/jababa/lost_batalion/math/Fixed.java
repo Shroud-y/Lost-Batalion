@@ -209,6 +209,52 @@ public final class Fixed {
         return SIN_TABLE[(sinIndex(angleRaw) + (SIN_COUNT >> 2)) & SIN_MASK];
     }
 
+    /** π/2. */
+    public static final long PI_2 = PI >> 1;
+    /** π/4. */
+    private static final long PI_4 = PI >> 2;
+
+    // Коефіцієнти наближення atan(z) на [-1, 1] (Rajan): похибка < 0.0015 рад.
+    private static final long ATAN_A = fromFloat(0.2447f);
+    private static final long ATAN_B = fromFloat(0.0663f);
+
+    /** atan(z) для |z| <= 1. Лише цілі операції — побітово стабільний. */
+    private static long atanUnit(long z) {
+        long absZ = abs(z);
+        return mul(PI_4, z) - mul(mul(z, absZ - ONE), ATAN_A + mul(ATAN_B, absZ));
+    }
+
+    /**
+     * Кут вектора (x, y) у радіанах Q47.16, діапазон (-π, π].
+     *
+     * <p>Своя реалізація, а не {@code Math.atan2}: та має право розходитись
+     * на 1-2 ulp між платформами, а від кута тут залежить, коли артилерія
+     * добереться до потрібного напрямку й вистрелить.
+     */
+    public static long atan2(long y, long x) {
+        if (x == 0 && y == 0) return 0;
+
+        long angle;
+        if (abs(x) >= abs(y)) {
+            angle = atanUnit(div(y, x));
+            if (x < 0) angle += (y >= 0 ? PI : -PI);
+        } else {
+            angle = -atanUnit(div(x, y));
+            angle += (y >= 0 ? PI_2 : -PI_2);
+        }
+        return wrapAngle(angle);
+    }
+
+    /** Звести кут до (-π, π]. */
+    public static long wrapAngle(long angleRaw) {
+        while (angleRaw >   PI) angleRaw -= PI2;
+        while (angleRaw <= -PI) angleRaw += PI2;
+        return angleRaw;
+    }
+
+    /** Найкоротша різниця {@code a - b}, зведена до (-π, π]. */
+    public static long angleDiff(long a, long b) { return wrapAngle(a - b); }
+
     // ── Форматування ──────────────────────────────────────────────────────
 
     /** Для логів десинхрону — показує сире значення й приблизне десяткове. */

@@ -1,75 +1,50 @@
 package io.jababa.lost_batalion.screens.effects;
 
-import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 
 /**
- * Ефект одного артилерійського пострілу.
+ * Ефект одного артилерійського пострілу — цілком процедурний.
  *
  * Фази:
- *   INCOMING — снаряд летить (PNG: effects/shell.png).
- *              Обертається у напрямку польоту.
- *   EXPLODE  — анімація вибуху (spritesheet або окремі PNG).
+ *   INCOMING — снаряд летить: розжарене ядро з ореолом і димний слід.
+ *   EXPLODE  — приліт: спалах, ударне кільце (решту — вогонь, уламки, дим —
+ *              висипає {@link Fx} у спільний пул).
  *   DONE     — активність скинута.
  *
- * Клас СУТО ВІЗУАЛЬНИЙ. Політ і момент влучання рахує ArtilleryShell у
+ * <p>PNG тут більше немає: раніше снаряд був {@code effects/shell.png}, а вибух
+ * — покадровим листом 16×16, який на екрані розтягувався в кольорову пляму й
+ * не масштабувався під радіус ураження. Тепер усе малюється кодом, тож розмір
+ * вибуху прив'язаний до splashRadius, а не до розкладки листа.
+ *
+ * <p>Клас СУТО ВІЗУАЛЬНИЙ. Політ і момент влучання рахує ArtilleryShell у
  * симуляції, в тіках і у fixed-point; сюди позиція лише передається ззовні.
  * Раніше політ інтегрувався тут за часом кадру, і оскільки саме перехід
  * INCOMING→EXPLODE наносив AoE-урон, момент влучання залежав від FPS —
  * тобто був десинхроном.
- *
- * ── Asset-файли ────────────────────────────────────────────────────────────
- *   effects/shell.png              — PNG снаряду (~16x8 px, вістрям вправо)
- *
- *   Варіант A (spritesheet):
- *     effects/explosion_sheet.png  — всі кадри в один рядок
- *     ExplosionAnimation.fromSheet("effects/explosion_sheet.png", COLS, 1, FPS)
- *
- *   Варіант B (окремі файли):
- *     effects/explosion_0.png, effects/explosion_1.png, ...
- *     ExplosionAnimation.fromFrames("effects/explosion_", COUNT, ".png", FPS)
- *
- *   Якщо файлів немає — ефект просто не малюється (без fallback-коду).
  */
 public class ArtilleryStrikeEffect {
 
     // ── Налаштування ─────────────────────────────────────────────────────
-    /** Розмір спрайту снаряду на екрані. */
-    private static final float SHELL_W        = 20f;
-    private static final float SHELL_H        = 10f;
-
     /**
-     * У скільки разів сторона кадру вибуху більша за splashRadius.
-     *
-     * <p>Множник залежить від того, наскільки щільно вибух заповнює свій кадр.
-     * У поточному листі полум'я на піку займає приблизно 7 пікселів із 16, а
-     * решта — прозорі поля. Тому кадр малюється помітно більшим за радіус
-     * ураження: інакше видимий вибух вийшов би вдвічі меншим за зону, яку
-     * артилерія насправді накриває, і гравець не розумів би, кого зачепило.
-     * Міняючи лист, звіряй заповнення кадру й підправляй це число.
-     *
-     * <p>Геометрично «під зону ураження» виходило 4.5, але на екрані такий
-     * вибух перекривав пів строю. Тут виграє читабельність бою, а не
-     * буквальна відповідність радіусу: 1.5 показує, КУДИ прилетіло, не
-     * ховаючи під собою тих, кого зачепило.
+     * Ядро — це саме ядро: маленька темна кулька. Раніше воно було світляною
+     * плямою на пів юніта, і на екрані читалось як ракета, а не як постріл
+     * гармати.
      */
-    private static final float EXPLOSION_SIZE_MULT = 0.5f;
+    private static final float SHELL_CORE = 2.6f;
+    /** Ледь помітний теплий ореол — щоб ядро не губилось на темній карті. */
+    private static final float SHELL_GLOW = 5.5f;
+    /** Через скільки пройдених пікселів снаряд лишає новий клубок диму. */
+    private static final float TRAIL_STEP = 4.5f;
 
-    // ── Spritesheet налаштування (відредагуй під свій файл) ──────────────
-    // Поточний лист: effects/explosion_sheet.png, 112x16 — 7 кадрів по 16x16
-    // в один рядок. Останній кадр порожній: ним анімація згасає.
-    private static final int   SHEET_COLS = 7;   // кількість кадрів у рядку (16px кожен)
-    private static final int   SHEET_ROWS = 1;   // кількість рядків (16px кожен)
-    private static final float ANIM_FPS   = 16f; // кадрів/сек → 7 кадрів ≈ 0.44 с
-
-    /**
-     * Кадр 16x16 розтягується на екрані в рази. З лінійною фільтрацією від
-     * такого спрайта лишається кольорова пляма, тож піксельний лист треба
-     * малювати {@code Nearest} — краї кадру лишаються краями, а не градієнтом.
-     */
-    private static final boolean EXPLOSION_PIXEL_ART = true;
+    /** Спалах прильоту — короткий і дрібний; далі все доробляє дим. */
+    private static final float FLASH_TIME = 0.09f;
+    /** Ядро спалаху відносно радіуса ураження. */
+    private static final float FLASH_MULT = 0.22f;
+    /** Скільки ефект лишається живим після прильоту (дим живе у спільному пулі). */
+    private static final float EXPLODE_TIME = 0.20f;
 
     // ── Стан ─────────────────────────────────────────────────────────────
     public enum Phase { INCOMING, EXPLODE, DONE }
@@ -84,41 +59,20 @@ public class ArtilleryStrikeEffect {
     private float splashRadius;
 
     private float explodeTimer = 0f;
-
-    // ── Текстури / анімація (спільні для всіх екземплярів) ───────────────
-    private static Texture           shellTex       = null;
-    private static ExplosionAnimation explosionAnim = null;
-    private static boolean            assetsLoaded  = false;
+    /** Скільки лишилось «пройти» до наступного клубка диму. */
+    private float trailBudget = 0f;
+    private boolean trailStarted = false;
 
     // ── Публічне API ─────────────────────────────────────────────────────
 
-    public static void loadAssets() {
-        if (assetsLoaded) return;
-        assetsLoaded = true;
+    /**
+     * Лишилось для сумісності з викликами: текстур-файлів ефект більше не
+     * має, кисті створюються самі при першому малюванні.
+     */
+    public static void loadAssets() { /* нічого завантажувати */ }
 
-        // Shell PNG
-        if (Gdx.files.internal("effects/shell.png").exists()) {
-            shellTex = new Texture(Gdx.files.internal("effects/shell.png"));
-            shellTex.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
-        }
-
-        // Explosion: спробуємо spritesheet
-        explosionAnim = ExplosionAnimation.fromSheet(
-            "effects/explosion_sheet.png", SHEET_COLS, SHEET_ROWS, ANIM_FPS,
-            EXPLOSION_PIXEL_ART);
-
-        // Якщо немає spritesheet — спробуємо окремі файли
-        if (explosionAnim == null) {
-            explosionAnim = ExplosionAnimation.fromFrames(
-                "effects/explosion_", 8, ".png", ANIM_FPS);
-        }
-    }
-
-    public static void disposeAssets() {
-        if (shellTex != null)      { shellTex.dispose();       shellTex = null; }
-        if (explosionAnim != null) { explosionAnim.dispose();  explosionAnim = null; }
-        assetsLoaded = false;
-    }
+    /** Звільнити процедурні кисті й погасити пул частинок. */
+    public static void disposeAssets() { Fx.dispose(); }
 
     /** Почати показ снаряду в польоті. Позицію далі задає симуляція. */
     public void showIncoming(float fromX, float fromY,
@@ -132,12 +86,29 @@ public class ArtilleryStrikeEffect {
         this.angleDeg     = angleDeg;
 
         explodeTimer = 0f;
+        trailBudget  = 0f;
+        trailStarted = false;
         phase        = Phase.INCOMING;
         active       = true;
     }
 
-    /** Позиція снаряду цього кадру — приходить із симуляції. */
+    /**
+     * Позиція снаряду цього кадру — приходить із симуляції.
+     *
+     * <p>Тут же сиплеться димний слід: інтервал рахується по ПРОЙДЕНІЙ
+     * відстані, а не по часу кадру, інакше на 144 Гц слід був би вдвічі
+     * густішим, ніж на 60.
+     */
     public void setShellPosition(float x, float y) {
+        if (phase == Phase.INCOMING && trailStarted) {
+            float dx = x - curX, dy = y - curY;
+            trailBudget += (float) Math.sqrt(dx * dx + dy * dy);
+            while (trailBudget >= TRAIL_STEP) {
+                trailBudget -= TRAIL_STEP;
+                Fx.shellTrail(x, y);
+            }
+        }
+        trailStarted = true;
         curX = x;
         curY = y;
     }
@@ -147,6 +118,7 @@ public class ArtilleryStrikeEffect {
         phase        = Phase.EXPLODE;
         explodeTimer = 0f;
         active       = true;
+        Fx.impact(targetX, targetY, splashRadius);
     }
 
     /** Тільки анімація вибуху — політ рахує симуляція, а не цей таймер. */
@@ -154,8 +126,7 @@ public class ArtilleryStrikeEffect {
         if (!active || phase != Phase.EXPLODE) return;
 
         explodeTimer += delta;
-        float duration = explosionAnim != null ? explosionAnim.getDuration() : 0f;
-        if (explosionAnim == null || explodeTimer >= duration) {
+        if (explodeTimer >= EXPLODE_TIME) {
             phase  = Phase.DONE;
             active = false;
         }
@@ -163,16 +134,25 @@ public class ArtilleryStrikeEffect {
 
     /**
      * Малювати ефект.
-     * batch та shapes мають мати camera.combined як projection matrix.
+     *
+     * <p>{@code batch} має мати camera.combined як projection і бути закритим:
+     * метод сам відкриває його у premultiplied-режимі (див. {@link Fx}).
+     * {@code shapes} лишився в сигнатурі для сумісності і не використовується.
      */
     public void draw(SpriteBatch batch, ShapeRenderer shapes) {
         if (!active) return;
 
+        batch.setBlendFunctionSeparate(GL20.GL_ONE, GL20.GL_ONE_MINUS_SRC_ALPHA,
+                                       GL20.GL_ONE, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        batch.begin();
         switch (phase) {
             case INCOMING: drawShell(batch);     break;
             case EXPLODE:  drawExplosion(batch); break;
             default: break;
         }
+        batch.end();
+        batch.setColor(1f, 1f, 1f, 1f);
+        batch.setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
     }
 
     public Phase getPhase() { return phase; }
@@ -180,40 +160,36 @@ public class ArtilleryStrikeEffect {
     // ── Приватні ────────────────────────────────────────────────────────
 
     private void drawShell(SpriteBatch batch) {
-        if (shellTex == null) return;
+        // Слабкий теплий ореол додається (альфа 0) — світло нічого не затуляє.
+        additive(batch, 0.85f, 0.62f, 0.40f, 0.30f);
+        blob(batch, curX, curY, SHELL_GLOW, SHELL_GLOW * 0.7f, angleDeg);
 
-        batch.begin();
-        // Малюємо з обертанням у напрямку польоту
-        float originX = SHELL_W / 2f;
-        float originY = SHELL_H / 2f;
-
-        batch.draw(
-            shellTex,
-            curX - originX, curY - originY,  // position
-            originX, originY,                // origin (центр обертання)
-            SHELL_W, SHELL_H,               // size
-            1f, 1f,                          // scale
-            angleDeg,                        // rotation
-            0, 0,                            // srcX, srcY
-            shellTex.getWidth(), shellTex.getHeight(),
-            false, false
-        );
-        batch.end();
+        // Саме ядро — темна металева кулька, звичайним перекриттям.
+        batch.setColor(0.16f, 0.15f, 0.14f, 1f);
+        blob(batch, curX, curY, SHELL_CORE * 1.35f, SHELL_CORE, angleDeg);
     }
 
     private void drawExplosion(SpriteBatch batch) {
-        if (explosionAnim == null) return;
+        // Уся «графіка» прильоту — коротка теплувата іскра. Хмару диму,
+        // уламки й пил сипле Fx у спільний пул.
+        if (explodeTimer >= FLASH_TIME) return;
 
-        float size = splashRadius * EXPLOSION_SIZE_MULT;
+        float t = explodeTimer / FLASH_TIME;
+        float k = 1f - t;
+        float size = splashRadius * FLASH_MULT * (0.5f + t * 0.7f);
+        additive(batch, 1f, 0.88f, 0.68f, k * 0.75f);
+        blob(batch, targetX, targetY, size, size, 0f);
+    }
 
-        // Fade out в кінці анімації
-        float duration = explosionAnim.getDuration();
-        float alpha    = duration > 0f
-            ? Math.max(0f, 1f - (explodeTimer / duration) * 0.4f)  // легкий fade лише наприкінці
-            : 1f;
+    /** Колір у premultiplied-вигляді з нульовою альфою — чисте додавання. */
+    private void additive(SpriteBatch batch, float r, float g, float b, float a) {
+        batch.setColor(r * a, g * a, b * a, 0f);
+    }
 
-        batch.begin();
-        explosionAnim.draw(batch, targetX, targetY, size, explodeTimer, alpha);
-        batch.end();
+    /** Витягнута вздовж польоту пляма. */
+    private void blob(SpriteBatch batch, float x, float y, float w, float h, float rotDeg) {
+        Texture tex = Fx.dot();
+        batch.draw(tex, x - w / 2f, y - h / 2f, w / 2f, h / 2f, w, h, 1f, 1f, rotDeg,
+                   0, 0, tex.getWidth(), tex.getHeight(), false, false);
     }
 }

@@ -94,31 +94,47 @@ public class VisibilitySystem {
             Unit observer = allUnits.get(i);
             if (observer.team != viewer || !observer.alive) continue;
 
-            long effectiveSight = Fixed.mul(observer.sightRange, sightMod(observer));
-            long sightSq        = Fixed.mul(effectiveSight, effectiveSight);
-
             for (int j = 0; j < allUnits.size; j++) {
                 Unit target = allUnits.get(j);
                 if (target.team == viewer || !target.alive) continue;
                 if (target.isVisibleTo(viewer)) continue;
 
-                long distSq = Fixed.dstSq(observer.x, observer.y, target.x, target.y);
-                if (distSq > sightSq) continue;   // outside sight range entirely
-
-                // Hard occlusion: a hill between observer and target blocks sight
-                // completely, regardless of range or stealth.
-                if (isSightBlockedByElevation(observer, target)) continue;
-
-                long stealthMul = Fixed.mul(losForestMod(observer, target),
-                                            elevationStealthMod(target));
-                long effectiveStealth = Fixed.min(Fixed.mul(target.stealthRating, stealthMul),
-                                                  MAX_EFFECTIVE_STEALTH);
-                long detectionRange = Fixed.mul(effectiveSight, Fixed.ONE - effectiveStealth);
-
-                if (distSq <= Fixed.mul(detectionRange, detectionRange))
-                    target.setVisibleTo(viewer, true);
+                if (canSee(observer, target)) target.setVisibleTo(viewer, true);
             }
         }
+    }
+
+    /**
+     * Чи бачить КОНКРЕТНИЙ юніт конкретну ціль.
+     *
+     * <p>Сторонова видимість ({@link Unit#isVisibleTo}) відповідає на інше
+     * питання — «чи бачить це хоч хтось із армії». Артилерії цього замало:
+     * гармата не повинна класти снаряди по цілі, яку розвідав піхотинець на
+     * іншому фланзі, — вона стріляє лише по тому, що бачить сама.
+     *
+     * <p>Та сама формула, що й у пообхідному оновленні, тому результати двох
+     * методів не можуть розійтись: обхід нею ж і рахує.
+     */
+    public boolean canSee(Unit observer, Unit target) {
+        if (observer == null || target == null) return false;
+        if (!observer.alive || !target.alive) return false;
+        if (observer.team == target.team) return true;
+
+        long effectiveSight = Fixed.mul(observer.sightRange, sightMod(observer));
+        long distSq = Fixed.dstSq(observer.x, observer.y, target.x, target.y);
+        if (distSq > Fixed.mul(effectiveSight, effectiveSight)) return false;
+
+        // Hard occlusion: a hill between observer and target blocks sight
+        // completely, regardless of range or stealth.
+        if (isSightBlockedByElevation(observer, target)) return false;
+
+        long stealthMul = Fixed.mul(losForestMod(observer, target),
+                                    elevationStealthMod(target));
+        long effectiveStealth = Fixed.min(Fixed.mul(target.stealthRating, stealthMul),
+                                          MAX_EFFECTIVE_STEALTH);
+        long detectionRange = Fixed.mul(effectiveSight, Fixed.ONE - effectiveStealth);
+
+        return distSq <= Fixed.mul(detectionRange, detectionRange);
     }
 
     /** Whether a world point is lit by any unit of {@code viewer} (fog tile checks). */

@@ -9,6 +9,7 @@ import com.badlogic.gdx.utils.Array;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.math.DeterministicRandom;
 import io.jababa.lost_batalion.math.Fixed;
+import io.jababa.lost_batalion.screens.effects.Fx;
 import io.jababa.lost_batalion.screens.effects.ArtilleryStrikeEffect;
 import io.jababa.lost_batalion.sim.StateChecksum;
 import io.jababa.lost_batalion.screens.effects.ShotEffect;
@@ -16,6 +17,7 @@ import io.jababa.lost_batalion.screens.effects.TargetPopupManager;
 import io.jababa.lost_batalion.terrain.TerrainCombatModifier;
 import io.jababa.lost_batalion.terrain.TerrainQuery;
 import io.jababa.lost_batalion.terrain.TerrainType;
+import io.jababa.lost_batalion.visibility.VisibilitySystem;
 
 /**
  * Бій: накази атаки, автовогонь, артилерія.
@@ -88,6 +90,38 @@ public class CombatManager {
     private TargetPopupManager popupManager;
     private Sound              shotSound;
     private final float        soundVolume = 0.35f;
+
+    /**
+     * Видимість очима конкретного юніта.
+     *
+     * <p>Потрібна саме артилерії: сторонова видимість каже лише «цю ціль
+     * бачить хтось із армії», а гармата мусить стріляти тільки по тому, що
+     * бачить сама. Ставиться ззовні, бо систему видимості створює симуляція.
+     */
+    private VisibilitySystem visibility;
+
+    /**
+     * Пошук шляху для наказу «підійти й відкрити вогонь».
+     *
+     * <p>Через інтерфейс, а не прямим посиланням на {@code PathFinder}: сітка
+     * прохідності будується ліниво в симуляції, і бій не має знати, коли саме
+     * це станеться.
+     */
+    public interface PathProvider {
+        /** @return пари координат маршруту або {@code null}, якщо шляху нема */
+        long[] findPath(long fromX, long fromY, long toX, long toY);
+    }
+
+    private PathProvider pathProvider;
+
+    public void setVisibility(VisibilitySystem visibility)   { this.visibility = visibility; }
+    public void setPathProvider(PathProvider pathProvider)   { this.pathProvider = pathProvider; }
+
+    /** Чи бачить юніт ціль особисто. Без системи видимості — сторонова оцінка. */
+    private boolean canSee(Unit observer, Unit target) {
+        if (visibility != null) return visibility.canSee(observer, target);
+        return target.isVisibleTo(observer.team);
+    }
 
     public CombatManager(UnitManager unitManager, TerrainQuery terrain, DeterministicRandom random) {
         this.unitManager = unitManager;
@@ -162,6 +196,13 @@ public class CombatManager {
                 if (att == units.get(j)) { orders.removeIndex(i); break; }
             }
         }
+        // Ручна ціль артилерії — теж наказ атаки, і наказ руху його скасовує.
+        // Інакше гармата, якій сказали йти, наступного ж тіку розверталась би
+        // назад до старої цілі: підхід до неї — це теж рух.
+        for (int i = 0; i < units.size; i++) {
+            Unit u = units.get(i);
+            if (u instanceof Artillery) ((Artillery) u).manualTarget = null;
+        }
         for (int i = groups.size - 1; i >= 0; i--)
             if (groups.get(i).isEmpty()) groups.removeIndex(i);
     }
@@ -219,6 +260,14 @@ public class CombatManager {
      */
     public void updateVisuals(float delta) {
         for (int i = 0; i < shots.size; i++) shots.get(i).update(delta);
+        Fx.update(delta);
+
+        // Відкат гармат — теж за часом кадру.
+        Array<Unit> all = unitManager.getAllUnits();
+        for (int i = 0; i < all.size; i++) {
+            Unit u = all.get(i);
+            if (u instanceof Artillery) ((Artillery) u).updateRecoil(delta);
+        }
 
         // Позиція снаряду на екрані береться з симуляції, а не інтегрується тут.
         for (int i = 0; i < shells.size && i < shellVisuals.size; i++) {
@@ -570,18 +619,39 @@ public class CombatManager {
     private void updateArtillery(Artillery art, Array<Unit> all) {
         Unit target;
 
-        // 1. Ручна ціль має пріоритет — поки жива й у радіусі
+        // 1. Ручна ціль (ПКМ по ворогу) має пріоритет і НЕ скидається, коли
+        // ціль поза радіусом чи не видно: такий наказ означає «розберись із
+        // цим», тож гармата сама йде на позицію.
         Unit manual = art.manualTarget;
         long rangeSq = Fixed.mul(Artillery.STRIKE_RANGE, Artillery.STRIKE_RANGE);
-        if (manual != null && manual.alive
-            && Fixed.dstSq(art.x, art.y, manual.x, manual.y) <= rangeSq) {
-            target = manual;
+        if (manual != null && manual.alive) {
+            boolean inRange = Fixed.dstSq(art.x, art.y, manual.x, manual.y) <= rangeSq;
+            if (inRange && canSee(art, manual)) {
+                // Дійшли: зупиняємось і працюємо по цілі.
+                if (art.isMoving()) art.stopMoving();
+                target = manual;
+            } else {
+                approachTarget(art, manual);
+                art.aimTicks = 0;
+                return;
+            }
         } else {
-            art.manualTarget = null; // ціль мертва/поза радіусом — скидаємо
+            art.manualTarget = null; // ціль мертва — наказ вичерпано
             target = findNearestArtilleryTarget(art, all);
         }
 
-        if (target == null || !art.isReady()) { art.aimTicks = 0; return; }
+        if (target == null) { art.aimTicks = 0; return; }
+
+        // Поки їде — розворотом керує рух, прицілитись у цей момент не можна.
+        if (art.isMoving()) { art.aimTicks = 0; return; }
+
+        // 2. Розворот на ціль. Крутиться навіть на перезарядці — щоб до
+        // готовності вже стояти лицем. Прицілювання ж починається лише з
+        // тіку, коли гармата довернулась: інакше 3 с прицілу спливали б під
+        // час самого розвороту, і постріл ішов би боком.
+        if (!art.turnToward(target.x, target.y)) { art.aimTicks = 0; return; }
+
+        if (!art.isReady()) { art.aimTicks = 0; return; }
 
         art.aimTicks++;
         if (art.aimTicks >= Artillery.STRIKE_AIM_TICKS) {
@@ -590,7 +660,15 @@ public class CombatManager {
         }
     }
 
-    /** Найближчий живий ворог у радіусі обстрілу. */
+    /**
+     * Найближчий ворог у радіусі обстрілу, якого ця гармата БАЧИТЬ САМА.
+     *
+     * <p>Раніше видимість тут не перевірялась зовсім, і артилерія автоматично
+     * обстрілювала все в радіусі 220 — включно з тим, чого не бачив ніхто:
+     * снаряди летіли в туман по цілях, про які гравець не мав знати.
+     * Перевіряти сторонову видимість теж було б неправильно: тоді гармата
+     * била б по цілі, яку розвідав чужий фланг, сама її не спостерігаючи.
+     */
     private Unit findNearestArtilleryTarget(Artillery art, Array<Unit> all) {
         Unit nearest = null;
         long minDistSq = Fixed.mul(Artillery.STRIKE_RANGE, Artillery.STRIKE_RANGE);
@@ -598,12 +676,60 @@ public class CombatManager {
             Unit other = all.get(i);
             if (!other.alive || other.team == art.team) continue;
             long d = Fixed.dstSq(art.x, art.y, other.x, other.y);
-            if (d <= minDistSq) { minDistSq = d; nearest = other; }
+            if (d > minDistSq) continue;
+            if (!canSee(art, other)) continue;
+            minDistSq = d; nearest = other;
         }
         return nearest;
     }
 
+    /**
+     * Частка дальності, на яку гармата підходить до ручної цілі.
+     *
+     * <p>Не сама дальність: ціль рухається, і зупинившись рівно на межі
+     * гармата втрачала б її з-під обстрілу від першого ж кроку суперника.
+     */
+    private static final long ART_APPROACH_FACTOR = Fixed.fromFloat(0.75f);
+
+    /**
+     * Підійти на позицію для стрільби по ручній цілі — з пошуком шляху.
+     *
+     * <p>Маршрут будується лише коли гармата стоїть: поки вона йде, шлях уже
+     * є, а перебудова щотіку і коштувала б дорого, і смикала б юніт. Коли
+     * дійде (або зупиниться) — перерахує з нового місця, з урахуванням того,
+     * куди за цей час відійшла ціль.
+     */
+    private void approachTarget(Artillery art, Unit target) {
+        if (art.isMoving()) return;
+
+        long dx = art.x - target.x, dy = art.y - target.y;
+        long dist = Fixed.length(dx, dy);
+        long stand = Fixed.mul(Artillery.STRIKE_RANGE, ART_APPROACH_FACTOR);
+
+        long tx, ty;
+        if (dist == 0) {
+            tx = target.x; ty = target.y;
+        } else {
+            // Стаємо на тій самій прямій, з боку гармати — тобто йдемо просто
+            // назустріч, а не оббігаємо ціль по колу.
+            tx = target.x + Fixed.mul(Fixed.div(dx, dist), stand);
+            ty = target.y + Fixed.mul(Fixed.div(dy, dist), stand);
+        }
+
+        long[] path = pathProvider != null ? pathProvider.findPath(art.x, art.y, tx, ty) : null;
+        if (path != null) art.followPath(path, tx, ty);
+        else              art.moveTo(tx, ty);
+    }
+
     private void fireArtillery(Artillery art, Unit target) {
+        // Остання перевірка напрямку перед пострілом: сюди можна дійти лише
+        // через прицілювання, але ціль за ці 3 с могла обійти гармату збоку.
+        if (!art.isFacingPoint(target.x, target.y)) { art.turnToward(target.x, target.y); return; }
+
+        // І перевірка очей: за час прицілювання ціль могла зайти в ліс або за
+        // пагорб. Стріляти по тому, чого гармата вже не бачить, вона не має.
+        if (!canSee(art, target)) return;
+
         // Два смикання RNG рівно на кожен постріл, у сталому порядку —
         // саме це тримає послідовність однаковою на всіх клієнтах.
         long angle  = random.nextAngle();
@@ -615,6 +741,14 @@ public class CombatManager {
                                                   Artillery.STRIKE_SPLASH_RADIUS,
                                                   Artillery.STRIKE_DAMAGE);
         shells.add(shell);
+
+        // Дульний спалах — на зрізі ствола, тобто зі зсувом уздовж напрямку.
+        float facingRad = Fixed.toFloat(art.facing);
+        Fx.muzzleBlast(
+            Fixed.toFloat(art.x) + (float) Math.cos(facingRad) * Artillery.MUZZLE_OFFSET,
+            Fixed.toFloat(art.y) + (float) Math.sin(facingRad) * Artillery.MUZZLE_OFFSET,
+            facingRad);
+        art.kickRecoil();
 
         ArtilleryStrikeEffect.loadAssets();
         ArtilleryStrikeEffect eff = new ArtilleryStrikeEffect();
@@ -652,6 +786,8 @@ public class CombatManager {
             ArtilleryStrikeEffect eff = explosions.get(i);
             if (eff.active) eff.draw(batch, shapes);
         }
+        // Дим, іскри й вогонь живуть у спільному пулі — один прохід на всіх.
+        Fx.draw(batch);
     }
 
     /**

@@ -8,6 +8,7 @@ import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.input.GestureDetector;
 import com.badlogic.gdx.math.MathUtils;
+import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.Stage;
@@ -35,6 +36,7 @@ import io.jababa.lost_batalion.screens.effects.BloomEffect;
 import io.jababa.lost_batalion.screens.effects.MoveMarker;
 import io.jababa.lost_batalion.screens.renderer.UnitRenderer;
 import io.jababa.lost_batalion.screens.scenario.ScenarioCard;
+import io.jababa.lost_batalion.screens.ui.Minimap;
 import io.jababa.lost_batalion.screens.ui.SelectionPanel;
 import io.jababa.lost_batalion.sim.GameSimulation;
 import io.jababa.lost_batalion.sim.MatchRunner;
@@ -144,6 +146,10 @@ public class GameScreen implements Screen {
     private FormationDragHandler formationDrag;
 
     private SelectionPanel selectionPanel;
+    private Minimap minimap;
+    /** Чи тягне гравець камеру по мінікарті просто зараз. */
+    private boolean minimapDragging = false;
+    private final Vector2 minimapWorld = new Vector2();
     private SpriteBatch panelBatch;
     private CurvedFormationCommand curvedFormation;
 
@@ -237,6 +243,7 @@ public class GameScreen implements Screen {
         curvedFormation = new CurvedFormationCommand();
 
         selectionPanel   = new SelectionPanel();
+        minimap          = new Minimap(mapTexture, mapWidth, mapHeight);
         fogRenderer      = new FogOfWarRenderer(mapWidth, mapHeight, terrain);
         fogRenderer.setViewer(localTeam);
         forestTooltip    = new ForestTooltip("ui/forest_tooltip.png");
@@ -421,9 +428,14 @@ public class GameScreen implements Screen {
 
         // Артилерія: снаряди в польоті + вибухи + індикатор заряджання
         if (!paused) {
+            // Без bloom: ефект пострілу — це сірий дим, а розмиття робило б із
+            // нього світляну хмару вдвічі більшу за сам вибух. Яскраві частинки
+            // тут і так додаються (premultiplied), тобто світяться самі.
             batch.setProjectionMatrix(camera.combined);
             shapes.setProjectionMatrix(camera.combined);
             combatManager.drawArtilleryEffects(batch, shapes);
+
+            shapes.setProjectionMatrix(camera.combined);
             combatManager.drawArtilleryAim(shapes);
         }
 
@@ -444,8 +456,12 @@ public class GameScreen implements Screen {
             uiBatch.end();
         }
 
-        if (!paused)
+        if (!paused) {
             selectionPanel.draw(panelBatch, shapes, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+            minimap.draw(uiBatch, shapes, camera,
+                         unitManager.getAllUnits(), localTeam,
+                         Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+        }
 
         hudStage.getViewport().update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
         hudStage.act(delta);
@@ -726,6 +742,7 @@ public class GameScreen implements Screen {
         if (moveMarker      != null) moveMarker.dispose();
         if (combatManager   != null) combatManager.dispose();
         if (selectionPanel  != null) selectionPanel.dispose();
+        if (minimap         != null) minimap.dispose();
         if (curvedFormation != null) curvedFormation.dispose();
         if (terrainCombatMask != null) terrainCombatMask.dispose();
         UIFactory.disposeAll();
@@ -735,6 +752,19 @@ public class GameScreen implements Screen {
 
     private boolean clickOnPanel(int sx, int sy) {
         return selectionPanel.containsScreenPoint(sx, Gdx.graphics.getHeight() - sy);
+    }
+
+    private boolean clickOnMinimap(int sx, int sy) {
+        return minimap != null
+            && minimap.containsScreenPoint(sx, Gdx.graphics.getHeight() - sy);
+    }
+
+    /** Перенести камеру в точку карти під курсором на мінікарті. */
+    private void moveCameraFromMinimap(int sx, int sy) {
+        if (minimap == null) return;
+        minimap.worldAt(sx, Gdx.graphics.getHeight() - sy, minimapWorld);
+        camera.position.set(minimapWorld.x, minimapWorld.y, 0);
+        camera.update();
     }
 
     private void updateTerrainUnderCursor() {
@@ -842,6 +872,14 @@ public class GameScreen implements Screen {
                 if (paused) return false;
 
                 if (btn == Input.Buttons.LEFT) {
+                    // Мінікарта перехоплює клік раніше за все інше: вона
+                    // лежить поверх світу, і виділяти крізь неї не можна.
+                    if (clickOnMinimap(sx, sy)) {
+                        minimapDragging = true;
+                        moveCameraFromMinimap(sx, sy);
+                        return true;
+                    }
+
                     // Клік по панелі
                     if (clickOnPanel(sx, sy)) {
                         int sh = Gdx.graphics.getHeight();
@@ -875,6 +913,9 @@ public class GameScreen implements Screen {
 
             @Override
             public boolean touchDragged(int sx, int sy, int ptr) {
+                // Протяг по мінікарті — це та сама навігація, тільки без
+                // відпускання кнопки; за межі рамки координата обрізається.
+                if (minimapDragging) { moveCameraFromMinimap(sx, sy); return true; }
                 if (curvedFormation.isDrawing()) {
                     Vector3 w = camera.unproject(new Vector3(sx,sy,0));
                     curvedFormation.addPoint(w.x, w.y); return true;
@@ -891,6 +932,7 @@ public class GameScreen implements Screen {
                 if (paused) return false;
 
                 if (btn == Input.Buttons.LEFT) {
+                    if (minimapDragging) { minimapDragging = false; return true; }
                     if (curvedFormation.isDrawing()) {
                         issueCurve(curvedFormation.finishAndCollect());
                         selectionPanel.setFormationActive(false); awaitingDrawStart=false; return true;

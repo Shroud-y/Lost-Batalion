@@ -112,7 +112,9 @@ public class UnitManager {
         for (int i = 0; i < allUnits.size; i++) {
             Unit u = allUnits.get(i);
             if (u == null || !u.alive || u.team != owner) continue;
-            float halfSize = u.getSizePx() / 2f;
+            // Хітбокс, а не розмір спрайту: у частини юнітів (артилерія) фігура
+            // займає лише середину картинки.
+            float halfSize = u.getHitRadiusPx();
             if (x >= u.worldX() - halfSize && x <= u.worldX() + halfSize &&
                 y >= u.worldY() - halfSize && y <= u.worldY() + halfSize) {
                 found = u;

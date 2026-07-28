@@ -95,6 +95,9 @@ public final class StateChecksum {
             positions = mix(positions, u.x);
             positions = mix(positions, u.y);
             positions = mix(positions, u.isMoving());
+            // Напрямок — теж стан: поки гармата не довернулась, вона не їде
+            // і не стріляє.
+            positions = mix(positions, u.facing);
             // Маршрут — теж стан: два клієнти з однаковими позиціями, але
             // різними шляхами розійдуться вже наступного тіку, і чекати на це
             // означало б ловити розбіжність із запізненням.

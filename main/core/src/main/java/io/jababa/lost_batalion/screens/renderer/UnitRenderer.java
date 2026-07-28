@@ -7,8 +7,11 @@ import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.utils.ObjectMap;
 import io.jababa.lost_batalion.Team;
+import io.jababa.lost_batalion.math.Fixed;
+import io.jababa.lost_batalion.units.Artillery;
 import io.jababa.lost_batalion.units.Unit;
 
 public class UnitRenderer {
@@ -48,7 +51,27 @@ public class UnitRenderer {
             float size  = u.getSizePx();
             float x     = u.renderX(alpha) - size / 2f;
             float y     = u.renderY(alpha) - size / 2f;
-            batch.draw(tex, x, y, size, size);
+
+            if (u instanceof Artillery) {
+                // Віддача: гармату відкидає НАЗАД уздовж ствола. Це рендер —
+                // у симуляції вона стоїть на місці.
+                float recoil = ((Artillery) u).recoilOffsetPx();
+                if (recoil > 0f) {
+                    float rad = Fixed.toFloat(u.facing);
+                    x -= MathUtils.cos(rad) * recoil;
+                    y -= MathUtils.sin(rad) * recoil;
+                }
+            }
+
+            if (u.hasFacing()) {
+                // Юніти з напрямком (артилерія) малюються поверненими. Кут —
+                // стан симуляції, тут його лише переводять у градуси.
+                batch.draw(tex, x, y, size / 2f, size / 2f, size, size, 1f, 1f,
+                           u.facingDegrees(), 0, 0, tex.getWidth(), tex.getHeight(),
+                           false, false);
+            } else {
+                batch.draw(tex, x, y, size, size);
+            }
         }
     }
 
@@ -83,7 +106,9 @@ public class UnitRenderer {
     // ── Приватні методи ───────────────────────────────────────────────────
 
     private void drawOutline(Unit u, float alpha) {
-        float size = u.getSizePx();
+        // Обводка по хітбоксу, а не по спрайту: інакше в артилерії рамка
+        // обводить порожні кути картинки і виглядає завеликою.
+        float size = u.getHitRadiusPx() * 2f;
         float pad  = OUTLINE_PAD;
         float x    = u.renderX(alpha) - size / 2f - pad;
         float y    = u.renderY(alpha) - size / 2f - pad;
@@ -96,10 +121,12 @@ public class UnitRenderer {
     }
 
     private void drawHpBar(Unit u, float alpha) {
-        float size = u.getSizePx();
+        // Так само по хітбоксу — бар має стояти впритул до фігури, а не до
+        // краю картинки.
+        float size = u.getHitRadiusPx() * 2f;
         float barH = size;
 
-        float x = u.renderX(alpha) - size / 2f - BAR_LEFT - BAR_W;
+        float x = u.renderX(alpha) - size / 2f - BAR_LEFT - BAR_W + u.hpBarOffsetX();
         float y = u.renderY(alpha) - size / 2f;
 
         shapes.setColor(0.3f, 0f, 0f, 0.85f);

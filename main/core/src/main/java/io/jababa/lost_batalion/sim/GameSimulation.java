@@ -84,6 +84,16 @@ public class GameSimulation implements CommandContext {
         this.unitManager      = new UnitManager();
         this.combatManager    = new CombatManager(unitManager, terrain, random);
         this.visibilitySystem = new VisibilitySystem(terrain);
+
+        // Артилерія стріляє лише по тому, що бачить САМА, і сама йде на
+        // позицію по наказу — для обох речей їй потрібні видимість і навігація.
+        combatManager.setVisibility(visibilitySystem);
+        combatManager.setPathProvider(new CombatManager.PathProvider() {
+            @Override public long[] findPath(long fromX, long fromY, long toX, long toY) {
+                ensureNavigation();
+                return pathFinder.findPath(fromX, fromY, toX, toY);
+            }
+        });
     }
 
     /**
