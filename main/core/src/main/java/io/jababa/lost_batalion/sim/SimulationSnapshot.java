@@ -37,7 +37,7 @@ public final class SimulationSnapshot {
      * (їх відсіює лоббі), але тег коштує 4 байти і одразу відрізняє
      * пошкоджені дані від чужих.
      */
-    private static final int MAGIC = 0x4C42_5301;   // "LBS" + версія 1
+    private static final int MAGIC = 0x4C42_5302;   // "LBS" + версія 2 (додано точки захоплення)
 
     /** Зняти стан. Викликається лише на хості й лише коли симуляція стоїть. */
     public static byte[] capture(GameSimulation sim) {
@@ -50,6 +50,7 @@ public final class SimulationSnapshot {
 
             sim.getUnitManager().writeSnapshot(out);
             sim.getCombatManager().writeSnapshot(out);
+            sim.getCapturePoints().writeSnapshot(out);
         } catch (IOException e) {
             // ByteArrayOutputStream не кидає IOException; якщо це сталось —
             // ламати матч мовчки не можна.
@@ -86,6 +87,7 @@ public final class SimulationSnapshot {
 
             sim.getUnitManager().readSnapshot(in);
             sim.getCombatManager().readSnapshot(in);
+            sim.getCapturePoints().readSnapshot(in);
 
             // RNG і номер тіку ставляться ОСТАННІМИ: якщо читання юнітів
             // впаде на середині, симуляція лишиться хоч і зіпсованою, але з

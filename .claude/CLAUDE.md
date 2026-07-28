@@ -103,8 +103,9 @@ Two grayscale/colour PNG masks per scenario, sampled by pixel colour
 - **Forest mask** (`*_mask.png`): forest tiles (movement + LOS + stealth).
 - **Terrain/topography mask** (`*_terrain_mask.png`): elevation + rivers.
 - `TerrainType` enum: NONE, FOREST, RIVER, LOWLANDS/PRE_LOWLANDS (1a/1b),
-  PLAINS/PLAINS_ALT (2a/2b), PRE_HIGHLANDS/HIGHLANDS (3a/3b). RGB codes
-  documented in `TerrainMaskManager`.
+  PLAINS/PLAINS_ALT (2a/2b), PRE_HIGHLANDS/HIGHLANDS (3a/3b), VILLAGE. RGB codes
+  documented in `TerrainMaskManager`. VILLAGE (#F0FF00) лежить у масці **лісу**,
+  як і річки, і на рух/бій не впливає — з нього будуються точки захоплення.
 - `TerrainMovementModifier`: forest ×0.70, river ×0.40, hills ×0.85 (multiply).
 - `TerrainCombatModifier`: defender defense multiplier by attacker-vs-defender
   elevation (high ground bonus, valley penalty). See table in that file.
@@ -116,6 +117,19 @@ Two grayscale/colour PNG masks per scenario, sampled by pixel colour
   elevation; detected if `dist ≤ effectiveSight × (1 − stealth)`.
 - `FogOfWarRenderer` — draws fog; ALT held shows cursor sight overlay.
 - Combat & rendering both respect `visibleToPlayer` (can't attack/see hidden enemies).
+
+### Точки захоплення (`capture/`)
+- `CaptureManager` будує точки з плям VILLAGE у масці лісу
+  (`TerrainMaskManager.findClusterCenters` → заливка по 4 сусідах), зливаючи
+  плями, ближчі за 135 px, в одне село. На Жовтих Водах виходить 3 точки.
+- Радіус кола 70 px. Захоплює той, хто зайшов у КОЛО, а не на пікселі села.
+  Одна сторона в колі → +2/тік (12 с на захоплення), обидві → прогрес завмирає,
+  порожньо → −1/тік назад. Чужу точку спершу треба обнулити, потім набрати свою.
+- Це стан симуляції: цілі числа, окремий компонент checksum (`C_POINTS`) і блок
+  у `SimulationSnapshot`.
+- `screens/renderer/CapturePointRenderer` малює коло — біле, поки нейтральне,
+  і сектором кольору сторони в міру захоплення. Йде окремим проходом
+  `BloomEffect` ДО юнітів; колір premultiplied, бо буфер bloom саме такий.
 
 ### Formations / commands
 - `FormationDragHandler` — RMB-drag to place a straight formation line.

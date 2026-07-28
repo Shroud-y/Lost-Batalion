@@ -35,6 +35,7 @@ public class TerrainMaskManager {
     private static final int[] PLAINS_ALT_RGB     = { 53, 136,  14};
     private static final int[] PRE_HIGHLANDS_RGB  = {192, 175,   0};
     private static final int[] HIGHLANDS_RGB      = {192, 111,   0};
+    private static final int[] VILLAGE_RGB        = {240, 255,   0};
 
     /** Кеш {@code TerrainType.values()} — щоб не алокувати масив на кожен запит. */
     private static final TerrainType[] TYPES = TerrainType.values();
@@ -183,10 +184,9 @@ public class TerrainMaskManager {
      * Порядок перевірок не важливий: діапазони кольорів не перетинаються
      * при TOLERANCE = 20.
      *
-     * <p>У масці лісу Жовтих Вод є ще колір (240,255,0) — 10544 пікселів, який
-     * не ловить жоден із фільтрів нижче і тому падає в NONE. Це навмисно: що він
-     * означає, поки не вирішено. Якщо колись знадобиться — додати сюди і в
-     * {@link TerrainType}, інакше він так і лишиться порожньою місцевістю.
+     * <p>(240,255,0) у масці лісу — це СЕЛА (чотири плями, 10544 пікселів на
+     * Жовтих Водах). На рух і бій вони не впливають; з них будуються точки
+     * захоплення — див. {@link #findClusterCenters}.
      */
     private byte classify(int pixel) {
         if (pixel == 0) return NONE_ORD;          // повністю порожній піксель
@@ -203,6 +203,7 @@ public class TerrainMaskManager {
         if (matches(r, g, b, PLAINS_ALT_RGB))     return (byte) TerrainType.PLAINS_ALT.ordinal();
         if (matches(r, g, b, PRE_HIGHLANDS_RGB))  return (byte) TerrainType.PRE_HIGHLANDS.ordinal();
         if (matches(r, g, b, HIGHLANDS_RGB))      return (byte) TerrainType.HIGHLANDS.ordinal();
+        if (matches(r, g, b, VILLAGE_RGB))        return (byte) TerrainType.VILLAGE.ordinal();
 
         return NONE_ORD;
     }
@@ -241,6 +242,83 @@ public class TerrainMaskManager {
         if (px < 0 || py < 0 || px >= width || py >= height) return NONE_ORD;
 
         return typeGrid[py * width + px];
+    }
+
+    /**
+     * Центри суцільних плям заданого типу — у СВІТОВИХ пікселях (Y вгору).
+     *
+     * <p>Потрібне селам: у масці вони намальовані як плями довільної форми, а
+     * грі треба одна точка на село. Обхід — заливка по 4 сусідах, центр —
+     * цілочисельне середнє координат плями.
+     *
+     * <p>Результат входить у стан матчу (з нього будуються точки захоплення),
+     * тому він мусить бути однаковим у всіх: маска — ассет, обхід іде по
+     * індексах у сталому порядку, середнє цілочисельне. Жодного float.
+     *
+     * @param minPixels плями, дрібніші за це, ігноруються — у масці трапляються
+     *                  поодинокі пікселі кольору на межах заливки
+     * @return пари {@code x, y} підряд; порядок — від верхнього рядка маски
+     */
+    public int[] findClusterCenters(TerrainType type, int minPixels) {
+        if (!loaded) return new int[0];
+
+        final byte want = (byte) type.ordinal();
+        boolean[] seen  = new boolean[width * height];
+        int[] stack     = new int[width * height];
+        int[] out       = new int[16];
+        int outSize     = 0;
+
+        for (int py = 0; py < height; py++) {
+            for (int px = 0; px < width; px++) {
+                int start = py * width + px;
+                if (typeGrid[start] != want || seen[start]) continue;
+
+                int top = 0;
+                stack[top++] = start;
+                seen[start]  = true;
+
+                long sumX = 0, sumY = 0;
+                int  count = 0;
+
+                while (top > 0) {
+                    int idx = stack[--top];
+                    int cx  = idx % width;
+                    int cy  = idx / width;
+
+                    count++;
+                    sumX += cx;
+                    sumY += height - 1 - cy;      // pixmap Y вниз → світ Y вгору
+
+                    top = tryPush(stack, top, seen, want, cx > 0,          idx - 1);
+                    top = tryPush(stack, top, seen, want, cx < width - 1,  idx + 1);
+                    top = tryPush(stack, top, seen, want, cy > 0,          idx - width);
+                    top = tryPush(stack, top, seen, want, cy < height - 1, idx + width);
+                }
+
+                if (count < minPixels) continue;
+
+                if (outSize + 2 > out.length) {
+                    int[] bigger = new int[out.length * 2];
+                    System.arraycopy(out, 0, bigger, 0, outSize);
+                    out = bigger;
+                }
+                out[outSize++] = (int) (sumX / count);
+                out[outSize++] = (int) (sumY / count);
+            }
+        }
+
+        int[] result = new int[outSize];
+        System.arraycopy(out, 0, result, 0, outSize);
+        return result;
+    }
+
+    /** Покласти сусіда в стек, якщо він у межах, потрібного типу і ще не бачений. */
+    private int tryPush(int[] stack, int top, boolean[] seen, byte want,
+                        boolean inRange, int idx) {
+        if (!inRange || seen[idx] || typeGrid[idx] != want) return top;
+        seen[idx] = true;
+        stack[top] = idx;
+        return top + 1;
     }
 
     private boolean matches(int r, int g, int b, int[] target) {

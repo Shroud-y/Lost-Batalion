@@ -2,6 +2,7 @@ package io.jababa.lost_batalion.sim;
 
 import com.badlogic.gdx.utils.Array;
 import io.jababa.lost_batalion.Team;
+import io.jababa.lost_batalion.capture.CaptureManager;
 import io.jababa.lost_batalion.math.DeterministicRandom;
 import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.net.commands.CommandContext;
@@ -38,6 +39,7 @@ public class GameSimulation implements CommandContext {
     private final UnitManager       unitManager;
     private final CombatManager     combatManager;
     private final VisibilitySystem  visibilitySystem;
+    private final CaptureManager    captureManager;
 
     /**
      * Єдиний генератор випадкових чисел матчу. Seed приходить від хоста,
@@ -84,6 +86,7 @@ public class GameSimulation implements CommandContext {
         this.unitManager      = new UnitManager();
         this.combatManager    = new CombatManager(unitManager, terrain, random);
         this.visibilitySystem = new VisibilitySystem(terrain);
+        this.captureManager   = new CaptureManager(terrain);
 
         // Артилерія стріляє лише по тому, що бачить САМА, і сама йде на
         // позицію по наказу — для обох речей їй потрібні видимість і навігація.
@@ -136,9 +139,10 @@ public class GameSimulation implements CommandContext {
     /**
      * Рівно один крок симуляції.
      *
-     * <p>Порядок підсистем зафіксований і однаковий скрізь: рух, бій, видимість.
-     * Переставити їх місцями — змінити результат, бо бій дивиться на позиції
-     * після руху, а видимість — на те, хто вижив у бою.
+     * <p>Порядок підсистем зафіксований і однаковий скрізь: рух, бій, видимість,
+     * захоплення. Переставити їх місцями — змінити результат, бо бій дивиться на
+     * позиції після руху, видимість — на те, хто вижив у бою, а точки — на те,
+     * хто ще стоїть у колі після всього цього.
      *
      * <p>Команди на цей тік мають бути застосовані ДО виклику — це робить
      * {@link MatchRunner}, бо наказ, відданий на тіку N, мусить впливати вже
@@ -150,6 +154,7 @@ public class GameSimulation implements CommandContext {
         unitManager.tick(terrain, mapW, mapH);
         combatManager.tick();
         visibilitySystem.update(unitManager.getAllUnits());
+        captureManager.tick(unitManager.getAllUnits());
     }
 
     /**
@@ -303,6 +308,7 @@ public class GameSimulation implements CommandContext {
     public UnitManager getUnitManager()       { return unitManager; }
     public CombatManager getCombatManager()   { return combatManager; }
     public VisibilitySystem getVisibility()   { return visibilitySystem; }
+    public CaptureManager getCapturePoints()  { return captureManager; }
     public TerrainQuery getTerrain()          { return terrain; }
     public DeterministicRandom getRandom()    { return random; }
     public float getMapWidth()                { return mapWidth; }

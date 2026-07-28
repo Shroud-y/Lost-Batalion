@@ -43,10 +43,11 @@ public final class StateChecksum {
     public static final int C_ORDERS     = 3;
     public static final int C_VISIBILITY = 4;
     public static final int C_RNG        = 5;
-    public static final int COMPONENTS   = 6;
+    public static final int C_POINTS     = 6;
+    public static final int COMPONENTS   = 7;
 
     private static final String[] NAMES = {
-        "позиції", "здоров'я", "таймери", "накази", "видимість", "RNG"
+        "позиції", "здоров'я", "таймери", "накази", "видимість", "RNG", "точки"
     };
 
     public static String componentName(int index) {
@@ -142,6 +143,9 @@ public final class StateChecksum {
         out[C_ORDERS]     = orders;
         out[C_VISIBILITY] = visible;
         out[C_RNG]        = rng;
+        out[C_POINTS]     = sim.getCapturePoints() == null
+                          ? FNV_OFFSET
+                          : sim.getCapturePoints().stateDigest(FNV_OFFSET);
 
         long total = mix(FNV_OFFSET, sim.getTickNumber());
         for (int i = 0; i < COMPONENTS; i++) total = mix(total, out[i]);

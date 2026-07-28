@@ -33,6 +33,7 @@ import io.jababa.lost_batalion.net.commands.StopCommand;
 import io.jababa.lost_batalion.net.kryo.LocalMatchTransport;
 import io.jababa.lost_batalion.screens.effects.BloomEffect;
 import io.jababa.lost_batalion.screens.effects.MoveMarker;
+import io.jababa.lost_batalion.screens.renderer.CapturePointRenderer;
 import io.jababa.lost_batalion.screens.renderer.TerrainIndicatorRenderer;
 import io.jababa.lost_batalion.screens.renderer.UnitRenderer;
 import io.jababa.lost_batalion.screens.scenario.ScenarioCard;
@@ -143,7 +144,9 @@ public class GameScreen implements Screen {
     private UnitRenderer unitRenderer;
     private TerrainIndicatorRenderer terrainIndicators;
     private MoveMarker moveMarker;
-    /** Пост-обробка світіння для позначки наказу. */
+    /** Кола стратегічних точок. Малюються під юнітами, зі своїм проходом bloom. */
+    private CapturePointRenderer capturePoints;
+    /** Пост-обробка світіння для позначки наказу і кіл точок. */
     private BloomEffect bloom;
     private FormationDragHandler formationDrag;
 
@@ -241,6 +244,7 @@ public class GameScreen implements Screen {
         unitRenderer      = new UnitRenderer();
         terrainIndicators = new TerrainIndicatorRenderer();
         moveMarker      = new MoveMarker();
+        capturePoints   = new CapturePointRenderer();
         bloom           = new BloomEffect(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         formationDrag   = new FormationDragHandler();
         curvedFormation = new CurvedFormationCommand();
@@ -380,6 +384,7 @@ public class GameScreen implements Screen {
         if (!paused) {
             // ── Візуал: за часом кадру, на стан гри не впливає ─────────────
             moveMarker.update(delta);
+            capturePoints.update(delta);
             combatManager.updateVisuals(delta);
             combatManager.updatePopups(delta);
             selectionPanel.update(delta, unitManager.getSelectedUnits());
@@ -404,6 +409,18 @@ public class GameScreen implements Screen {
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
         if (mapTexture != null) batch.draw(mapTexture, 0, 0);
+        batch.end();
+
+        // Кола стратегічних точок — окремим проходом bloom і ДО юнітів: це
+        // мітка на землі, а не над військами. Позначка наказу світиться своїм
+        // проходом нижче, бо вона, навпаки, має лежати поверх усього.
+        bloom.begin(gameViewport);
+        shapes.setProjectionMatrix(camera.combined);
+        capturePoints.draw(shapes, sim.getCapturePoints());
+        bloom.end();
+
+        batch.setProjectionMatrix(camera.combined);
+        batch.begin();
         unitRenderer.drawSprites(batch, unitManager.getAllUnits(), renderAlpha, localTeam);
         // Значки місцевості — поверх юнітів, але під бойовими попапами.
         terrainIndicators.draw(batch, unitManager.getSelectedUnits(), renderAlpha,

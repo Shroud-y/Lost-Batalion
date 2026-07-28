@@ -160,6 +160,26 @@ public class TerrainQuery {
         return TerrainMovementModifier.getMultiplier(elevationF(rawX, rawY), isForestF(rawX, rawY));
     }
 
+    /**
+     * Найдрібніша пляма села, яку ще беремо за село. Плями на Жовтих Водах —
+     * від 1500 пікселів, тож поріг відсіює лише поодинокі пікселі на межах
+     * заливки маски.
+     */
+    private static final int VILLAGE_MIN_PIXELS = 200;
+
+    /**
+     * Центри сіл у світових пікселях: пари {@code x, y} підряд.
+     *
+     * <p>Села намальовані в масці ЛІСУ (колір #F0FF00) — як і річки, всупереч
+     * назві файлу. Ще одна причина, чому ця логіка живе тут, а не в кожного
+     * споживача.
+     */
+    public int[] villageCenters() {
+        return forestMask != null
+            ? forestMask.findClusterCenters(TerrainType.VILLAGE, VILLAGE_MIN_PIXELS)
+            : new int[0];
+    }
+
     // ── Точкові запити: рендер (float) ────────────────────────────────────
 
     public boolean isForest(float x, float y) {
