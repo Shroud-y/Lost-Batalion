@@ -3,16 +3,15 @@ package io.jababa.lost_batalion.screens;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.scenes.scene2d.Actor;
-import com.badlogic.gdx.scenes.scene2d.InputEvent;
 import com.badlogic.gdx.scenes.scene2d.actions.Actions;
 import com.badlogic.gdx.scenes.scene2d.ui.Button;
 import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
-import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
 import io.jababa.lost_batalion.LostBatalion;
 import io.jababa.lost_batalion.screens.menu.MenuBackdrop;
+import io.jababa.lost_batalion.screens.menu.MenuPlate;
 import io.jababa.lost_batalion.ui.UIFactory;
 
 /**
@@ -43,6 +42,13 @@ public class MainMenuScreen extends BaseScreen {
      */
     private MenuBackdrop backdrop;
 
+    /**
+     * Один стиль на всі плитки. Кожен виклик фабрики створює три нові текстури,
+     * а плитки відрізняються лише написом — тримати чотири однакові комплекти
+     * означало б чотири зайві прив'язки текстур у кадрі.
+     */
+    private Button.ButtonStyle plateStyle;
+
     public MainMenuScreen(LostBatalion game) {
         super(game);
     }
@@ -50,6 +56,7 @@ public class MainMenuScreen extends BaseScreen {
     @Override
     protected void buildUI() {
         if (backdrop == null) backdrop = new MenuBackdrop(MAP_PATH);
+        plateStyle = UIFactory.createMenuPlateStyle();
         stage.addActor(backdrop);   // розмір тло тримає саме, див. MenuBackdrop.act
 
         Table root = new Table();
@@ -112,33 +119,17 @@ public class MainMenuScreen extends BaseScreen {
     }
 
     /**
-     * Плитка меню.
+     * Плитка меню. Підсвітка живе в {@link MenuPlate} — вона плавна, тому мусить
+     * тримати власний стан і не може бути звичайним {@code Button}.
      *
      * @param action що зробити по натисканню
      */
     private Button plate(String title, Runnable action) {
-        final Label name = new Label(title, UIFactory.createMenuItemStyle());
-        final Color rest = UIFactory.menuItemRestColor();
-        name.setColor(rest);
-
-        Button button = new Button(UIFactory.createMenuPlateStyle());
-        button.add(name).left().padLeft(18f).expandX();
-
+        MenuPlate button = new MenuPlate(plateStyle, title,
+                                         UIFactory.createMenuItemStyle(),
+                                         UIFactory.menuItemRestColor(), ITEM_HOVER);
         button.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent event, Actor actor) { action.run(); }
-        });
-
-        // Тло під курсором міняє сам стиль; підсвітити треба ще й підпис,
-        // інакше плитка світлішає, а текст на ній лишається тьмяним.
-        button.addListener(new ClickListener() {
-            @Override public void enter(InputEvent e, float x, float y, int pointer, Actor from) {
-                super.enter(e, x, y, pointer, from);
-                if (pointer == -1) name.setColor(ITEM_HOVER);
-            }
-            @Override public void exit(InputEvent e, float x, float y, int pointer, Actor to) {
-                super.exit(e, x, y, pointer, to);
-                if (pointer == -1) name.setColor(rest);
-            }
         });
         return button;
     }
