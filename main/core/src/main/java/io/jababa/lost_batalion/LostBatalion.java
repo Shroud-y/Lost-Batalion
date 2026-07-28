@@ -130,6 +130,8 @@ public class LostBatalion extends Game {
             this.screen = null;
         }
 
+        io.jababa.lost_batalion.screens.menu.MenuBackdrop.disposeShared();
+
         super.dispose();
         batch.dispose();
     }

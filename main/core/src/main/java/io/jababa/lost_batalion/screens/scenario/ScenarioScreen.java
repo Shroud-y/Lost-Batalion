@@ -5,7 +5,11 @@ import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.scenes.scene2d.Actor;
-import com.badlogic.gdx.scenes.scene2d.ui.*;
+import com.badlogic.gdx.scenes.scene2d.ui.Container;
+import com.badlogic.gdx.scenes.scene2d.ui.Image;
+import com.badlogic.gdx.scenes.scene2d.ui.Label;
+import com.badlogic.gdx.scenes.scene2d.ui.ScrollPane;
+import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
 import com.badlogic.gdx.utils.Array;
@@ -13,16 +17,30 @@ import com.badlogic.gdx.utils.Scaling;
 import io.jababa.lost_batalion.LostBatalion;
 import io.jababa.lost_batalion.screens.BaseScreen;
 import io.jababa.lost_batalion.screens.MainMenuScreen;
+import io.jababa.lost_batalion.ui.PlateButton;
+import io.jababa.lost_batalion.ui.ScreenHeader;
 import io.jababa.lost_batalion.ui.UIFactory;
 
+/**
+ * Вибір сценарію.
+ *
+ * <p>Картки стоять зліва направо від того самого поля, що й колонка головного
+ * меню — перехід між екранами не має зсувати вміст (DESIGN §4).
+ */
 public class ScenarioScreen extends BaseScreen {
 
-    private static final float CARD_WIDTH = 220f;
-    private static final float CARD_HEIGHT = 280f;
-    private static final float CARD_PAD = 16f;
-    private static final float CARD_IMG_H = 140f;
-    private static final float CARD_BTN_H = 34f;
-    private static final float TOP_BAR_H = 48f;
+    private static final float CARD_WIDTH  = 300f;
+    private static final float CARD_HEIGHT = 336f;
+    private static final float CARD_GAP    = 20f;
+    /** Висота прев'ю карти в картці. */
+    private static final float PREVIEW_H   = 168f;
+    private static final float SELECT_H    = 38f;
+
+    /**
+     * Прев'ю притемнене: у повну яскравість воно перебиває і заголовок картки,
+     * і саме тло екрана — а це список, а не галерея.
+     */
+    private static final Color PREVIEW_TINT = new Color(0.74f, 0.74f, 0.74f, 1f);
 
     private final Array<Texture> ownedTextures = new Array<>();
 
@@ -34,108 +52,94 @@ public class ScenarioScreen extends BaseScreen {
     protected void buildUI() {
         disposeOwnedTextures();
 
-        TextButton btnBack = new TextButton("< Back", UIFactory.createSmallButtonStyle());
-        btnBack.addListener(new ChangeListener() {
-            @Override public void changed(ChangeEvent event, Actor actor) {
-                game.setScreen(new MainMenuScreen(game));
-            }
-        });
-
-        Label title = new Label("Select Scenario", UIFactory.createScreenTitleStyle());
-
-        Table topBar = new Table();
-        topBar.pad(0, 8, 0, 8);
-
-        topBar.add(btnBack).width(90f).height(TOP_BAR_H).left();
-        topBar.add(title).expandX().center();
-        topBar.add().width(90f);
-
         Table grid = new Table();
-        grid.top().left().pad(CARD_PAD);
-
+        grid.top().left();
         for (ScenarioCard card : ScenarioCatalog.all()) {
-            grid.add(buildCardActor(card))
-                .size(CARD_WIDTH, CARD_HEIGHT)
-                .pad(CARD_PAD);
+            grid.add(buildCard(card)).size(CARD_WIDTH, CARD_HEIGHT).padRight(CARD_GAP).top();
         }
-
-        grid.add().expandX();
+        grid.add().expandX();   // притискає картки вліво
 
         ScrollPane scroll = new ScrollPane(grid);
         scroll.setScrollingDisabled(false, true);
         scroll.setFadeScrollBars(false);
-        scroll.setFlickScroll(true);
         scroll.setOverscroll(false, false);
 
         Table root = new Table();
         root.setFillParent(true);
         root.top();
+        root.pad(UIFactory.HEADER_TOP, UIFactory.MARGIN,
+                 UIFactory.FOOTER_PAD, UIFactory.MARGIN);
 
-        root.add(topBar).expandX().fillX().height(TOP_BAR_H).padTop(8f).row();
-        root.add(createSeparator()).expandX().fillX().height(1f).padBottom(4f).row();
-        root.add(scroll).expand().fill().pad(0, 4, 4, 4);
+        root.add(new ScreenHeader("СЦЕНАРІЇ",
+                                  () -> game.setScreen(new MainMenuScreen(game))))
+            .growX().row();
+        root.add(scroll).grow().padTop(26f).row();
 
         stage.addActor(root);
     }
 
-    private Actor buildCardActor(ScenarioCard card) {
-        Table cardTable = new Table();
-        cardTable.setBackground(UIFactory.createColorDrawable(
-            new Color(0.13f, 0.13f, 0.20f, 1f)));
-        cardTable.top();
+    // ── Картка ────────────────────────────────────────────────────────────
 
-        Texture previewTex = loadPreview(card);
-        Image preview = new Image(new TextureRegionDrawable(previewTex));
+    private Actor buildCard(final ScenarioCard card) {
+        Image preview = new Image(new TextureRegionDrawable(loadPreview(card)));
         preview.setScaling(Scaling.fill);
+        preview.setColor(PREVIEW_TINT);
 
-        Label nameLabel = new Label(card.title, UIFactory.createCardTitleStyle());
-        nameLabel.setEllipsis(true);
+        // Scaling.fill свідомо вилазить за межі комірки — без обрізання прев'ю
+        // накрило б рамку картки. Container уміє те, чого не вміє Table.
+        Container<Image> frame = new Container<>(preview);
+        frame.setClip(true);
+        frame.fill();
 
-        Label descLabel = new Label(card.description, UIFactory.createCardDescStyle());
-        descLabel.setWrap(true);
+        Label title = new Label(card.title.toUpperCase(), UIFactory.createCardTitleStyle());
+        title.setEllipsis(true);
 
-        TextButton btnSelect = new TextButton("Select", UIFactory.createSmallButtonStyle());
-        btnSelect.addListener(new ChangeListener() {
+        Label desc = new Label(card.description, UIFactory.createCardDescStyle());
+        desc.setWrap(true);
+
+        PlateButton select = PlateButton.action("ОБРАТИ");
+        select.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent event, Actor actor) {
                 game.setScreen(new io.jababa.lost_batalion.screens.game.GameScreen(game, card));
             }
         });
 
-        cardTable.add(preview).expandX().fillX().height(CARD_IMG_H).row();
-        cardTable.add(nameLabel).expandX().fillX().pad(6f, 8f, 2f, 8f).row();
-        cardTable.add(descLabel).expandX().fillX().pad(0f, 8f, 0f, 8f).expandY().top().row();
-        cardTable.add(btnSelect).expandX().fillX().height(CARD_BTN_H).pad(4f, 8f, 8f, 8f).row();
+        Table cardTable = new Table();
+        cardTable.setBackground(UIFactory.createPanelBackground());
+        cardTable.top();
 
+        // Прев'ю впритул до рамки, решта — з полем: картинка є краєм картки,
+        // а текст усередині неї.
+        cardTable.add(frame).growX().height(PREVIEW_H).pad(1f, 1f, 0f, 1f).row();
+        cardTable.add(title).left().growX().pad(14f, 16f, 6f, 16f).row();
+        cardTable.add(desc).left().growX().pad(0f, 16f, 0f, 16f).growY().top().row();
+        cardTable.add(select).growX().height(SELECT_H).pad(12f, 16f, 16f, 16f).row();
         return cardTable;
     }
 
-    private Image createSeparator() {
-        Image line = new Image(UIFactory.createColorDrawable(
-            new Color(UIFactory.COLOR_ACCENT.r, UIFactory.COLOR_ACCENT.g,
-                UIFactory.COLOR_ACCENT.b, 0.4f)));
-        return line;
-    }
+    // ── Прев'ю ────────────────────────────────────────────────────────────
 
     private Texture loadPreview(ScenarioCard card) {
         if (card.texturePath != null && Gdx.files.internal(card.texturePath).exists()) {
             Texture tex = new Texture(Gdx.files.internal(card.texturePath));
+            tex.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
             ownedTextures.add(tex);
             return tex;
         }
         return buildPlaceholderTexture();
     }
 
+    /** Заглушка, коли карти немає: перекреслений прямокутник у кольорах теми. */
     private Texture buildPlaceholderTexture() {
         int w = 512, h = 256;
         Pixmap pm = new Pixmap(w, h, Pixmap.Format.RGBA8888);
-        pm.setColor(0.18f, 0.16f, 0.22f, 1f);
+        pm.setColor(0.047f, 0.059f, 0.075f, 1f);
         pm.fill();
-        pm.setColor(UIFactory.COLOR_ACCENT);
+        pm.setColor(UIFactory.COLOR_MENU_RULE);
         pm.drawRectangle(0, 0, w, h);
-        pm.drawRectangle(1, 1, w - 2, h - 2);
-        pm.setColor(0.35f, 0.30f, 0.18f, 1f);
-        pm.drawLine(10, 10, w - 10, h - 10);
-        pm.drawLine(w - 10, 10, 10, h - 10);
+        pm.drawLine(0, 0, w, h);
+        pm.drawLine(w, 0, 0, h);
+
         Texture tex = new Texture(pm);
         pm.dispose();
         ownedTextures.add(tex);

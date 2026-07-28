@@ -10,31 +10,30 @@ import com.badlogic.gdx.graphics.g2d.NinePatch;
 import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator;
 import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator.FreeTypeFontParameter;
 import com.badlogic.gdx.scenes.scene2d.ui.Button;
+import com.badlogic.gdx.scenes.scene2d.ui.CheckBox;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
-import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
+import com.badlogic.gdx.scenes.scene2d.ui.Slider;
 import com.badlogic.gdx.scenes.scene2d.ui.TextField;
 import com.badlogic.gdx.scenes.scene2d.utils.Drawable;
 import com.badlogic.gdx.scenes.scene2d.utils.NinePatchDrawable;
 import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
 import com.badlogic.gdx.utils.Array;
-import com.badlogic.gdx.scenes.scene2d.ui.Slider;
-import com.badlogic.gdx.scenes.scene2d.ui.CheckBox;
 
+/**
+ * Стилі інтерфейсу за декларацією {@code .claude/DESIGN.md}.
+ *
+ * <p>Усе будується процедурно з пікcмап — файлів тем у грі немає. Числа тут не
+ * підбирались на око: палітра §2, кеглі §3, товщини §4 живуть у декларації, а
+ * цей клас лише перекладає їх у scene2d.
+ *
+ * <p>Форма одна на весь інтерфейс: прямокутник, заливка з прозорістю, рамка в
+ * один піксель. Заокруглень немає навмисно — вони читаються як елемент
+ * застосунку, а гра має виглядати як калька, накладена на карту.
+ */
 public final class UIFactory {
 
     private static final String FONT_PATH = "fonts/main.ttf";
 
-    /**
-     * Набір символів, які треба згенерувати зі шрифту.
-     *
-     * <p>Задавати його ОБОВ'ЯЗКОВО. За замовчуванням FreeType бере лише
-     * {@code DEFAULT_CHARS} — латиницю з цифрами, — і будь-яка кирилиця стає
-     * порожнім квадратом навіть тоді, коли гліфи у файлі шрифту є.
-     *
-     * <p>Сюди входить і пунктуація, якою реально користується інтерфейс:
-     * трикрапка, тире, лапки, апостроф. Без них у текстах на кшталт
-     * «Очікування…» останній символ теж перетворюється на квадрат.
-     */
     /**
      * Символи, яких потребує САМЕ ця гра понад стандартний набір libGDX.
      *
@@ -48,8 +47,6 @@ public final class UIFactory {
         + "абвгґдеєжзиіїйклмнопрстуфхцчшщьюя"
         + "ЁёЪъЫыЭэ"          // трапляються в чужих ніках
         + "…—–«»„“”’№°×÷≈≤≥";
-    // Піктограм ☰ ≡ ✕ тут немає навмисно: жоден із текстових шрифтів, що
-    // пасують грі, їх не містить. Кнопки HUD підписані словами.
 
     /**
      * Набір символів, які треба згенерувати зі шрифту.
@@ -69,38 +66,48 @@ public final class UIFactory {
 
     private static final Array<BitmapFont> createdFonts    = new Array<>();
     private static final Array<Texture>    createdTextures = new Array<>();
-    public static final Color COLOR_ACCENT = new Color(0.80f, 0.60f, 0.20f, 1f);
-    public static final Color COLOR_BUTTON_IDLE = new Color(0.13f, 0.13f, 0.20f, 0.96f);
-    public static final Color COLOR_BUTTON_OVER = new Color(0.22f, 0.22f, 0.34f, 1f);
-    public static final Color COLOR_BUTTON_DOWN = new Color(0.08f, 0.08f, 0.13f, 1f);
-    public static final Color COLOR_TEXT = new Color(0.92f, 0.90f, 0.82f, 1f);
 
-    private static final Color COLOR_BORDER_IDLE = new Color(0.38f, 0.35f, 0.52f, 1f);
-    private static final Color COLOR_BORDER_OVER = new Color(0.55f, 0.50f, 0.72f, 1f);
-    private static final Color COLOR_BORDER_DOWN = new Color(0.28f, 0.26f, 0.40f, 1f);
+    // ── Палітра (DESIGN §2) ───────────────────────────────────────────────
 
-    private static final int PATCH_SIZE = 64;
-    private static final int CORNER_R = 14;
-    private static final int BORDER_W = 2;
-
-    // ── Палітра головного меню ────────────────────────────────────────────
-    //
-    // Меню стоїть на затемненій карті, а не на суцільному тлі, тому кольори тут
-    // холодніші й прозоріші за загальні: плитка має читатись як накладена на
-    // мапу калька, а не як вирізаний з іншої гри елемент.
-
-    /** Тьмяне золото підписів і рамок — той самий тон, що й {@link #COLOR_ACCENT}. */
+    /** Акцент: планка, лінійка, одне слово заголовка. Заливкою НЕ буває. */
+    public static final Color COLOR_ACCENT   = new Color(0.80f, 0.60f, 0.20f, 1f); // #CC9933
+    /** Основний текст. */
+    public static final Color COLOR_TEXT     = new Color(0.92f, 0.90f, 0.82f, 1f); // #EBE6D1
+    /** Лінійка під заголовком. */
     public static final Color COLOR_MENU_RULE = new Color(0.47f, 0.43f, 0.34f, 0.55f);
 
-    private static final Color MENU_PLATE_IDLE   = new Color(0.047f, 0.059f, 0.075f, 0.75f);
-    private static final Color MENU_PLATE_OVER   = new Color(0.094f, 0.110f, 0.133f, 0.88f);
-    private static final Color MENU_PLATE_DOWN   = new Color(0.031f, 0.039f, 0.051f, 0.92f);
+    /** Назва пункту в спокої та під курсором. */
+    private static final Color ITEM_REST  = new Color(0.82f, 0.80f, 0.73f, 1f); // #D1CCBA
+    private static final Color ITEM_HOVER = new Color(0.96f, 0.93f, 0.84f, 1f); // #F5EDD6
+    /** Другорядний підпис. */
+    private static final Color NOTE       = new Color(0.47f, 0.45f, 0.41f, 1f); // #787369
+    /** Помилки валідації та мережеві збої. */
+    private static final Color DANGER     = new Color(0.78f, 0.35f, 0.28f, 1f);
 
-    private static final Color MENU_EDGE_IDLE    = new Color(0.376f, 0.353f, 0.282f, 0.43f);
-    private static final Color MENU_EDGE_OVER    = new Color(0.588f, 0.471f, 0.235f, 0.78f);
-    private static final Color MENU_EDGE_DOWN    = new Color(0.310f, 0.290f, 0.235f, 0.60f);
+    // Плитка: спокій → наведення світлішає й тепліє, натиск темнішає.
+    // Два стани йдуть у РІЗНІ боки — на цьому тримається читабельність.
+    private static final Color PLATE_IDLE = new Color(0.047f, 0.059f, 0.075f, 0.75f);
+    private static final Color PLATE_OVER = new Color(0.094f, 0.110f, 0.133f, 0.88f);
+    private static final Color PLATE_DOWN = new Color(0.031f, 0.039f, 0.051f, 0.92f);
 
-    private static final Color MENU_MARK_IDLE    = new Color(0.376f, 0.353f, 0.282f, 0.60f);
+    private static final Color EDGE_IDLE  = new Color(0.376f, 0.353f, 0.282f, 0.43f);
+    private static final Color EDGE_OVER  = new Color(0.588f, 0.471f, 0.235f, 0.78f);
+    private static final Color EDGE_DOWN  = new Color(0.310f, 0.290f, 0.235f, 0.60f);
+
+    private static final Color MARK_IDLE  = new Color(0.376f, 0.353f, 0.282f, 0.60f);
+
+    /** Фон панелі/картки — щільніший за плитку, бо на ньому лежить вміст. */
+    private static final Color PANEL_BG    = new Color(0.047f, 0.059f, 0.075f, 0.86f);
+    /** Рядок списку: майже прозорий, поки не вибраний. */
+    private static final Color ROW_BG      = new Color(0.047f, 0.059f, 0.075f, 0.50f);
+    private static final Color ROW_EDGE    = new Color(0.376f, 0.353f, 0.282f, 0.24f);
+    private static final Color ROW_BG_ON   = new Color(0.094f, 0.110f, 0.133f, 0.80f);
+    private static final Color ROW_EDGE_ON = new Color(0.80f, 0.60f, 0.20f, 0.60f);
+
+    /** Затемнення під модальні вікна й паузу. */
+    private static final Color SCRIM       = new Color(0.016f, 0.024f, 0.031f, 0.78f);
+
+    // ── Форма (DESIGN §4, §6) ─────────────────────────────────────────────
 
     /** Розмір заготовки плитки. Тягнеться лише середина, краї лишаються різкими. */
     private static final int PLATE_SIZE = 24;
@@ -108,52 +115,71 @@ public final class UIFactory {
     private static final int PLATE_MARK_IDLE = 2;
     private static final int PLATE_MARK_OVER = 5;
 
+    // ── Кеглі (DESIGN §3) ─────────────────────────────────────────────────
+
+    // ── Спільні поля розкладки (DESIGN §4) ────────────────────────────────
+
+    /** Ліве й праве поле екрана. Те саме, що в колонки головного меню. */
+    public static final float MARGIN     = 72f;
+    /** Відступ шапки від верху. */
+    public static final float HEADER_TOP = 40f;
+    /** Нижнє поле. */
+    public static final float FOOTER_PAD = 28f;
+
+    private static final int SIZE_GAME_TITLE   = 46;
+    private static final int SIZE_SCREEN_TITLE = 28;
+    private static final int SIZE_ITEM         = 19;
+    private static final int SIZE_ACTION       = 15;
+    private static final int SIZE_BODY         = 16;
+    private static final int SIZE_NOTE         = 12;
+
     private UIFactory() {}
 
-    public static TextButton.TextButtonStyle createMenuButtonStyle() {
-        return roundedButtonStyle(screenRelativeSize(0.035f),
-            COLOR_BUTTON_IDLE, COLOR_BORDER_IDLE,
-            COLOR_BUTTON_OVER, COLOR_BORDER_OVER,
-            COLOR_BUTTON_DOWN, COLOR_BORDER_DOWN);
-    }
-
-    public static TextButton.TextButtonStyle createSmallButtonStyle() {
-        return roundedButtonStyle(18,
-            COLOR_BUTTON_IDLE, COLOR_BORDER_IDLE,
-            COLOR_BUTTON_OVER, COLOR_BORDER_OVER,
-            COLOR_BUTTON_DOWN, COLOR_BORDER_DOWN);
-    }
-
-    // ── Головне меню ──────────────────────────────────────────────────────
+    // ── Кнопки ────────────────────────────────────────────────────────────
 
     /**
-     * Стиль плитки головного меню: прямокутна пластина з тонкою рамкою і
-     * акцентною планкою на лівому краї, що потовщується під курсором.
+     * Плитка списку: прямокутна пластина з акцентною планкою ліворуч, що
+     * потовщується під курсором. Для пунктів меню й рядків вибору.
      *
-     * <p>Це {@link Button.ButtonStyle}, а не {@code TextButtonStyle}: у плитці
-     * два підписи (назва ліворуч, уточнення праворуч), тож вміст складає
-     * викликач, а стиль дає лише тло.
+     * <p>Це {@link Button.ButtonStyle}, а не {@code TextButtonStyle}: вміст
+     * плитки складає викликач, а стиль дає лише тло. Анімацію станів робить
+     * {@link PlateButton} — підміняти драбл на льоту не можна (див. DESIGN §6).
      */
     public static Button.ButtonStyle createMenuPlateStyle() {
         Button.ButtonStyle style = new Button.ButtonStyle();
-        style.up   = platePatch(MENU_PLATE_IDLE, MENU_EDGE_IDLE, MENU_MARK_IDLE, PLATE_MARK_IDLE);
-        style.over = platePatch(MENU_PLATE_OVER, MENU_EDGE_OVER, COLOR_ACCENT,   PLATE_MARK_OVER);
-        style.down = platePatch(MENU_PLATE_DOWN, MENU_EDGE_DOWN, COLOR_ACCENT,   PLATE_MARK_OVER);
+        style.up   = platePatch(PLATE_IDLE, EDGE_IDLE, MARK_IDLE,    PLATE_MARK_IDLE);
+        style.over = platePatch(PLATE_OVER, EDGE_OVER, COLOR_ACCENT, PLATE_MARK_OVER);
+        style.down = platePatch(PLATE_DOWN, EDGE_DOWN, COLOR_ACCENT, PLATE_MARK_OVER);
         return style;
     }
 
     /**
-     * Велике слово заголовка. Розріджене — суцільний набір у 46px виглядає збитим.
-     *
-     * <p>Стилі меню будуються на БІЛОМУ запеченому шрифті (див.
-     * {@link #generateTintableFont}), тому колір тут виходить точно той, що
-     * заданий, а не притемнений удвічі, як у решті стилів.
+     * Компактна кнопка дії: «Назад», «Обрати», «Готовий». Без планки — вона
+     * позначає пункт списку, а не разову дію, і на дрібній кнопці читалась би
+     * як обрізаний край.
      */
+    public static Button.ButtonStyle createActionStyle() {
+        Button.ButtonStyle style = new Button.ButtonStyle();
+        style.up   = rectPatch(PLATE_IDLE, EDGE_IDLE);
+        style.over = rectPatch(PLATE_OVER, EDGE_OVER);
+        style.down = rectPatch(PLATE_DOWN, EDGE_DOWN);
+        return style;
+    }
+
+    // ── Написи ────────────────────────────────────────────────────────────
+    //
+    // Усі стилі меню й екранів будуються на БІЛОМУ запеченому шрифті
+    // (див. generateTintableFont), тому колір виходить точно той, що заданий, і
+    // його можна анімувати. Множенням світлішого не зробиш — DESIGN §6.
+
+    /** Слово назви гри. Розріджене: суцільний набір у 46px виглядає збитим. */
     public static Label.LabelStyle createMenuWordStyle(Color color) {
-        Label.LabelStyle s = new Label.LabelStyle();
-        s.font = generateTintableFont(46, 3f);
-        s.fontColor = new Color(color);
-        return s;
+        return label(SIZE_GAME_TITLE, 3f, color);
+    }
+
+    /** Заголовок екрана. */
+    public static Label.LabelStyle createScreenTitleStyle() {
+        return label(SIZE_SCREEN_TITLE, 2.5f, COLOR_ACCENT);
     }
 
     /**
@@ -161,135 +187,157 @@ public final class UIFactory {
      *
      * <p>{@code fontColor} тут навмисно {@code null}: колір задає САМ ярлик через
      * {@code setColor}, і меню міняє його при наведенні. Якби тон сидів у стилі,
-     * підсвітити напис було б неможливо — колір актора лише домножується, а
-     * множенням світлішого не зробиш.
+     * підсвітити напис було б неможливо.
      */
     public static Label.LabelStyle createMenuItemStyle() {
         Label.LabelStyle s = new Label.LabelStyle();
-        s.font = generateTintableFont(19, 2f);
+        s.font = generateTintableFont(SIZE_ITEM, 2f);
         s.fontColor = null;
         return s;
     }
 
-    /** Спокійний тон назви пункту — початкове значення для {@code setColor}. */
-    public static Color menuItemRestColor() {
-        return new Color(0.82f, 0.80f, 0.73f, 1f);
-    }
-
-    /** Уточнення праворуч у плитці та підписи в підвалі. */
-    public static Label.LabelStyle createMenuNoteStyle() {
+    /** Підпис на кнопці дії. Колір теж ставить сам ярлик — див. вище. */
+    public static Label.LabelStyle createActionLabelStyle() {
         Label.LabelStyle s = new Label.LabelStyle();
-        s.font = generateTintableFont(12, 0f);
-        s.fontColor = new Color(0.47f, 0.45f, 0.41f, 1f);
+        s.font = generateTintableFont(SIZE_ACTION, 1.5f);
+        s.fontColor = null;
         return s;
     }
 
-    public static Label.LabelStyle createTitleStyle() {
-        Label.LabelStyle s = new Label.LabelStyle();
-        s.font = generateFont(screenRelativeSize(0.09f), COLOR_ACCENT);
-        s.fontColor = COLOR_ACCENT;
-        return s;
-    }
-
-    public static Label.LabelStyle createSubtitleStyle() {
-        Label.LabelStyle s = new Label.LabelStyle();
-        s.font = generateFont(screenRelativeSize(0.025f), COLOR_TEXT);
-        s.fontColor = COLOR_TEXT;
-        return s;
-    }
-
-    public static Label.LabelStyle createScreenTitleStyle() {
-        Label.LabelStyle s = new Label.LabelStyle();
-        s.font = generateFont(32, COLOR_ACCENT);
-        s.fontColor = COLOR_ACCENT;
-        return s;
-    }
-
-    public static Label.LabelStyle createCardTitleStyle() {
-        Label.LabelStyle s = new Label.LabelStyle();
-        s.font = generateFont(20, COLOR_TEXT);
-        s.fontColor = COLOR_TEXT;
-        return s;
-    }
-
-    public static Label.LabelStyle createCardDescStyle() {
-        Color c = new Color(0.70f, 0.68f, 0.60f, 1f);
-        Label.LabelStyle s = new Label.LabelStyle();
-        s.font = generateFont(15, c);
-        s.fontColor = c;
-        return s;
-    }
+    /** Спокійний тон підпису на плитці — початкове значення для {@code setColor}. */
+    public static Color itemRestColor()  { return new Color(ITEM_REST); }
+    /** Тон під курсором. */
+    public static Color itemHoverColor() { return new Color(ITEM_HOVER); }
 
     /** Звичайний текст у списках і формах. */
     public static Label.LabelStyle createBodyStyle() {
-        Label.LabelStyle s = new Label.LabelStyle();
-        s.font = generateFont(17, COLOR_TEXT);
-        s.fontColor = COLOR_TEXT;
-        return s;
+        return label(SIZE_BODY, 0f, COLOR_TEXT);
     }
 
-    /** Другорядний текст: підписи, лічильники, статуси. */
+    /** Другорядний текст: підписи, лічильники, статуси, підвал. */
     public static Label.LabelStyle createHintStyle() {
-        Color c = new Color(0.62f, 0.60f, 0.54f, 1f);
-        Label.LabelStyle s = new Label.LabelStyle();
-        s.font = generateFont(14, c);
-        s.fontColor = c;
-        return s;
+        return label(SIZE_NOTE, 0f, NOTE);
+    }
+
+    /** Те саме, що {@link #createHintStyle()} — окрема назва для меню. */
+    public static Label.LabelStyle createMenuNoteStyle() {
+        return createHintStyle();
     }
 
     /** Помилки валідації та мережеві збої. */
     public static Label.LabelStyle createErrorStyle() {
-        Color c = new Color(0.85f, 0.35f, 0.30f, 1f);
-        Label.LabelStyle s = new Label.LabelStyle();
-        s.font = generateFont(15, c);
-        s.fontColor = c;
-        return s;
+        return label(SIZE_NOTE + 2, 0f, DANGER);
     }
 
     /** Підсвічений текст: свій нік у списку, «готовий», акценти. */
     public static Label.LabelStyle createAccentStyle() {
+        return label(SIZE_BODY, 0f, COLOR_ACCENT);
+    }
+
+    /** Назва картки сценарію. */
+    public static Label.LabelStyle createCardTitleStyle() {
+        return label(SIZE_BODY + 2, 1.5f, COLOR_TEXT);
+    }
+
+    /** Опис картки сценарію. */
+    public static Label.LabelStyle createCardDescStyle() {
+        return label(SIZE_NOTE + 1, 0f, NOTE);
+    }
+
+    private static Label.LabelStyle label(int size, float spacing, Color color) {
         Label.LabelStyle s = new Label.LabelStyle();
-        s.font = generateFont(17, COLOR_ACCENT);
-        s.fontColor = COLOR_ACCENT;
+        s.font = generateTintableFont(size, spacing);
+        s.fontColor = new Color(color);
         return s;
     }
 
+    // ── Поля, повзунки, галочки ───────────────────────────────────────────
+
     public static TextField.TextFieldStyle createTextFieldStyle() {
+        Color ghost = new Color(0.40f, 0.39f, 0.36f, 1f);
+
         TextField.TextFieldStyle s = new TextField.TextFieldStyle();
-        s.font      = generateFont(18, COLOR_TEXT);
-        s.fontColor = COLOR_TEXT;
-        s.messageFont      = generateFont(18, new Color(0.45f, 0.44f, 0.40f, 1f));
-        s.messageFontColor = new Color(0.45f, 0.44f, 0.40f, 1f);
-        s.background = roundedNinePatch(new Color(0.08f, 0.08f, 0.12f, 1f), COLOR_BORDER_IDLE);
-        s.focusedBackground = roundedNinePatch(new Color(0.08f, 0.08f, 0.12f, 1f), COLOR_ACCENT);
+        s.font      = generateTintableFont(SIZE_BODY, 0f);
+        s.fontColor = new Color(COLOR_TEXT);
+        s.messageFont      = generateTintableFont(SIZE_BODY, 0f);
+        s.messageFontColor = ghost;
+
+        s.background        = rectPatch(PLATE_DOWN, EDGE_IDLE);
+        s.focusedBackground = rectPatch(PLATE_DOWN, COLOR_ACCENT);
 
         Drawable cursor = flatDrawable(COLOR_ACCENT);
         cursor.setMinWidth(2f);
         s.cursor = cursor;
 
-        Drawable selection = flatDrawable(new Color(0.30f, 0.28f, 0.45f, 1f));
-        s.selection = selection;
+        s.selection = flatDrawable(new Color(0.30f, 0.26f, 0.16f, 1f));
         return s;
     }
+
+    public static Slider.SliderStyle createSliderStyle() {
+        Slider.SliderStyle style = new Slider.SliderStyle();
+
+        // Жолоб — тонка врізана смуга, а не об'ємний брусок.
+        style.background = rectPatch(PLATE_DOWN, EDGE_IDLE);
+        style.background.setMinHeight(8f);
+
+        // Заповнена частина світиться акцентом — це єдине місце, де значення
+        // видно без цифри.
+        style.knobBefore = flatDrawable(new Color(0.80f, 0.60f, 0.20f, 0.55f));
+        style.knobBefore.setMinHeight(8f);
+
+        style.knob = flatDrawable(COLOR_ACCENT);
+        style.knob.setMinWidth(5f);
+        style.knob.setMinHeight(22f);
+        return style;
+    }
+
+    public static CheckBox.CheckBoxStyle createCheckBoxStyle() {
+        CheckBox.CheckBoxStyle style = new CheckBox.CheckBoxStyle();
+        style.font      = generateTintableFont(SIZE_BODY, 0f);
+        style.fontColor = new Color(ITEM_REST);
+
+        style.checkboxOff = rectPatch(PLATE_IDLE, EDGE_IDLE);
+        style.checkboxOff.setMinWidth(22f);
+        style.checkboxOff.setMinHeight(22f);
+
+        style.checkboxOn = rectPatch(new Color(0.80f, 0.60f, 0.20f, 0.85f), COLOR_ACCENT);
+        style.checkboxOn.setMinWidth(22f);
+        style.checkboxOn.setMinHeight(22f);
+
+        style.checkboxOver = rectPatch(PLATE_OVER, EDGE_OVER);
+        style.checkboxOver.setMinWidth(22f);
+        style.checkboxOver.setMinHeight(22f);
+        return style;
+    }
+
+    // ── Тла ───────────────────────────────────────────────────────────────
 
     /**
      * Напівпрозоре затемнення на весь екран під модальні вікна.
      * Потрібне, щоб було видно: гра під ним не реагує, поки вікно відкрите.
      */
     public static Drawable createModalScrim() {
-        return flatDrawable(new Color(0f, 0f, 0f, 0.72f));
+        return flatDrawable(SCRIM);
     }
 
     /** Фон панелі/картки. */
     public static Drawable createPanelBackground() {
-        return roundedNinePatch(new Color(0.13f, 0.13f, 0.20f, 0.98f), COLOR_BORDER_IDLE);
+        return rectPatch(PANEL_BG, EDGE_IDLE);
     }
 
-    /** Фон рядка у списку — трохи світліший за екран, щоб рядки читались. */
+    /** Фон рядка у списку. */
     public static Drawable createRowBackground(boolean highlighted) {
-        return highlighted
-            ? roundedNinePatch(new Color(0.20f, 0.19f, 0.28f, 1f), COLOR_ACCENT)
-            : roundedNinePatch(new Color(0.11f, 0.11f, 0.17f, 1f), COLOR_BORDER_IDLE);
+        return highlighted ? rectPatch(ROW_BG_ON, ROW_EDGE_ON)
+                           : rectPatch(ROW_BG,    ROW_EDGE);
+    }
+
+    /** Горизонтальна лінійка-роздільник. */
+    public static Drawable createRuleDrawable() {
+        return flatDrawable(COLOR_MENU_RULE);
+    }
+
+    public static Drawable createColorDrawable(Color color) {
+        return flatDrawable(color);
     }
 
     public static void disposeAll() {
@@ -299,41 +347,27 @@ public final class UIFactory {
         createdTextures.clear();
     }
 
-    public static Drawable createColorDrawable(Color color) {
-        return flatDrawable(color);
-    }
+    // ── Заготовки ─────────────────────────────────────────────────────────
 
-
-    private static TextButton.TextButtonStyle roundedButtonStyle(
-        int fontSize,
-        Color bgIdle, Color borderIdle,
-        Color bgOver, Color borderOver,
-        Color bgDown, Color borderDown) {
-
-        TextButton.TextButtonStyle style = new TextButton.TextButtonStyle();
-        style.font = generateFont(fontSize, COLOR_TEXT);
-        style.up   = roundedNinePatch(bgIdle, borderIdle);
-        style.over = roundedNinePatch(bgOver, borderOver);
-        style.down = roundedNinePatch(bgDown, borderDown);
-        return style;
+    /** Пластина без планки — рамка й заливка. */
+    private static NinePatchDrawable rectPatch(Color bg, Color border) {
+        return platePatch(bg, border, border, 0);
     }
 
     /**
      * Прямокутна пластина: заливка, рамка в один піксель і акцентна планка
      * ліворуч.
      *
-     * <p>Кути навмисно різкі. Заокруглення тут читалося б як елемент застосунку,
-     * а меню має виглядати як накладена на карту калька — рівні краї і тонка
-     * лінія роблять саме це.
-     *
      * <p>Розтягується лише середина: сплайни девʼятки поставлені так, щоб планка
-     * і рамка лишились рівно тієї товщини, з якою намальовані, на будь-якій
-     * ширині кнопки.
+     * і рамка лишились рівно тієї товщини, з якою намальовані, на будь-якому
+     * розмірі.
      */
     private static NinePatchDrawable platePatch(Color bg, Color border, Color mark, int markW) {
         int s = PLATE_SIZE;
 
         Pixmap pm = new Pixmap(s, s, Pixmap.Format.RGBA8888);
+        // Без Blending.None напівпрозора заливка змішалася б сама з собою, і
+        // рамка поверх неї вийшла б брудною.
         pm.setBlending(Pixmap.Blending.None);
 
         pm.setColor(bg);
@@ -342,10 +376,12 @@ public final class UIFactory {
         pm.setColor(border);
         pm.drawRectangle(0, 0, s, s);
 
-        // Планка малюється ПОВЕРХ рамки: інакше на лівому краї лишалася б
-        // однопіксельна смужка кольору рамки, і планка виглядала б брудною.
-        pm.setColor(mark);
-        pm.fillRectangle(0, 0, markW, s);
+        if (markW > 0) {
+            // Планка малюється ПОВЕРХ рамки: інакше на лівому краї лишалася б
+            // однопіксельна смужка кольору рамки, і планка виглядала б брудною.
+            pm.setColor(mark);
+            pm.fillRectangle(0, 0, markW, s);
+        }
 
         Texture tex = new Texture(pm);
         // Nearest: тут немає жодної діагоналі, а Linear розмив би однопіксельну
@@ -354,78 +390,8 @@ public final class UIFactory {
         pm.dispose();
         createdTextures.add(tex);
 
-        NinePatch patch = new NinePatch(tex, markW + 1, 1, 1, 1);
-        return new NinePatchDrawable(patch);
+        return new NinePatchDrawable(new NinePatch(tex, markW + 1, 1, 1, 1));
     }
-
-    private static NinePatchDrawable roundedNinePatch(Color bg, Color border) {
-        int s = PATCH_SIZE;
-        int r = CORNER_R;
-        int b = BORDER_W;
-
-        Pixmap pm = new Pixmap(s, s, Pixmap.Format.RGBA8888);
-        pm.setBlending(Pixmap.Blending.None);
-
-        int[][] corners = { {r, r}, {s - r - 1, r}, {r, s - r - 1}, {s - r - 1, s - r - 1} };
-
-        for (int y = 0; y < s; y++) {
-            for (int x = 0; x < s; x++) {
-
-                Integer cx = null, cy = null;
-                if (x < r && y < r)         { cx = r;     cy = r; }
-                else if (x >= s-r && y < r) { cx = s-r-1; cy = r; }
-                else if (x < r && y >= s-r) { cx = r;     cy = s-r-1; }
-                else if (x >= s-r && y >= s-r) { cx = s-r-1; cy = s-r-1; }
-
-                float fillAlpha, borderAlpha;
-
-                if (cx != null) {
-
-                    float dx   = x - cx + 0.5f;
-                    float dy   = y - cy + 0.5f;
-                    float dist = (float) Math.sqrt(dx * dx + dy * dy);
-
-                    fillAlpha   = clamp(r - dist + 0.5f);
-
-                    float inner = r - b;
-                    borderAlpha = clamp(r - dist + 0.5f) - clamp(inner - dist + 0.5f);
-                } else {
-
-                    boolean onBorder = (x < b || x >= s - b || y < b || y >= s - b);
-                    fillAlpha   = 1f;
-                    borderAlpha = onBorder ? 1f : 0f;
-                }
-
-                if (fillAlpha <= 0f) continue;
-
-                pm.setColor(bg.r, bg.g, bg.b, bg.a * fillAlpha);
-                pm.drawPixel(x, y);
-
-                if (borderAlpha > 0.01f) {
-                    float ba = border.a * borderAlpha;
-                    float fa = bg.a * fillAlpha;
-
-                    float outA = ba + fa * (1f - ba);
-                    if (outA > 0f) {
-                        float r2 = (border.r * ba + bg.r * fa * (1f - ba)) / outA;
-                        float g2 = (border.g * ba + bg.g * fa * (1f - ba)) / outA;
-                        float bl2= (border.b * ba + bg.b * fa * (1f - ba)) / outA;
-                        pm.setColor(r2, g2, bl2, outA);
-                        pm.drawPixel(x, y);
-                    }
-                }
-            }
-        }
-
-        Texture tex = new Texture(pm);
-        tex.setFilter(TextureFilter.Linear, TextureFilter.Linear);
-        pm.dispose();
-        createdTextures.add(tex);
-
-        NinePatch patch = new NinePatch(tex, r, r, r, r);
-        return new NinePatchDrawable(patch);
-    }
-
 
     private static Drawable flatDrawable(Color color) {
         Pixmap pm = new Pixmap(1, 1, Pixmap.Format.RGBA8888);
@@ -437,43 +403,28 @@ public final class UIFactory {
         return new TextureRegionDrawable(tex);
     }
 
-    private static int screenRelativeSize(float fraction) {
-        return Math.max(12, (int) (580 * fraction));
-    }
-
-    private static BitmapFont generateFont(int size, Color color) {
-        return generateFont(size, color, 0f);
-    }
+    // ── Шрифти ────────────────────────────────────────────────────────────
 
     /**
      * Шрифт, придатний до фарбування.
      *
-     * <p>{@link #generateFont} ЗАПІКАЄ колір у текстуру гліфів, а
-     * {@code style.fontColor} і колір актора домножуються поверх. Через це
-     * звичайний стиль дає колір у квадраті (помітно темніший за заявлений), і —
-     * головне — його вже не можна підсвітити: множення вміє лише темнити.
+     * <p>FreeType ЗАПІКАЄ колір у текстуру гліфів, а {@code style.fontColor} і
+     * колір актора домножуються поверх. Якщо запекти кольоровий, тон вийде у
+     * квадраті — помітно темнішим за заявлений, — і його вже не підсвітити:
+     * множення вміє лише темнити.
      *
-     * <p>Тут запікається білий, тож єдиним джерелом кольору лишається тінт. Для
-     * старих стилів нічого не змінюється — вони й далі йдуть своїм шляхом, бо
-     * підганялись під подвійне множення.
+     * <p>Тут запікається білий, тож єдиним джерелом кольору лишається тінт.
      */
     private static BitmapFont generateTintableFont(int size, float letterSpacing) {
-        return generateFont(size, Color.WHITE, letterSpacing);
-    }
-
-    /**
-     * @param letterSpacing додаткова відстань між літерами в ПІКСЕЛЯХ ЕКРАНА
-     *                      (див. {@link #applyLetterSpacing})
-     */
-    private static BitmapFont generateFont(int size, Color color, float letterSpacing) {
         FreeTypeFontGenerator gen = new FreeTypeFontGenerator(Gdx.files.internal(FONT_PATH));
         FreeTypeFontParameter p   = new FreeTypeFontParameter();
         p.size       = size * 2;
-        p.color      = color;
+        p.color      = Color.WHITE;
         p.characters = FONT_CHARS;
         p.minFilter  = TextureFilter.Linear;
         p.magFilter  = TextureFilter.Linear;
         p.genMipMaps = true;
+
         BitmapFont font = gen.generateFont(p);
         if (letterSpacing != 0f) applyLetterSpacing(font, letterSpacing);
         font.getData().setScale(0.5f);
@@ -491,8 +442,8 @@ public final class UIFactory {
      *
      * <p>Множник 2 — бо шрифт генерується вдвічі більшим і потім стискається
      * {@code setScale(0.5f)}; без нього розрідження вийшло б удвічі меншим за
-     * замовлене. Викликати ОБОВʼЯЗКОВО до {@code setScale}: масштаб уже
-     * застосований до {@code xadvance}, і додавати після нього означало б
+     * замовлене. Викликати ОБОВʼЯЗКОВО до {@code setScale}: масштаб множиться на
+     * {@code xadvance} під час рендеру, і додавати після нього означало б
      * додавати в інших одиницях.
      */
     private static void applyLetterSpacing(BitmapFont font, float pixels) {
@@ -529,34 +480,5 @@ public final class UIFactory {
             "Шрифт " + FONT_PATH + " не має " + missing.length()
             + " потрібних гліфів — вони малюватимуться порожніми квадратами: "
             + missing);
-    }
-
-    public static Slider.SliderStyle createSliderStyle() {
-        Slider.SliderStyle style = new Slider.SliderStyle();
-        // Створюємо текстури для повзунка "на льоту"
-        style.background = flatDrawable(new Color(0.2f, 0.2f, 0.2f, 1f));
-        style.background.setMinHeight(10);
-        style.knob = flatDrawable(COLOR_ACCENT);
-        style.knob.setMinWidth(20);
-        style.knob.setMinHeight(30);
-        return style;
-    }
-
-    public static CheckBox.CheckBoxStyle createCheckBoxStyle() {
-        CheckBox.CheckBoxStyle style = new CheckBox.CheckBoxStyle();
-        style.font = generateFont(20, COLOR_TEXT);
-        style.fontColor = COLOR_TEXT;
-        // Використовуємо прості кольорові квадрати для галочки
-        style.checkboxOff = flatDrawable(COLOR_BUTTON_IDLE);
-        style.checkboxOff.setMinWidth(30);
-        style.checkboxOff.setMinHeight(30);
-        style.checkboxOn = flatDrawable(COLOR_ACCENT);
-        style.checkboxOn.setMinWidth(30);
-        style.checkboxOn.setMinHeight(30);
-        return style;
-    }
-
-    private static float clamp(float v) {
-        return v < 0f ? 0f : (v > 1f ? 1f : v);
     }
 }

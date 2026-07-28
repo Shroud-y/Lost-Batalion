@@ -20,8 +20,9 @@ public final class ScenarioCatalog {
         Array<ScenarioCard> list = new Array<>();
         list.add(new ScenarioCard(
             "zhovti_vody",
-            "Zhovti Vody",
-            "Coming soon...",
+            "Жовті Води",
+            "Балки, переправи й лісосмуги. Хто тримає висоти — бачить далі "
+                + "і б'є сильніше.",
             "scenarios/Zhovty_Vodu.png",
             "scenarios/Zhovty_Vodu_mask.png",        // маска лісу
             "scenarios/Zhovty_Vodu_terrain_mask.png" // маска топографії

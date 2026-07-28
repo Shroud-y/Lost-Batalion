@@ -123,6 +123,12 @@ Two grayscale/colour PNG masks per scenario, sampled by pixel colour
   self-intersection, distributes selected units along it. Toggled from `SelectionPanel`.
 
 ### UI (`ui/`, `screens/ui/`, `screens/effects/`)
+
+> **Вигляд гри описаний у [`DESIGN.md`](DESIGN.md) — читай його перед будь-якою
+> роботою над UI.** Палітра, типографіка, розкладка, тайминги руху й технічні
+> пастки (запечений колір шрифту, розрідження літер, підміна станів кнопки,
+> фільтрація). Еталон — головне меню; решта екранів на нього ще не переведена.
+
 - `UIFactory` — programmatic scene2d styles/drawables (FreeType font `main.ttf`),
   `disposeAll()` lifecycle. `COLOR_ACCENT` is the theme accent.
 - `SelectionPanel` — bottom-left slide-in panel: unit portraits + formation

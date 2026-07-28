@@ -1,9 +1,9 @@
 package io.jababa.lost_batalion.screens.multiplayer;
 
 import com.badlogic.gdx.scenes.scene2d.Actor;
+import com.badlogic.gdx.scenes.scene2d.ui.Button;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
-import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
 import com.badlogic.gdx.scenes.scene2d.ui.TextField;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import io.jababa.lost_batalion.LostBatalion;
@@ -12,14 +12,17 @@ import io.jababa.lost_batalion.net.api.MultiplayerServices;
 import io.jababa.lost_batalion.screens.BaseScreen;
 import io.jababa.lost_batalion.screens.scenario.ScenarioCard;
 import io.jababa.lost_batalion.screens.scenario.ScenarioCatalog;
+import io.jababa.lost_batalion.ui.PlateButton;
+import io.jababa.lost_batalion.ui.ScreenHeader;
 import io.jababa.lost_batalion.ui.UIFactory;
 
 /** Параметри нового лоббі: назва, карта, кількість гравців. */
 public class CreateLobbyScreen extends BaseScreen {
 
-    private static final float LABEL_W = 160f;
-    private static final float FIELD_W = 300f;
-    private static final float ROW_H   = 44f;
+    private static final float PANEL_W = 560f;
+    private static final float LABEL_W = 150f;
+    private static final float FIELD_W = 330f;
+    private static final float ROW_H   = 42f;
 
     private final String nick;
 
@@ -28,9 +31,9 @@ public class CreateLobbyScreen extends BaseScreen {
     private int    maxPlayers = NetConfig.MAX_PLAYERS;
     private String error = "";
 
-    private Label      errorLabel;
-    private Label      scenarioLabel;
-    private TextButton createBtn;
+    private Label  errorLabel;
+    private Label  scenarioLabel;
+    private Button createBtn;
 
     public CreateLobbyScreen(LostBatalion game, String nick) {
         super(game);
@@ -48,52 +51,57 @@ public class CreateLobbyScreen extends BaseScreen {
 
     @Override
     protected void buildUI() {
-        Table root = new Table();
-        root.setFillParent(true);
-        root.top().pad(16f);
-
-        root.add(buildTopBar()).expandX().fillX().padBottom(24f).colspan(2).row();
-
         Table form = new Table();
-        form.add(new Label("Назва лоббі", UIFactory.createBodyStyle())).width(LABEL_W).left();
+        form.setBackground(UIFactory.createPanelBackground());
+        form.pad(22f, 24f, 22f, 24f);
+
+        form.add(caption("Назва лоббі")).width(LABEL_W).left();
         form.add(buildNameField()).width(FIELD_W).height(ROW_H).left().row();
 
-        form.add(new Label("Карта", UIFactory.createBodyStyle()))
-            .width(LABEL_W).left().padTop(12f);
-        form.add(buildScenarioRow()).width(FIELD_W).height(ROW_H).left().padTop(12f).row();
+        form.add(caption("Карта")).width(LABEL_W).left().padTop(14f);
+        form.add(buildScenarioRow()).width(FIELD_W).height(ROW_H).left().padTop(14f).row();
 
-        form.add(new Label("Гравців", UIFactory.createBodyStyle()))
-            .width(LABEL_W).left().padTop(12f);
-        form.add(buildPlayersRow()).width(FIELD_W).left().padTop(12f).row();
-
-        root.add(form).expandX().center().colspan(2).row();
+        form.add(caption("Гравців")).width(LABEL_W).left().padTop(14f);
+        form.add(buildPlayersRow()).width(FIELD_W).left().padTop(14f).row();
 
         errorLabel = new Label(error, UIFactory.createErrorStyle());
-        root.add(errorLabel).expandX().center().padTop(14f).colspan(2).row();
 
-        root.add(buildActions()).expand().bottom().colspan(2);
+        createBtn = PlateButton.action("СТВОРИТИ");
+        createBtn.addListener(new ChangeListener() {
+            @Override public void changed(ChangeEvent e, Actor a) {
+                if (createBtn.isDisabled()) return;
+                game.setScreen(new LobbyScreen(game,
+                    MultiplayerServices.host(lobbyName.trim(), nick, scenarioId, maxPlayers)));
+            }
+        });
+
+        Table root = new Table();
+        root.setFillParent(true);
+        root.top();
+        root.pad(UIFactory.HEADER_TOP, UIFactory.MARGIN,
+                 UIFactory.FOOTER_PAD, UIFactory.MARGIN);
+
+        root.add(new ScreenHeader("СТВОРИТИ ЛОББІ",
+                                  () -> game.setScreen(new MultiplayerScreen(game))))
+            .growX().row();
+        root.add(form).width(PANEL_W).left().padTop(26f).row();
+        root.add(errorLabel).left().padTop(10f).row();
+        // Кнопка внизу, а не одразу під формою: дія, що закриває екран, має
+        // стояти на постійному місці, а форма ще виросте.
+        root.add(createBtn).size(240f, 46f).left().expandY().bottom().row();
 
         stage.addActor(root);
         refreshEnabledState();
     }
 
-    private Table buildTopBar() {
-        TextButton back = new TextButton("< Назад", UIFactory.createSmallButtonStyle());
-        back.addListener(new ChangeListener() {
-            @Override public void changed(ChangeEvent e, Actor a) {
-                game.setScreen(new MultiplayerScreen(game));
-            }
-        });
+    // ── Поля форми ────────────────────────────────────────────────────────
 
-        Table bar = new Table();
-        bar.add(back).width(110f).height(38f).left();
-        bar.add(new Label("СТВОРИТИ ЛОББІ", UIFactory.createScreenTitleStyle())).expandX().center();
-        bar.add().width(110f);
-        return bar;
+    private Label caption(String text) {
+        return new Label(text, UIFactory.createBodyStyle());
     }
 
     private TextField buildNameField() {
-        TextField field = new TextField(lobbyName, UIFactory.createTextFieldStyle());
+        final TextField field = new TextField(lobbyName, UIFactory.createTextFieldStyle());
         field.setMessageText("назва лоббі");
         field.setMaxLength(NetConfig.MAX_LOBBY_NAME_LENGTH);
         field.addListener(new ChangeListener() {
@@ -109,7 +117,9 @@ public class CreateLobbyScreen extends BaseScreen {
         ScenarioCard current = ScenarioCatalog.byId(scenarioId);
         scenarioLabel = new Label(current.title, UIFactory.createAccentStyle());
 
-        TextButton cycle = new TextButton("→", UIFactory.createSmallButtonStyle());
+        // «»", а НЕ "→": стрілок у main.ttf немає, і кнопка малювалась порожнім
+        // квадратом (DESIGN §3).
+        final PlateButton cycle = PlateButton.action("»");
         cycle.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) {
                 ScenarioCard next = ScenarioCatalog.next(scenarioId);
@@ -132,24 +142,9 @@ public class CreateLobbyScreen extends BaseScreen {
     private Table buildPlayersRow() {
         Table row = new Table();
         row.add(new Label(maxPlayers + " (1 на 1)", UIFactory.createBodyStyle())).left();
-        row.add(new Label("  режим на більше гравців ще не підтримується симуляцією",
-                          UIFactory.createHintStyle())).left().expandX();
+        row.add(new Label("режим на більше гравців ще не підтримується симуляцією",
+                          UIFactory.createHintStyle())).left().expandX().padLeft(12f);
         return row;
-    }
-
-    private Table buildActions() {
-        createBtn = new TextButton("Створити", UIFactory.createMenuButtonStyle());
-        createBtn.addListener(new ChangeListener() {
-            @Override public void changed(ChangeEvent e, Actor a) {
-                if (createBtn.isDisabled()) return;
-                game.setScreen(new LobbyScreen(game,
-                    MultiplayerServices.host(lobbyName.trim(), nick, scenarioId, maxPlayers)));
-            }
-        });
-
-        Table actions = new Table();
-        actions.add(createBtn).size(240f, 50f).padBottom(24f);
-        return actions;
     }
 
     private void refreshEnabledState() {

@@ -49,8 +49,22 @@ public class MenuBackdrop extends Actor implements Disposable {
     /** Непрозорість градієнта біля лівого краю. */
     private static final float SCRIM_ALPHA = 0.84f;
 
-    private final Texture map;      // не наш — власник передає ззовні
-    private final boolean mapOwned; // ...крім випадку, коли ми його й завантажили
+    /**
+     * Карта спільна на весь застосунок.
+     *
+     * <p>Тло тепер має КОЖЕН екран меню, а екрани перестворюються на кожному
+     * переході. Читати з диска й розпаковувати 1440×1440 щоразу, коли гравець
+     * зайшов у налаштування й вийшов, — це помітна затримка на порожньому
+     * місці, та ще й повторювана.
+     *
+     * <p>Звільняється один раз при виході з гри
+     * ({@code LostBatalion.dispose()} → {@link #disposeShared()}), а не разом з
+     * екраном: інакше наступний екран одразу читав би її знову.
+     */
+    private static Texture sharedMap;
+    private static String  sharedMapPath;
+
+    private final Texture map;      // спільна, цей об'єкт її НЕ звільняє
     private final Texture wash;
     private final Texture scrim;
     private final Texture vignette;
@@ -62,17 +76,36 @@ public class MenuBackdrop extends Actor implements Disposable {
      *                самими накладками — меню від цього не зламається
      */
     public MenuBackdrop(String mapPath) {
-        Texture loaded = null;
-        if (Gdx.files.internal(mapPath).exists()) {
-            loaded = new Texture(Gdx.files.internal(mapPath));
-            loaded.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
-        }
-        this.map      = loaded;
-        this.mapOwned = loaded != null;
-
+        this.map      = sharedMap(mapPath);
         this.wash     = flat(COLD_WASH);
         this.scrim    = buildScrim();
         this.vignette = buildVignette();
+    }
+
+    private static Texture sharedMap(String path) {
+        if (sharedMap != null && path.equals(sharedMapPath)) return sharedMap;
+
+        // Змінився сценарій — стару карту тримати нема сенсу.
+        if (sharedMap != null) {
+            sharedMap.dispose();
+            sharedMap = null;
+            sharedMapPath = null;
+        }
+        if (!Gdx.files.internal(path).exists()) return null;
+
+        sharedMap = new Texture(Gdx.files.internal(path));
+        sharedMap.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
+        sharedMapPath = path;
+        return sharedMap;
+    }
+
+    /** Звільнити спільну карту. Викликати один раз, при завершенні гри. */
+    public static void disposeShared() {
+        if (sharedMap != null) {
+            sharedMap.dispose();
+            sharedMap = null;
+            sharedMapPath = null;
+        }
     }
 
     @Override
@@ -193,9 +226,9 @@ public class MenuBackdrop extends Actor implements Disposable {
         return tex;
     }
 
+    /** Карту не чіпає — вона спільна, див. {@link #disposeShared()}. */
     @Override
     public void dispose() {
-        if (mapOwned && map != null) map.dispose();
         wash.dispose();
         scrim.dispose();
         vignette.dispose();

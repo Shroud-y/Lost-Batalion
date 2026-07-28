@@ -1,13 +1,13 @@
 package io.jababa.lost_batalion.screens.game;
 
-import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.Stage;
+import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
-import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import io.jababa.lost_batalion.sim.MatchRunner;
+import io.jababa.lost_batalion.ui.PlateButton;
 import io.jababa.lost_batalion.ui.UIFactory;
 
 /**
@@ -32,19 +32,19 @@ public class DesyncOverlay {
 
     private final Label statusLabel;
     private final Label detailLabel;
-    private final TextButton resyncBtn;
+    private final PlateButton resyncBtn;
     private final Table root;
 
     public DesyncOverlay(Stage stage, MatchRunner runner, Listener listener) {
         Table backdrop = new Table();
         backdrop.setFillParent(true);
-        backdrop.setBackground(UIFactory.createColorDrawable(new Color(0f, 0f, 0f, 0.72f)));
+        backdrop.setBackground(UIFactory.createModalScrim());
 
         Table panel = new Table();
-        panel.setBackground(UIFactory.createColorDrawable(new Color(0.16f, 0.08f, 0.08f, 0.97f)));
-        panel.pad(34f);
+        panel.setBackground(UIFactory.createPanelBackground());
+        panel.pad(28f, 32f, 28f, 32f);
 
-        Label title = new Label("Розсинхронізація", UIFactory.createScreenTitleStyle());
+        Label title = new Label("РОЗСИНХРОНІЗАЦІЯ", UIFactory.createScreenTitleStyle());
 
         detailLabel = new Label("", UIFactory.createHintStyle());
         detailLabel.setWrap(true);
@@ -54,24 +54,26 @@ public class DesyncOverlay {
         statusLabel.setWrap(true);
         statusLabel.setAlignment(com.badlogic.gdx.utils.Align.center);
 
-        resyncBtn = new TextButton("Синхронізувати", UIFactory.createMenuButtonStyle());
+        resyncBtn = PlateButton.action("СИНХРОНІЗУВАТИ");
         resyncBtn.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) {
                 if (!resyncBtn.isDisabled()) listener.onResync();
             }
         });
 
-        TextButton leaveBtn = new TextButton("Вийти в меню", UIFactory.createSmallButtonStyle());
+        PlateButton leaveBtn = PlateButton.action("ВИЙТИ В МЕНЮ");
         leaveBtn.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) { listener.onLeave(); }
         });
 
         float w = 560f;
-        panel.add(title).padBottom(18f).row();
+        panel.add(title).left().row();
+        panel.add(new Image(UIFactory.createRuleDrawable()))
+             .height(1f).growX().padTop(12f).padBottom(20f).row();
         panel.add(statusLabel).width(w).padBottom(10f).row();
         panel.add(detailLabel).width(w).padBottom(24f).row();
-        if (runner.isHost()) panel.add(resyncBtn).size(300f, 54f).padBottom(12f).row();
-        panel.add(leaveBtn).size(220f, 44f).row();
+        if (runner.isHost()) panel.add(resyncBtn).size(280f, 46f).padBottom(10f).row();
+        panel.add(leaveBtn).size(220f, 42f).row();
 
         backdrop.add(panel);
         root = backdrop;

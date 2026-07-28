@@ -1,9 +1,10 @@
 package io.jababa.lost_batalion.screens.multiplayer;
 
 import com.badlogic.gdx.scenes.scene2d.Actor;
+import com.badlogic.gdx.scenes.scene2d.ui.Button;
+import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
-import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import io.jababa.lost_batalion.LostBatalion;
 import io.jababa.lost_batalion.net.NetConfig;
@@ -15,6 +16,8 @@ import io.jababa.lost_batalion.net.messages.StartMatch;
 import io.jababa.lost_batalion.screens.BaseScreen;
 import io.jababa.lost_batalion.screens.game.GameScreen;
 import io.jababa.lost_batalion.screens.scenario.ScenarioCatalog;
+import io.jababa.lost_batalion.ui.PlateButton;
+import io.jababa.lost_batalion.ui.ScreenHeader;
 import io.jababa.lost_batalion.ui.UIFactory;
 
 /**
@@ -38,10 +41,10 @@ public class LobbyScreen extends BaseScreen {
     /** Після розриву кнопки не мають сенсу — лишається тільки вихід. */
     private boolean sessionDead;
 
-    private Table      playerListTable;
-    private Label      statusLabel;
-    private Label      mapLabel;
-    private TextButton actionBtn;
+    private Table  playerListTable;
+    private Label  statusLabel;
+    private Label  mapLabel;
+    private PlateButton actionBtn;
 
     private Label.LabelStyle hintStyle;
     private Label.LabelStyle errorStyle;
@@ -86,23 +89,36 @@ public class LobbyScreen extends BaseScreen {
         bodyStyle   = UIFactory.createBodyStyle();
         accentStyle = UIFactory.createAccentStyle();
 
-        Table root = new Table();
-        root.setFillParent(true);
-        root.top().pad(16f);
-
-        root.add(buildTopBar()).expandX().fillX().padBottom(10f).row();
-        root.add(buildInfoRow()).expandX().fillX().padBottom(12f).row();
-
-        root.add(new Label("Гравці", bodyStyle)).left().padLeft(6f).padBottom(4f).row();
-
         playerListTable = new Table();
         playerListTable.top();
-        root.add(playerListTable).expandX().fillX().top().padBottom(10f).row();
+
+        Table panel = new Table();
+        panel.setBackground(UIFactory.createPanelBackground());
+        panel.pad(16f, 18f, 16f, 18f);
+        panel.top();
+        panel.add(new Label("ГРАВЦІ", UIFactory.createAccentStyle())).left().row();
+        panel.add(new Image(UIFactory.createRuleDrawable()))
+             .height(1f).growX().padTop(12f).padBottom(10f).row();
+        panel.add(playerListTable).growX().top().row();
 
         statusLabel = new Label(status, statusIsError ? errorStyle : hintStyle);
-        root.add(statusLabel).expandX().center().padBottom(8f).row();
 
-        root.add(buildActions()).expand().bottom();
+        Table root = new Table();
+        root.setFillParent(true);
+        root.top();
+        root.pad(UIFactory.HEADER_TOP, UIFactory.MARGIN,
+                 UIFactory.FOOTER_PAD, UIFactory.MARGIN);
+
+        String title = state != null && state.lobbyName != null ? state.lobbyName : "ЛОББІ";
+        root.add(new ScreenHeader(title, () -> {
+            session.leave();
+            game.setScreen(new MultiplayerScreen(game));
+        })).growX().row();
+
+        root.add(buildInfoRow()).growX().padTop(16f).row();
+        root.add(panel).growX().padTop(14f).row();
+        root.add(statusLabel).left().padTop(12f).row();
+        root.add(buildActions()).left().expandY().bottom().row();
 
         stage.addActor(root);
 
@@ -112,40 +128,22 @@ public class LobbyScreen extends BaseScreen {
 
     // ── Секції ────────────────────────────────────────────────────────────
 
-    private Table buildTopBar() {
-        TextButton leave = new TextButton("< Вийти", UIFactory.createSmallButtonStyle());
-        leave.addListener(new ChangeListener() {
-            @Override public void changed(ChangeEvent e, Actor a) {
-                session.leave();
-                game.setScreen(new MultiplayerScreen(game));
-            }
-        });
-
-        String title = state != null && state.lobbyName != null ? state.lobbyName : "ЛОББІ";
-
-        Table bar = new Table();
-        bar.add(leave).width(110f).height(38f).left();
-        bar.add(new Label(title, UIFactory.createScreenTitleStyle())).expandX().center();
-        bar.add().width(110f);
-        return bar;
-    }
-
     private Table buildInfoRow() {
         String scenarioId = state != null ? state.scenarioId : null;
-        mapLabel = new Label("Карта: " + ScenarioCatalog.byId(scenarioId).title, hintStyle);
+        mapLabel = new Label("КАРТА: " + ScenarioCatalog.byId(scenarioId).title, hintStyle);
 
-        String role = session.isHost() ? "ти хост" : "ти гість";
+        String role = session.isHost() ? "ТИ ХОСТ" : "ТИ ГІСТЬ";
 
         Table row = new Table();
-        row.add(mapLabel).left().padLeft(6f);
-        row.add(new Label("   •   " + role, hintStyle)).left();
+        row.add(mapLabel).left();
+        row.add(new Label("·", hintStyle)).left().padLeft(12f).padRight(12f);
+        row.add(new Label(role, hintStyle)).left();
         row.add().expandX();
         return row;
     }
 
     private Table buildActions() {
-        actionBtn = new TextButton(session.isHost() ? "Старт" : "Готовий",
-                                   UIFactory.createMenuButtonStyle());
+        actionBtn = PlateButton.action(session.isHost() ? "СТАРТ" : "ГОТОВИЙ");
         actionBtn.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) {
                 if (actionBtn.isDisabled()) return;
@@ -160,7 +158,7 @@ public class LobbyScreen extends BaseScreen {
         });
 
         Table actions = new Table();
-        actions.add(actionBtn).size(240f, 50f).padBottom(24f);
+        actions.add(actionBtn).size(240f, 46f);
         return actions;
     }
 
@@ -177,7 +175,7 @@ public class LobbyScreen extends BaseScreen {
 
         for (int i = 0; i < state.slots.size(); i++) {
             playerListTable.add(buildPlayerRow(state.slots.get(i)))
-                .expandX().fillX().height(ROW_H).padBottom(6f).row();
+                .growX().height(ROW_H).padBottom(6f).row();
         }
 
         int free = state.maxPlayers - state.slots.size();
@@ -185,7 +183,7 @@ public class LobbyScreen extends BaseScreen {
             Table empty = new Table();
             empty.setBackground(UIFactory.createRowBackground(false));
             empty.add(new Label("вільний слот", hintStyle)).left().padLeft(12f).expandX();
-            playerListTable.add(empty).expandX().fillX().height(ROW_H).padBottom(6f).row();
+            playerListTable.add(empty).growX().height(ROW_H).padBottom(6f).row();
         }
     }
 
@@ -215,7 +213,7 @@ public class LobbyScreen extends BaseScreen {
 
     private void refreshControls() {
         if (mapLabel != null && state != null) {
-            mapLabel.setText("Карта: " + ScenarioCatalog.byId(state.scenarioId).title);
+            mapLabel.setText("КАРТА: " + ScenarioCatalog.byId(state.scenarioId).title);
         }
         if (actionBtn == null) return;
 
@@ -227,7 +225,7 @@ public class LobbyScreen extends BaseScreen {
             enabled = state != null && state.allReady();
         } else {
             enabled = session.isConnected();
-            actionBtn.setText(localReady ? "Не готовий" : "Готовий");
+            actionBtn.setText(localReady ? "НЕ ГОТОВИЙ" : "ГОТОВИЙ");
         }
 
         actionBtn.setDisabled(!enabled);

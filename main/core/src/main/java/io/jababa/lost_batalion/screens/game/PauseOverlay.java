@@ -1,14 +1,22 @@
 package io.jababa.lost_batalion.screens.game;
 
-import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.Stage;
+import com.badlogic.gdx.scenes.scene2d.ui.Button;
+import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
-import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
+import io.jababa.lost_batalion.ui.PlateButton;
 import io.jababa.lost_batalion.ui.UIFactory;
 
+/**
+ * Пауза.
+ *
+ * <p>Панель тут центрована — на відміну від меню (DESIGN §4). Причина: під нею
+ * не декоративна карта, а власний бій, і зсув панелі вбік означав би, що вона
+ * закриває чийсь фланг. По центру вона однаково закриває обидва.
+ */
 public class PauseOverlay {
 
     public interface PauseListener {
@@ -18,6 +26,10 @@ public class PauseOverlay {
         void onExit();
     }
 
+    private static final float PLATE_WIDTH  = 320f;
+    private static final float PLATE_HEIGHT = 48f;
+    private static final float PLATE_GAP    = 8f;
+
     private final Stage stage;
 
     public PauseOverlay(Stage stage, PauseListener listener) {
@@ -25,48 +37,44 @@ public class PauseOverlay {
         build(listener);
     }
 
-    private void build(PauseListener listener) {
-        Table backdrop = new Table();
-        backdrop.setFillParent(true);
-        backdrop.setBackground(UIFactory.createColorDrawable(new Color(0f, 0f, 0f, 0.65f)));
+    private void build(final PauseListener listener) {
+        Table scrim = new Table();
+        scrim.setFillParent(true);
+        scrim.setBackground(UIFactory.createModalScrim());
 
-        Table menu = new Table();
-        menu.setBackground(UIFactory.createColorDrawable(new Color(0.10f, 0.10f, 0.16f, 0.97f)));
-        menu.pad(36f);
+        // Один стиль на всі плитки — інакше кожна тягла б власний комплект
+        // текстур (див. MainMenuScreen).
+        Button.ButtonStyle plateStyle = UIFactory.createMenuPlateStyle();
 
-        Label title = new Label("Paused", UIFactory.createScreenTitleStyle());
+        Table panel = new Table();
+        panel.setBackground(UIFactory.createPanelBackground());
+        panel.pad(28f, 30f, 28f, 30f);
 
-        TextButton btnResume = btn("Resume");
-        TextButton btnLobby = btn("Return to Lobby");
-        TextButton btnSettings = btn("Settings");
-        TextButton btnExit = btn("Exit Game");
+        Label title = new Label("ПАУЗА", UIFactory.createScreenTitleStyle());
 
-        btnResume.addListener(new ChangeListener() {
-            @Override public void changed(ChangeEvent e, Actor a) { listener.onResume(); }
-        });
-        btnLobby.addListener(new ChangeListener() {
-            @Override public void changed(ChangeEvent e, Actor a) { listener.onReturnToLobby(); }
-        });
-        btnSettings.addListener(new ChangeListener() {
-            @Override public void changed(ChangeEvent e, Actor a) { listener.onSettings(); }
-        });
-        btnExit.addListener(new ChangeListener() {
-            @Override public void changed(ChangeEvent e, Actor a) { listener.onExit(); }
-        });
+        panel.add(title).left().row();
+        panel.add(new Image(UIFactory.createRuleDrawable()))
+             .height(1f).growX().padTop(12f).padBottom(22f).row();
 
-        float bw = 320f, bh = 58f, sp = 14f;
-        menu.add(title).padBottom(28f).row();
-        menu.add(btnResume)  .size(bw, bh).padBottom(sp).row();
-        menu.add(btnLobby)   .size(bw, bh).padBottom(sp).row();
-        menu.add(btnSettings).size(bw, bh).padBottom(sp).row();
-        menu.add(btnExit)    .size(bw, bh).row();
+        panel.add(plate(plateStyle, "ПРОДОВЖИТИ", listener::onResume))
+             .size(PLATE_WIDTH, PLATE_HEIGHT).padBottom(PLATE_GAP).row();
+        panel.add(plate(plateStyle, "НАЛАШТУВАННЯ", listener::onSettings))
+             .size(PLATE_WIDTH, PLATE_HEIGHT).padBottom(PLATE_GAP).row();
+        panel.add(plate(plateStyle, "ВИЙТИ В ЛОББІ", listener::onReturnToLobby))
+             .size(PLATE_WIDTH, PLATE_HEIGHT).padBottom(PLATE_GAP).row();
+        panel.add(plate(plateStyle, "ВИЙТИ З ГРИ", listener::onExit))
+             .size(PLATE_WIDTH, PLATE_HEIGHT).row();
 
-        backdrop.add(menu);
-        stage.addActor(backdrop);
+        scrim.add(panel);
+        stage.addActor(scrim);
     }
 
-    private TextButton btn(String text) {
-        return new TextButton(text, UIFactory.createSmallButtonStyle());
+    private Button plate(Button.ButtonStyle style, String title, final Runnable action) {
+        PlateButton button = PlateButton.plate(style, title);
+        button.addListener(new ChangeListener() {
+            @Override public void changed(ChangeEvent e, Actor a) { action.run(); }
+        });
+        return button;
     }
 
     public Stage getStage() { return stage; }

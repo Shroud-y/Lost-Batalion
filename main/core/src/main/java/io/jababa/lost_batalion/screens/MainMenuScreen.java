@@ -1,21 +1,18 @@
 package io.jababa.lost_batalion.screens;
 
 import com.badlogic.gdx.Gdx;
-import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.scenes.scene2d.Actor;
-import com.badlogic.gdx.scenes.scene2d.actions.Actions;
 import com.badlogic.gdx.scenes.scene2d.ui.Button;
 import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import io.jababa.lost_batalion.LostBatalion;
-import io.jababa.lost_batalion.screens.menu.MenuBackdrop;
-import io.jababa.lost_batalion.screens.menu.MenuPlate;
+import io.jababa.lost_batalion.ui.PlateButton;
 import io.jababa.lost_batalion.ui.UIFactory;
 
 /**
- * Головне меню.
+ * Головне меню — еталон, з якого знята решта інтерфейсу (DESIGN.md).
  *
  * <p>Колонка стоїть ліворуч, а не по центру: карта на тлі — половина того, що
  * меню повідомляє про гру, і центрований стовпчик кнопок затуляв би її саме
@@ -23,24 +20,13 @@ import io.jababa.lost_batalion.ui.UIFactory;
  */
 public class MainMenuScreen extends BaseScreen {
 
-    private static final String MAP_PATH = "scenarios/Zhovty_Vodu.png";
-
     private static final float COLUMN_X     = 72f;
     private static final float PLATE_WIDTH  = 330f;
     private static final float PLATE_HEIGHT = 50f;
     private static final float PLATE_GAP    = 10f;
 
+    /** Поява довша за решту екранів: це перше, що бачить гравець. */
     private static final float FADE_IN = 0.55f;
-
-    /** Колір назви пункту під курсором. */
-    private static final Color ITEM_HOVER = new Color(0.96f, 0.93f, 0.84f, 1f);
-
-    /**
-     * Тло живе довше за сцену: {@code BaseScreen} перебудовує сцену на кожній
-     * зміні розміру вікна, і перечитувати з диска карту 1440×1440 щоразу, коли
-     * користувач тягне край вікна, — це помітні ривки на рівному місці.
-     */
-    private MenuBackdrop backdrop;
 
     /**
      * Один стиль на всі плитки. Кожен виклик фабрики створює три нові текстури,
@@ -54,10 +40,13 @@ public class MainMenuScreen extends BaseScreen {
     }
 
     @Override
+    protected float fadeInDuration() {
+        return FADE_IN;
+    }
+
+    @Override
     protected void buildUI() {
-        if (backdrop == null) backdrop = new MenuBackdrop(MAP_PATH);
         plateStyle = UIFactory.createMenuPlateStyle();
-        stage.addActor(backdrop);   // розмір тло тримає саме, див. MenuBackdrop.act
 
         Table root = new Table();
         root.setFillParent(true);
@@ -85,11 +74,6 @@ public class MainMenuScreen extends BaseScreen {
         stage.addActor(root);
 
         stage.addActor(buildFooter());
-
-        // Поява: різкий показ готового меню виглядає як смикання, надто коли
-        // тло вже почало рухатись.
-        stage.getRoot().getColor().a = 0f;
-        stage.getRoot().addAction(Actions.fadeIn(FADE_IN));
     }
 
     // ── Складові ──────────────────────────────────────────────────────────
@@ -102,10 +86,11 @@ public class MainMenuScreen extends BaseScreen {
         words.add(lost).left().row();
         words.add(batalt).left().padTop(-6f).row();   // рядки заголовка стоять щільно
         // Лінійка тягнеться по найширшому рядку — це «BATTALION».
-        words.add(rule()).left().height(1f).fillX().padTop(14f).row();
+        words.add(new Image(UIFactory.createRuleDrawable()))
+             .left().height(1f).fillX().padTop(14f).row();
 
-        // Вертикальна засічка ліворуч — те саме, чим у меню позначений вибраний
-        // пункт. Заголовок і список так читаються як одна колонка.
+        // Вертикальна засічка ліворуч — те саме, чим у меню позначений пункт
+        // під курсором. Заголовок і список так читаються як одна колонка.
         Image mark = new Image(UIFactory.createColorDrawable(UIFactory.COLOR_ACCENT));
 
         Table block = new Table();
@@ -114,20 +99,12 @@ public class MainMenuScreen extends BaseScreen {
         return block;
     }
 
-    private Image rule() {
-        return new Image(UIFactory.createColorDrawable(UIFactory.COLOR_MENU_RULE));
-    }
-
     /**
-     * Плитка меню. Підсвітка живе в {@link MenuPlate} — вона плавна, тому мусить
-     * тримати власний стан і не може бути звичайним {@code Button}.
-     *
-     * @param action що зробити по натисканню
+     * Плитка меню. Підсвітка живе в {@link PlateButton} — вона плавна, тому
+     * мусить тримати власний стан і не може бути звичайним {@code Button}.
      */
-    private Button plate(String title, Runnable action) {
-        MenuPlate button = new MenuPlate(plateStyle, title,
-                                         UIFactory.createMenuItemStyle(),
-                                         UIFactory.menuItemRestColor(), ITEM_HOVER);
+    private Button plate(String title, final Runnable action) {
+        PlateButton button = PlateButton.plate(plateStyle, title);
         button.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent event, Actor actor) { action.run(); }
         });
@@ -139,20 +116,11 @@ public class MainMenuScreen extends BaseScreen {
         footer.setFillParent(true);
         footer.bottom();
 
-        footer.add(new Label("v" + LostBatalion.VERSION, UIFactory.createMenuNoteStyle()))
+        footer.add(new Label("v" + LostBatalion.VERSION, UIFactory.createHintStyle()))
               .left().expandX().padLeft(COLUMN_X);
-        footer.add(new Label("Жовті Води, 1648", UIFactory.createMenuNoteStyle()))
+        footer.add(new Label("Жовті Води, 1648", UIFactory.createHintStyle()))
               .right().padRight(COLUMN_X);
         footer.padBottom(28f);
         return footer;
-    }
-
-    @Override
-    public void dispose() {
-        super.dispose();
-        if (backdrop != null) {
-            backdrop.dispose();
-            backdrop = null;
-        }
     }
 }

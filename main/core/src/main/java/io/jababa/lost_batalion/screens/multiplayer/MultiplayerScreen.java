@@ -1,10 +1,11 @@
 package io.jababa.lost_batalion.screens.multiplayer;
 
 import com.badlogic.gdx.scenes.scene2d.Actor;
+import com.badlogic.gdx.scenes.scene2d.ui.Button;
+import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.ScrollPane;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
-import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
 import com.badlogic.gdx.scenes.scene2d.ui.TextField;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import io.jababa.lost_batalion.LostBatalion;
@@ -15,6 +16,8 @@ import io.jababa.lost_batalion.net.api.LobbySession;
 import io.jababa.lost_batalion.net.api.MultiplayerServices;
 import io.jababa.lost_batalion.screens.BaseScreen;
 import io.jababa.lost_batalion.screens.MainMenuScreen;
+import io.jababa.lost_batalion.ui.PlateButton;
+import io.jababa.lost_batalion.ui.ScreenHeader;
 import io.jababa.lost_batalion.ui.UIFactory;
 
 import java.util.List;
@@ -33,10 +36,11 @@ import java.util.List;
  */
 public class MultiplayerScreen extends BaseScreen {
 
-    private static final float FIELD_WIDTH  = 320f;
-    private static final float BUTTON_W     = 220f;
-    private static final float BUTTON_H     = 44f;
-    private static final float ROW_H        = 46f;
+    private static final float FIELD_WIDTH = 300f;
+    private static final float FIELD_H     = 40f;
+    private static final float ACTION_W    = 210f;
+    private static final float ACTION_H    = 42f;
+    private static final float ROW_H       = 46f;
 
     private final LobbyDirectory directory = MultiplayerServices.createDirectory();
 
@@ -47,19 +51,23 @@ public class MultiplayerScreen extends BaseScreen {
     private boolean messageIsError;
 
     // Віджети поточної сцени
-    private Table      lobbyListTable;
-    private TextButton createBtn;
-    private TextButton directJoinBtn;
-    private Label      messageLabel;
-    private Label      scanLabel;
+    private Table  lobbyListTable;
+    private Button createBtn;
+    private Button directJoinBtn;
+    private Label  messageLabel;
+    private Label  scanLabel;
 
     /**
      * Стилі створюються раз на побудову сцени і перевикористовуються.
      * UIFactory на кожен виклик генерує новий FreeType-шрифт із текстурою —
-     * робити це на кожне натискання клавіші в полі ніка не можна.
+     * робити це на кожне натискання клавіші в полі ніка не можна. З тієї ж
+     * причини стиль кнопок рядків спільний: список перебудовується щоразу, коли
+     * в мережі змінився склад лоббі.
      */
     private Label.LabelStyle hintStyle;
     private Label.LabelStyle errorStyle;
+    private Label.LabelStyle bodyStyle;
+    private Button.ButtonStyle actionStyle;
 
     /** Підпис поточного списку — щоб не перебудовувати рядки щокадру. */
     private String renderedListSignature = "";
@@ -90,30 +98,28 @@ public class MultiplayerScreen extends BaseScreen {
     @Override
     protected void buildUI() {
         renderedListSignature = "";
-        hintStyle  = UIFactory.createHintStyle();
-        errorStyle = UIFactory.createErrorStyle();
+        hintStyle   = UIFactory.createHintStyle();
+        errorStyle  = UIFactory.createErrorStyle();
+        bodyStyle   = UIFactory.createBodyStyle();
+        actionStyle = UIFactory.createActionStyle();
 
         Table root = new Table();
         root.setFillParent(true);
-        root.top().pad(12f);
+        root.top();
+        root.pad(UIFactory.HEADER_TOP, UIFactory.MARGIN,
+                 UIFactory.FOOTER_PAD, UIFactory.MARGIN);
 
-        root.add(buildTopBar()).expandX().fillX().padBottom(6f).row();
-        root.add(buildNickRow()).expandX().fillX().padBottom(4f).row();
+        root.add(new ScreenHeader("МУЛЬТИПЛЕЄР",
+                                  () -> game.setScreen(new MainMenuScreen(game))))
+            .growX().row();
+
+        root.add(buildNickRow()).growX().padTop(22f).row();
 
         messageLabel = new Label(message, messageIsError ? errorStyle : hintStyle);
-        root.add(messageLabel).expandX().left().padLeft(6f).padBottom(8f).row();
+        root.add(messageLabel).left().padTop(8f).row();
 
-        root.add(buildLobbyListHeader()).expandX().fillX().padBottom(4f).row();
-
-        lobbyListTable = new Table();
-        lobbyListTable.top();
-        ScrollPane scroll = new ScrollPane(lobbyListTable);
-        scroll.setScrollingDisabled(true, false);
-        scroll.setFadeScrollBars(false);
-        scroll.setOverscroll(false, false);
-        root.add(scroll).expand().fill().padBottom(8f).row();
-
-        root.add(buildBottomBar()).expandX().fillX();
+        root.add(buildLobbyPanel()).grow().padTop(14f).row();
+        root.add(buildBottomBar()).growX().padTop(14f).row();
 
         stage.addActor(root);
 
@@ -123,25 +129,8 @@ public class MultiplayerScreen extends BaseScreen {
 
     // ── Секції ────────────────────────────────────────────────────────────
 
-    private Table buildTopBar() {
-        TextButton back = new TextButton("< Назад", UIFactory.createSmallButtonStyle());
-        back.addListener(new ChangeListener() {
-            @Override public void changed(ChangeEvent e, Actor a) {
-                game.setScreen(new MainMenuScreen(game));
-            }
-        });
-
-        Label title = new Label("МУЛЬТИПЛЕЄР", UIFactory.createScreenTitleStyle());
-
-        Table bar = new Table();
-        bar.add(back).width(110f).height(38f).left();
-        bar.add(title).expandX().center();
-        bar.add().width(110f);
-        return bar;
-    }
-
     private Table buildNickRow() {
-        TextField nickField = new TextField(nick, UIFactory.createTextFieldStyle());
+        final TextField nickField = new TextField(nick, UIFactory.createTextFieldStyle());
         nickField.setMessageText("введи нік");
         nickField.setMaxLength(NetConfig.MAX_NICK_LENGTH);
         nickField.addListener(new ChangeListener() {
@@ -153,14 +142,15 @@ public class MultiplayerScreen extends BaseScreen {
         });
 
         Table row = new Table();
-        row.add(new Label("Нік:", UIFactory.createBodyStyle())).padRight(10f);
-        row.add(nickField).width(FIELD_WIDTH).height(BUTTON_H).left();
+        row.add(new Label("НІК", UIFactory.createHintStyle())).padRight(14f);
+        row.add(nickField).width(FIELD_WIDTH).height(FIELD_H).left();
         row.add().expandX();
         return row;
     }
 
-    private Table buildLobbyListHeader() {
-        TextButton refresh = new TextButton("Оновити", UIFactory.createSmallButtonStyle());
+    /** Список лоббі в панелі: заголовок, лінійка, прокрутка. */
+    private Table buildLobbyPanel() {
+        PlateButton refresh = PlateButton.action(actionStyle, "ОНОВИТИ");
         refresh.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) {
                 directory.refresh();
@@ -168,18 +158,34 @@ public class MultiplayerScreen extends BaseScreen {
             }
         });
 
-        scanLabel = new Label("", UIFactory.createHintStyle());
+        scanLabel = new Label("", hintStyle);
 
         Table header = new Table();
-        header.add(new Label("Доступні лоббі", UIFactory.createBodyStyle())).left().padLeft(6f);
-        header.add(scanLabel).left().padLeft(12f);
+        header.add(new Label("ДОСТУПНІ ЛОББІ", UIFactory.createAccentStyle())).left();
+        header.add(scanLabel).left().padLeft(14f);
         header.add().expandX();
-        header.add(refresh).width(130f).height(36f).right();
-        return header;
+        header.add(refresh).width(130f).height(34f).right();
+
+        lobbyListTable = new Table();
+        lobbyListTable.top();
+
+        ScrollPane scroll = new ScrollPane(lobbyListTable);
+        scroll.setScrollingDisabled(true, false);
+        scroll.setFadeScrollBars(false);
+        scroll.setOverscroll(false, false);
+
+        Table panel = new Table();
+        panel.setBackground(UIFactory.createPanelBackground());
+        panel.pad(16f, 18f, 16f, 18f);
+        panel.add(header).growX().row();
+        panel.add(new Image(UIFactory.createRuleDrawable()))
+             .height(1f).growX().padTop(12f).padBottom(10f).row();
+        panel.add(scroll).grow().row();
+        return panel;
     }
 
     private Table buildBottomBar() {
-        TextField addressField = new TextField(directAddress, UIFactory.createTextFieldStyle());
+        final TextField addressField = new TextField(directAddress, UIFactory.createTextFieldStyle());
         addressField.setMessageText("192.168.0.5");
         addressField.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) {
@@ -188,7 +194,7 @@ public class MultiplayerScreen extends BaseScreen {
             }
         });
 
-        directJoinBtn = new TextButton("Підключитись", UIFactory.createSmallButtonStyle());
+        directJoinBtn = PlateButton.action(actionStyle, "ПІДКЛЮЧИТИСЬ");
         directJoinBtn.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) {
                 if (directJoinBtn.isDisabled()) return;
@@ -196,7 +202,7 @@ public class MultiplayerScreen extends BaseScreen {
             }
         });
 
-        createBtn = new TextButton("Створити лоббі", UIFactory.createMenuButtonStyle());
+        createBtn = PlateButton.action("СТВОРИТИ ЛОББІ");
         createBtn.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) {
                 if (createBtn.isDisabled()) return;
@@ -205,14 +211,14 @@ public class MultiplayerScreen extends BaseScreen {
         });
 
         Table direct = new Table();
-        direct.add(new Label("Пряме підключення:", UIFactory.createHintStyle())).padRight(8f);
-        direct.add(addressField).width(200f).height(38f);
-        direct.add(directJoinBtn).width(150f).height(38f).padLeft(8f);
+        direct.add(new Label("ПРЯМЕ ПІДКЛЮЧЕННЯ", hintStyle)).padRight(12f);
+        direct.add(addressField).width(190f).height(38f);
+        direct.add(directJoinBtn).width(160f).height(38f).padLeft(8f);
 
         Table bar = new Table();
         bar.add(direct).left();
         bar.add().expandX();
-        bar.add(createBtn).size(BUTTON_W, BUTTON_H).right();
+        bar.add(createBtn).size(ACTION_W, ACTION_H).right();
         return bar;
     }
 
@@ -262,35 +268,34 @@ public class MultiplayerScreen extends BaseScreen {
             String hint = MultiplayerServices.isNetworkingAvailable()
                 ? "Лоббі не знайдено. Хост має бути в тій самій локальній мережі —\nінакше підключайся напряму за IP."
                 : "Мережевий шар ще не підключено (етап 3).\nСтворити лоббі можна вже зараз — воно відкриється локально.";
-            Label empty = new Label(hint, UIFactory.createHintStyle());
+            Label empty = new Label(hint, hintStyle);
             empty.setAlignment(com.badlogic.gdx.utils.Align.center);
-            lobbyListTable.add(empty).expandX().center().padTop(24f).row();
+            lobbyListTable.add(empty).expandX().center().padTop(28f).row();
             return;
         }
 
         for (int i = 0; i < lobbies.size(); i++) {
             lobbyListTable.add(buildLobbyRow(lobbies.get(i)))
-                .expandX().fillX().height(ROW_H).padBottom(6f).row();
+                .growX().height(ROW_H).padBottom(6f).row();
         }
     }
 
     private Table buildLobbyRow(final DiscoveredLobby lobby) {
         String reason = lobby.unjoinableReason(NetConfig.PROTOCOL_VERSION);
-        boolean joinable = reason == null;
+        final boolean joinable = reason == null;
 
         Table row = new Table();
         row.setBackground(UIFactory.createRowBackground(false));
-        row.pad(4f, 10f, 4f, 10f);
+        row.pad(4f, 12f, 4f, 10f);
 
-        row.add(new Label(lobby.info.lobbyName, UIFactory.createBodyStyle())).left().width(200f);
-        row.add(new Label(lobby.info.hostNick, UIFactory.createHintStyle())).left().width(140f);
-        row.add(new Label(lobby.info.playerCount + "/" + lobby.info.maxPlayers,
-                          UIFactory.createBodyStyle())).center().width(60f);
-        row.add(new Label(joinable ? lobby.address : reason,
-                          joinable ? UIFactory.createHintStyle() : UIFactory.createErrorStyle()))
+        row.add(new Label(lobby.info.lobbyName, bodyStyle)).left().width(200f);
+        row.add(new Label(lobby.info.hostNick, hintStyle)).left().width(140f);
+        row.add(new Label(lobby.info.playerCount + "/" + lobby.info.maxPlayers, bodyStyle))
+           .center().width(60f);
+        row.add(new Label(joinable ? lobby.address : reason, joinable ? hintStyle : errorStyle))
            .left().expandX();
 
-        TextButton join = new TextButton("Приєднатись", UIFactory.createSmallButtonStyle());
+        final PlateButton join = PlateButton.action(actionStyle, "ПРИЄДНАТИСЬ");
         join.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) {
                 if (join.isDisabled()) return;
@@ -298,7 +303,7 @@ public class MultiplayerScreen extends BaseScreen {
             }
         });
         setDisabled(join, !joinable || !hasValidNick());
-        row.add(join).width(140f).height(34f).right();
+        row.add(join).width(150f).height(34f).right();
 
         return row;
     }
@@ -336,7 +341,7 @@ public class MultiplayerScreen extends BaseScreen {
     }
 
     /** Вимкнена кнопка ще й блідне — сам по собі setDisabled нічого не малює інакше. */
-    private static void setDisabled(TextButton button, boolean disabled) {
+    private static void setDisabled(Button button, boolean disabled) {
         if (button == null) return;
         button.setDisabled(disabled);
         button.getColor().a = disabled ? 0.45f : 1f;

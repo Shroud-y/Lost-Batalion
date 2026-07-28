@@ -14,7 +14,6 @@ import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
-import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
@@ -44,6 +43,7 @@ import io.jababa.lost_batalion.sim.MatchRunner;
 import io.jababa.lost_batalion.terrain.TerrainMaskManager;
 import io.jababa.lost_batalion.terrain.TerrainQuery;
 import io.jababa.lost_batalion.terrain.TerrainType;
+import io.jababa.lost_batalion.ui.PlateButton;
 import io.jababa.lost_batalion.ui.UIFactory;
 import io.jababa.lost_batalion.units.*;
 import io.jababa.lost_batalion.visibility.FogOfWarRenderer;
@@ -64,8 +64,8 @@ public class GameScreen implements Screen {
     private static final int WAIT_HINT_FRAMES = 12;
 
     /** Підписи кнопки строю. Раніше тут були значки, яких немає в шрифті. */
-    private static final String FORMATION_OFF = "Стрій";
-    private static final String FORMATION_ON  = "Скасув.";
+    private static final String FORMATION_OFF = "СТРІЙ";
+    private static final String FORMATION_ON  = "СКАСУВ.";
 
     /**
      * Вікно подвійного кліку ПКМ, мілісекунди.
@@ -157,7 +157,7 @@ public class GameScreen implements Screen {
 
     private FogOfWarRenderer fogRenderer;
 
-    private TextButton formationBtn;
+    private PlateButton formationBtn;
     private boolean formationModeActive = false;
 
     private final LostBatalion game;
@@ -305,14 +305,14 @@ public class GameScreen implements Screen {
         // Словом, а не піктограмою: ані Cinzel, ані PT Serif не мають гліфів
         // ☰ ≡ ✕, і кнопка малювалась порожнім квадратом. Тягнути заради трьох
         // значків окремий шрифт із символами не варто.
-        TextButton burgerBtn = new TextButton("Меню", UIFactory.createSmallButtonStyle());
+        PlateButton burgerBtn = PlateButton.action("МЕНЮ");
         burgerBtn.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) { togglePause(); }
         });
         Table root = new Table();
         root.setFillParent(true);
         root.top().left().pad(12f);
-        root.add(burgerBtn).size(54f, 48f);
+        root.add(burgerBtn).size(84f, 40f);
 
         // Підказка про очікування чужих наказів. У lockstep гра просто стоїть,
         // і без пояснення це виглядає як зависання.
@@ -325,7 +325,7 @@ public class GameScreen implements Screen {
         hudStage.addActor(waitRow);
 
         if (isMobile) {
-            formationBtn = new TextButton(FORMATION_OFF, UIFactory.createSmallButtonStyle());
+            formationBtn = PlateButton.action(FORMATION_OFF);
             formationBtn.setVisible(false);
             formationBtn.addListener(new ChangeListener() {
                 @Override public void changed(ChangeEvent e, Actor a) {
