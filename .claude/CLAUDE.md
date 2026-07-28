@@ -131,6 +131,24 @@ Two grayscale/colour PNG masks per scenario, sampled by pixel colour
   і сектором кольору сторони в міру захоплення. Йде окремим проходом
   `BloomEffect` ДО юнітів; колір premultiplied, бо буфер bloom саме такий.
 
+### Економіка й поповнення (`economy/`)
+- `Economy` — золото на сторону. Старт 100, +5 за кожну утримувану точку раз на
+  5 с (`INCOME_PERIOD_TICKS`). Лічильник періоду один на матч.
+- `UnitType` — каталог замовлюваного: `INFANTRY` (50), `ARTILLERY` (150),
+  розділи `INF`/`ART`. **Порядок констант — частина протоколу**: `SpawnCommand`
+  везе `ordinal()`.
+- `SpawnQueue` / `PendingSpawn` — замовлення живе 2 с (`HOLD_TICKS`) як
+  напівпрозорий силует, і його можна зняти з поверненням золота. Далі юніт
+  виходить із кута свого гравця (хост — лівий нижній, гість — правий верхній,
+  `GameSimulation.SPAWN_MARGIN`) і йде в задану точку **з pathfinding**.
+- Команди `SpawnCommand` / `CancelSpawnCommand`. Золото списується на тіку
+  ВИКОНАННЯ, не при кліку. Усе входить у checksum (`C_ECONOMY`) і в знімок.
+- UI: `screens/ui/CommandPanel` (scene2d на `hudStage`) — прибуток, золото,
+  кнопка «ВІЙСЬКА» і прозоре меню розділів; `screens/renderer/SpawnGhostRenderer`
+  — привид під курсором (екранні координати) і на місці висадки (світові).
+- Кнопки «МЕНЮ» в лівому верхньому куті БІЛЬШЕ НЕМАЄ — там економіка. Паузу
+  відкриває ESC; на мобільному вона зараз недоступна.
+
 ### Formations / commands
 - `FormationDragHandler` — RMB-drag to place a straight formation line.
 - `CurvedFormationCommand` — freehand drawn curve; samples path, prevents
@@ -185,7 +203,8 @@ artillery AoE strikes, mobile controls, main menu / scenario / settings screens,
 pause overlay.
 
 Not yet implemented (despite the design brief mentioning them):
-- **No base building, no resource gathering, no economy.**
+- **No base building.** Економіка є (золото з точок захоплення + замовлення
+  військ), але видобутку ресурсів і будівництва немає.
 - **No enemy AI** — enemy units are static spawns; they only auto-fire when a
   player unit is in range. No strategic opponent.
 - **No win/lose conditions**, no objectives, no HUD beyond selection panel.

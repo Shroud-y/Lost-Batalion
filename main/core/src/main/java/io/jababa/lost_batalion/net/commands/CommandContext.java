@@ -48,4 +48,19 @@ public interface CommandContext {
 
     /** Скасування наказів і зупинка на місці. */
     void stopUnits(int playerId, int[] unitIds);
+
+    /**
+     * Замовити військо за золото.
+     *
+     * <p>Реалізація мусить сама перевірити, що золота вистачає: клієнт міг
+     * порахувати інакше або збрехати. Замовлення без покриття тихо зникає —
+     * це не помилка, а звичайна гонка: два замовлення могли вирушити в мережу
+     * до того, як перше списало гроші.
+     *
+     * @param unitType {@code UnitType.ordinal()}
+     */
+    void spawnUnit(int playerId, int unitType, long targetX, long targetY);
+
+    /** Зняти власне замовлення й повернути золото. Чуже — ігнорується. */
+    void cancelSpawn(int playerId, int spawnId);
 }

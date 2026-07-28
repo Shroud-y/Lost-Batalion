@@ -183,6 +183,18 @@ public final class UIFactory {
         return style;
     }
 
+    /**
+     * Кнопка зовсім без тла — тільки підпис.
+     *
+     * <p>Для меню, яке розгортається просто поверх карти: пластина під кожним
+     * рядком перетворила б легкий список на другу панель і закрила б поле бою
+     * саме там, куди гравець дивиться, обираючи місце висадки. Стани при цьому
+     * не зникають — {@link PlateButton} веде підсвітку підписом.
+     */
+    public static Button.ButtonStyle createGhostStyle() {
+        return new Button.ButtonStyle();
+    }
+
     // ── Написи ────────────────────────────────────────────────────────────
     //
     // Усі стилі меню й екранів будуються на БІЛОМУ запеченому шрифті
@@ -230,6 +242,14 @@ public final class UIFactory {
     public static Label.LabelStyle createBodyStyle() {
         return label(SIZE_BODY, 0f, COLOR_TEXT);
     }
+
+    /** Лічильник золота в HUD. Акцент тут доречний: це головне число матчу. */
+    public static Label.LabelStyle createGoldStyle() {
+        return label(SIZE_ITEM, 1.5f, COLOR_ACCENT);
+    }
+
+    /** Приглушений тон для недоступного пункту — те саме, що другорядний підпис. */
+    public static Color itemMutedColor() { return new Color(NOTE); }
 
     /** Другорядний текст: підписи, лічильники, статуси, підвал. */
     public static Label.LabelStyle createHintStyle() {

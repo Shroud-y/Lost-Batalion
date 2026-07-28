@@ -3,6 +3,9 @@ package io.jababa.lost_batalion.sim;
 import com.badlogic.gdx.utils.Array;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.capture.CaptureManager;
+import io.jababa.lost_batalion.economy.Economy;
+import io.jababa.lost_batalion.economy.PendingSpawn;
+import io.jababa.lost_batalion.economy.SpawnQueue;
 import io.jababa.lost_batalion.math.DeterministicRandom;
 import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.net.commands.CommandContext;
@@ -13,6 +16,7 @@ import io.jababa.lost_batalion.units.Artillery;
 import io.jababa.lost_batalion.units.CombatManager;
 import io.jababa.lost_batalion.units.Unit;
 import io.jababa.lost_batalion.units.UnitManager;
+import io.jababa.lost_batalion.units.UnitType;
 import io.jababa.lost_batalion.visibility.VisibilitySystem;
 
 /**
@@ -40,6 +44,8 @@ public class GameSimulation implements CommandContext {
     private final CombatManager     combatManager;
     private final VisibilitySystem  visibilitySystem;
     private final CaptureManager    captureManager;
+    private final Economy           economy;
+    private final SpawnQueue        spawnQueue;
 
     /**
      * Єдиний генератор випадкових чисел матчу. Seed приходить від хоста,
@@ -87,6 +93,8 @@ public class GameSimulation implements CommandContext {
         this.combatManager    = new CombatManager(unitManager, terrain, random);
         this.visibilitySystem = new VisibilitySystem(terrain);
         this.captureManager   = new CaptureManager(terrain);
+        this.economy          = new Economy();
+        this.spawnQueue       = new SpawnQueue();
 
         // Артилерія стріляє лише по тому, що бачить САМА, і сама йде на
         // позицію по наказу — для обох речей їй потрібні видимість і навігація.
@@ -155,6 +163,49 @@ public class GameSimulation implements CommandContext {
         combatManager.tick();
         visibilitySystem.update(unitManager.getAllUnits());
         captureManager.tick(unitManager.getAllUnits());
+        economy.tick(captureManager);
+        releaseReadySpawns();
+    }
+
+    // ── Поповнення ────────────────────────────────────────────────────────
+
+    /**
+     * Наскільки від кута карти виходить підкріплення.
+     *
+     * <p>Не в самому куті: юніт, поставлений у нуль координат, упирався б у межу
+     * карти й розштовхування штовхало б його всередину ривком.
+     */
+    private static final long SPAWN_MARGIN = Fixed.fromInt(40);
+
+    /**
+     * Випустити підкріплення, чий час вийшов.
+     *
+     * <p>Виходить воно з кута свого гравця (хост — лівий нижній, гість — правий
+     * верхній) і одразу вирушає в замовлену точку з пошуком шляху: інакше свіжа
+     * рота йшла б навпростець через річку, поки гравець дивиться в інший бік.
+     *
+     * <p>Порядок обходу — порядок замовлень, і це важливо: він визначає id нових
+     * юнітів, а id їздять у наказах.
+     */
+    private void releaseReadySpawns() {
+        Array<PendingSpawn> ready = spawnQueue.tick();
+        for (int i = 0; i < ready.size; i++) {
+            PendingSpawn s = ready.get(i);
+            Team team = Team.forPlayer(s.playerId);
+
+            long fromX = team == Team.PLAYER ? SPAWN_MARGIN : mapW - SPAWN_MARGIN;
+            long fromY = team == Team.PLAYER ? SPAWN_MARGIN : mapH - SPAWN_MARGIN;
+
+            Unit unit = s.type.create(team, fromX, fromY);
+            unitManager.addUnit(unit);
+            // Стартова позиція має бути «як після тіку», інакше перший кадр
+            // інтерполював би юніта від нуля координат до кута карти.
+            unit.beginTick();
+
+            ensureNavigation();
+            long[] waypoints = pathFinder.findPath(fromX, fromY, s.x, s.y);
+            unit.followPath(waypoints, s.x, s.y);
+        }
     }
 
     /**
@@ -291,6 +342,34 @@ public class GameSimulation implements CommandContext {
         combatManager.stopUnits(units);
     }
 
+    /**
+     * Замовлення війська.
+     *
+     * <p>Золото списується ТУТ, на тіку виконання, а не при кліку: клієнт міг
+     * рахувати з іншим залишком, а порядок списань мусить бути однаковим у всіх.
+     * Не вистачило — замовлення тихо зникає, як і будь-який наказ, що втратив
+     * сенс поки їхав.
+     */
+    @Override
+    public void spawnUnit(int playerId, int unitType, long targetX, long targetY) {
+        UnitType type = UnitType.byOrdinal(unitType);
+        if (type == null) return;
+
+        // Точку обрізаємо по карті: наказ із координатою за межами прийшов би
+        // від зіпсованого повідомлення, а юніт пішов би в нікуди.
+        long tx = Fixed.clamp(targetX, 0, mapW);
+        long ty = Fixed.clamp(targetY, 0, mapH);
+
+        if (!economy.spend(playerId, type.cost)) return;
+        spawnQueue.add(playerId, type, tx, ty);
+    }
+
+    @Override
+    public void cancelSpawn(int playerId, int spawnId) {
+        PendingSpawn cancelled = spawnQueue.cancel(playerId, spawnId);
+        if (cancelled != null) economy.refund(playerId, cancelled.type.cost);
+    }
+
     private Array<Unit> own(int playerId, int[] unitIds) {
         return unitManager.collectOwned(unitIds, Team.forPlayer(playerId), commandScratch);
     }
@@ -309,6 +388,8 @@ public class GameSimulation implements CommandContext {
     public CombatManager getCombatManager()   { return combatManager; }
     public VisibilitySystem getVisibility()   { return visibilitySystem; }
     public CaptureManager getCapturePoints()  { return captureManager; }
+    public Economy getEconomy()               { return economy; }
+    public SpawnQueue getSpawnQueue()         { return spawnQueue; }
     public TerrainQuery getTerrain()          { return terrain; }
     public DeterministicRandom getRandom()    { return random; }
     public float getMapWidth()                { return mapWidth; }

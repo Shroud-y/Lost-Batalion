@@ -44,10 +44,12 @@ public final class StateChecksum {
     public static final int C_VISIBILITY = 4;
     public static final int C_RNG        = 5;
     public static final int C_POINTS     = 6;
-    public static final int COMPONENTS   = 7;
+    public static final int C_ECONOMY    = 7;
+    public static final int COMPONENTS   = 8;
 
     private static final String[] NAMES = {
-        "позиції", "здоров'я", "таймери", "накази", "видимість", "RNG", "точки"
+        "позиції", "здоров'я", "таймери", "накази", "видимість", "RNG",
+        "точки", "економіка"
     };
 
     public static String componentName(int index) {
@@ -146,6 +148,11 @@ public final class StateChecksum {
         out[C_POINTS]     = sim.getCapturePoints() == null
                           ? FNV_OFFSET
                           : sim.getCapturePoints().stateDigest(FNV_OFFSET);
+
+        // Золото і черга замовлень — один компонент: розійтись поодинці вони
+        // не можуть, бо кожне замовлення це і списання, і рядок у черзі.
+        long money = sim.getEconomy().stateDigest(FNV_OFFSET);
+        out[C_ECONOMY]    = sim.getSpawnQueue().stateDigest(money);
 
         long total = mix(FNV_OFFSET, sim.getTickNumber());
         for (int i = 0; i < COMPONENTS; i++) total = mix(total, out[i]);

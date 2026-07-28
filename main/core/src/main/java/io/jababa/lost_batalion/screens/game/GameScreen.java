@@ -15,6 +15,7 @@ import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
+import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
 import io.jababa.lost_batalion.LostBatalion;
@@ -24,19 +25,24 @@ import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.mobile.GameInputHandler;
 import io.jababa.lost_batalion.mobile.MobileTouchHandler;
 import io.jababa.lost_batalion.net.api.MatchTransport;
+import io.jababa.lost_batalion.economy.PendingSpawn;
 import io.jababa.lost_batalion.net.commands.AttackCommand;
+import io.jababa.lost_batalion.net.commands.CancelSpawnCommand;
 import io.jababa.lost_batalion.net.commands.CurveFormationCommand;
 import io.jababa.lost_batalion.net.commands.MoveCommand;
 import io.jababa.lost_batalion.net.commands.MoveLineCommand;
 import io.jababa.lost_batalion.net.commands.PathMoveCommand;
+import io.jababa.lost_batalion.net.commands.SpawnCommand;
 import io.jababa.lost_batalion.net.commands.StopCommand;
 import io.jababa.lost_batalion.net.kryo.LocalMatchTransport;
 import io.jababa.lost_batalion.screens.effects.BloomEffect;
 import io.jababa.lost_batalion.screens.effects.MoveMarker;
 import io.jababa.lost_batalion.screens.renderer.CapturePointRenderer;
+import io.jababa.lost_batalion.screens.renderer.SpawnGhostRenderer;
 import io.jababa.lost_batalion.screens.renderer.TerrainIndicatorRenderer;
 import io.jababa.lost_batalion.screens.renderer.UnitRenderer;
 import io.jababa.lost_batalion.screens.scenario.ScenarioCard;
+import io.jababa.lost_batalion.screens.ui.CommandPanel;
 import io.jababa.lost_batalion.screens.ui.Minimap;
 import io.jababa.lost_batalion.screens.ui.SelectionPanel;
 import io.jababa.lost_batalion.sim.GameSimulation;
@@ -151,6 +157,20 @@ public class GameScreen implements Screen {
     private FormationDragHandler formationDrag;
 
     private SelectionPanel selectionPanel;
+    /** Золото, прибуток і меню замовлення військ — лівий верхній кут. */
+    private CommandPanel commandPanel;
+    /** Привиди: під курсором і на місцях висадки. */
+    private SpawnGhostRenderer spawnGhosts;
+
+    /**
+     * Тип, який гравець зараз висаджує; {@code null} — звичайне керування.
+     *
+     * <p>Суто локальний стан: поки він не {@code null}, ЛКМ ставить замовлення
+     * замість того, щоб виділяти. У симуляцію не входить — там з'являється лише
+     * готова команда.
+     */
+    private UnitType placingType;
+
     private Minimap minimap;
     /** Чи тягне гравець камеру по мінікарті просто зараз. */
     private boolean minimapDragging = false;
@@ -245,6 +265,7 @@ public class GameScreen implements Screen {
         terrainIndicators = new TerrainIndicatorRenderer();
         moveMarker      = new MoveMarker();
         capturePoints   = new CapturePointRenderer();
+        spawnGhosts     = new SpawnGhostRenderer();
         bloom           = new BloomEffect(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         formationDrag   = new FormationDragHandler();
         curvedFormation = new CurvedFormationCommand();
@@ -306,17 +327,12 @@ public class GameScreen implements Screen {
 
     private void buildHud() {
         boolean isMobile = Gdx.app.getType() != Application.ApplicationType.Desktop;
-        // Словом, а не піктограмою: ані Cinzel, ані PT Serif не мають гліфів
-        // ☰ ≡ ✕, і кнопка малювалась порожнім квадратом. Тягнути заради трьох
-        // значків окремий шрифт із символами не варто.
-        PlateButton burgerBtn = PlateButton.action("МЕНЮ");
-        burgerBtn.addListener(new ChangeListener() {
-            @Override public void changed(ChangeEvent e, Actor a) { togglePause(); }
+
+        // Лівий верхній кут — золото й замовлення військ. Кнопки «Меню» тут
+        // більше немає: паузу відкриває ESC, а кут потрібен економіці.
+        commandPanel = new CommandPanel(hudStage, new CommandPanel.Listener() {
+            @Override public void onSpawnSelected(UnitType type) { beginPlacing(type); }
         });
-        Table root = new Table();
-        root.setFillParent(true);
-        root.top().left().pad(12f);
-        root.add(burgerBtn).size(84f, 40f);
 
         // Підказка про очікування чужих наказів. У lockstep гра просто стоїть,
         // і без пояснення це виглядає як зависання.
@@ -343,7 +359,6 @@ public class GameScreen implements Screen {
             bottomBar.add(formationBtn).size(64f, 54f).expand().bottom().padBottom(48f);
             hudStage.addActor(bottomBar);
         }
-        hudStage.addActor(root);
     }
 
     @Override
@@ -388,6 +403,10 @@ public class GameScreen implements Screen {
             combatManager.updateVisuals(delta);
             combatManager.updatePopups(delta);
             selectionPanel.update(delta, unitManager.getSelectedUnits());
+            commandPanel.update(
+                sim.getEconomy().gold(runner.getLocalPlayerId()),
+                sim.getEconomy().incomePerPeriod(runner.getLocalPlayerId(),
+                                                 sim.getCapturePoints()));
 
             if (formationBtn != null) {
                 formationBtn.setVisible(unitManager.hasSelection());
@@ -421,6 +440,9 @@ public class GameScreen implements Screen {
 
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
+        // Привиди замовлень — під юнітами: військо, що вже прийшло, важливіше
+        // за те, що тільки збирається.
+        spawnGhosts.drawPending(batch, sim.getSpawnQueue(), localTeam);
         unitRenderer.drawSprites(batch, unitManager.getAllUnits(), renderAlpha, localTeam);
         // Значки місцевості — поверх юнітів, але під бойовими попапами.
         terrainIndicators.draw(batch, unitManager.getSelectedUnits(), renderAlpha,
@@ -472,10 +494,16 @@ public class GameScreen implements Screen {
                                                               cursorWorldX, cursorWorldY);
         }
 
-        // Підказка лісу
-        if (!paused && currentTerrain == TerrainType.FOREST) {
+        // Підказка лісу і привид під курсором — обидва в екранних координатах.
+        boolean showTooltip = !paused && currentTerrain == TerrainType.FOREST;
+        if (showTooltip || (!paused && placingType != null)) {
             uiBatch.begin();
-            forestTooltip.draw(uiBatch, cursorScreenX, cursorScreenY);
+            if (showTooltip) forestTooltip.draw(uiBatch, cursorScreenX, cursorScreenY);
+            if (placingType != null) {
+                // Y тут уже екранний зверху вниз, а uiBatch малює знизу вгору.
+                spawnGhosts.drawCursor(uiBatch, placingType, localTeam, cursorScreenX,
+                                       Gdx.graphics.getHeight() - cursorScreenY);
+            }
             uiBatch.end();
         }
 
@@ -670,6 +698,82 @@ public class GameScreen implements Screen {
         runner.issue(new StopCommand(runner.getLocalPlayerId(), unitManager.selectedIds()));
     }
 
+    // ── Замовлення військ ─────────────────────────────────────────────────
+
+    /**
+     * Гравець обрав тип у меню — далі привид ходить за курсором, поки той не
+     * клікне по карті. Виділення при цьому знімається: наступний ЛКМ означає
+     * «сюди висадити», і залишена під ним рота сприйняла б його як свій наказ.
+     */
+    private void beginPlacing(UnitType type) {
+        placingType = type;
+        unitManager.clearSelection();
+        commandPanel.closeMenu();
+    }
+
+    private void cancelPlacing() {
+        placingType = null;
+    }
+
+    /**
+     * Поставити замовлення в обрану точку.
+     *
+     * <p>Золото списує симуляція на тіку виконання. Локально ми його не
+     * віднімаємо навіть на око: два кліки поспіль встигли б обидва пройти
+     * локальну перевірку, і гравець побачив би замовлення, яке потім тихо не
+     * з'явиться.
+     */
+    public void issueSpawn(float worldX, float worldY) {
+        if (placingType == null) return;
+        runner.issue(new SpawnCommand(runner.getLocalPlayerId(), placingType.ordinal(),
+                                      Fixed.fromFloat(worldX), Fixed.fromFloat(worldY)));
+        // Позначки наказу тут навмисно немає: місце висадки й так показує сам
+        // привид, а світляний хрест поверх нього просто засвітив би силует.
+        placingType = null;
+    }
+
+    /**
+     * Власне замовлення під точкою або {@code null}.
+     *
+     * <p>Радіус спрайта, а не хітбокса: привид — це картинка, і клікати по
+     * ньому гравець буде саме по тому, що бачить.
+     */
+    private PendingSpawn pendingSpawnAt(float worldX, float worldY) {
+        Array<PendingSpawn> all = sim.getSpawnQueue().getPending();
+        for (int i = 0; i < all.size; i++) {
+            PendingSpawn s = all.get(i);
+            if (s.playerId != localTeam.playerId()) continue;
+            float half = s.type.sizePx() / 2f;
+            float dx = worldX - Fixed.toFloat(s.x);
+            float dy = worldY - Fixed.toFloat(s.y);
+            if (Math.abs(dx) <= half && Math.abs(dy) <= half) return s;
+        }
+        return null;
+    }
+
+    /**
+     * Дотик по карті у справах висадки: поставити замовлення або зняти вже
+     * поставлене.
+     *
+     * <p>Спільна точка входу для десктопа й мобільного: правило «клік по карті
+     * = сюди, клік по привиду = скасувати» одне на обидва керування, і
+     * розписувати його двічі означало б рано чи пізно розійтись.
+     *
+     * @return true, якщо дотик витрачено на висадку
+     */
+    public boolean handlePlacementTap(float worldX, float worldY) {
+        if (placingType != null) { issueSpawn(worldX, worldY); return true; }
+        return tryCancelSpawnAt(worldX, worldY);
+    }
+
+    /** Клік по власному привиду — зняти замовлення й повернути золото. */
+    private boolean tryCancelSpawnAt(float worldX, float worldY) {
+        PendingSpawn s = pendingSpawnAt(worldX, worldY);
+        if (s == null) return false;
+        runner.issue(new CancelSpawnCommand(runner.getLocalPlayerId(), s.id));
+        return true;
+    }
+
     /**
      * Чи це другий клік подвійного ПКМ.
      *
@@ -764,6 +868,7 @@ public class GameScreen implements Screen {
         if (terrainIndicators != null) terrainIndicators.dispose();
         if (bloom           != null) bloom.dispose();
         if (moveMarker      != null) moveMarker.dispose();
+        if (spawnGhosts     != null) spawnGhosts.dispose();
         if (combatManager   != null) combatManager.dispose();
         if (selectionPanel  != null) selectionPanel.dispose();
         if (minimap         != null) minimap.dispose();
@@ -877,6 +982,7 @@ public class GameScreen implements Screen {
 
             @Override public boolean keyDown(int k) {
                 if (k == Input.Keys.ESCAPE) {
+                    if (placingType != null) { cancelPlacing(); return true; }
                     if (curvedFormation.isDrawing()) { curvedFormation.cancel(); selectionPanel.setFormationActive(false); awaitingDrawStart=false; return true; }
                     togglePause(); return true;
                 }
@@ -916,6 +1022,13 @@ public class GameScreen implements Screen {
                     }
 
                     Vector3 w = camera.unproject(new Vector3(sx, sy, 0));
+
+                    // Висадка перехоплює клік раніше за виділення: поки привид
+                    // під курсором, ЛКМ означає «сюди», а не «обрати», а клік по
+                    // вже поставленому привиду знімає замовлення — під ним цілком
+                    // може стояти своя рота, і вона забрала б клік собі.
+                    if (handlePlacementTap(w.x, w.y)) return true;
+
                     if (awaitingDrawStart && selectionPanel.isFormationActive()) {
                         awaitingDrawStart=false; curvedFormation.startDraw(w.x, w.y); return true;
                     }
@@ -928,6 +1041,8 @@ public class GameScreen implements Screen {
                 }
 
                 if (btn == Input.Buttons.RIGHT) {
+                    // ПКМ — універсальне «скасувати»: спершу висадка, потім крива.
+                    if (placingType != null) { cancelPlacing(); return true; }
                     if (curvedFormation.isDrawing()) { curvedFormation.cancel(); selectionPanel.setFormationActive(false); awaitingDrawStart=false; return true; }
                     Vector3 w = camera.unproject(new Vector3(sx, sy, 0));
                     formationDrag.onRmbDown(w.x, w.y); return true;

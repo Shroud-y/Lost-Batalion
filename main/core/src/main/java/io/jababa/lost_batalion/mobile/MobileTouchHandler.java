@@ -123,6 +123,10 @@ public class MobileTouchHandler extends InputAdapter {
             Vector3 world = screen.getCamera().unproject(
                 new Vector3(screenX, screenY, 0));
 
+            // Висадка перехоплює тап так само, як ЛКМ на десктопі: поки обрано
+            // тип, дотик означає «сюди», а не «обрати».
+            if (screen.handlePlacementTap(world.x, world.y)) return true;
+
             boolean isDoubleTap = now - lastTapTime < DOUBLE_TAP_MS
                 && Math.abs(screenX - lastTapX) < 60
                 && Math.abs(screenY - lastTapY) < 60;

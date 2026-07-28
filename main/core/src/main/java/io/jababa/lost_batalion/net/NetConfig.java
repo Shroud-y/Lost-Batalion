@@ -27,9 +27,13 @@ public final class NetConfig {
      * знімку ресинку — блок їхнього стану. Старий клієнт бачив би десинхрон на
      * першій же звірці й читав знімок обрізаним.
      *
+     * <p>6 — золото й замовлення військ: {@code SpawnCommand} і
+     * {@code CancelSpawnCommand} у реєстрі Kryo, ще один компонент хеша і два
+     * нові блоки у знімку.
+     *
      * <p>Старі збірки мають відвалюватись ще в лоббі.
      */
-    public static final int PROTOCOL_VERSION = 5;
+    public static final int PROTOCOL_VERSION = 6;
 
     /** TCP-порт хоста (ігровий трафік). */
     public static final int TCP_PORT = 54555;

@@ -52,6 +52,9 @@ public final class PlateButton extends Button {
     private final Color hoverColor;
     private final Color tint = new Color();
 
+    /** Чи приглушений підпис — пункт, який зараз не можна взяти. */
+    private boolean muted;
+
     /** Частка наведення, 0..1. */
     private float hover;
 
@@ -116,6 +119,19 @@ public final class PlateButton extends Button {
     }
 
     /**
+     * Приглушити підпис: пункт видно, але взяти його зараз не можна (не
+     * вистачає золота). Разом із {@code setDisabled} — саме воно вимикає
+     * підсвітку й клік, а тон каже, ЧОМУ кнопка не реагує.
+     */
+    public void setMuted(boolean muted) {
+        if (this.muted == muted) return;
+        this.muted = muted;
+        // act() перефарбовує підпис лише коли міняється частка наведення, а
+        // приглушена кнопка не наводиться взагалі — тон доводиться поставити тут.
+        name.setColor(muted ? UIFactory.itemMutedColor() : restColor);
+    }
+
+    /**
      * Стиль без {@code over}/{@code down} — щоб {@link Button} не підміняв тло
      * стрибком і не смикав відступи.
      *
@@ -146,7 +162,7 @@ public final class PlateButton extends Button {
         // око й читає як смикання.
         float k = Interpolation.smooth.apply(hover);
 
-        name.setColor(tint.set(restColor).lerp(hoverColor, k));
+        if (!muted) name.setColor(tint.set(restColor).lerp(hoverColor, k));
 
         if (variant == Variant.PLATE) {
             // Назва зсувається всередину — рух підказує, що пункт «взято».
