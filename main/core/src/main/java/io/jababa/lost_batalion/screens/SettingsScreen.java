@@ -19,8 +19,6 @@ import io.jababa.lost_batalion.ui.UIFactory;
  */
 public class SettingsScreen extends BaseScreen {
 
-    /** Ширина панелі з параметрами. */
-    private static final float PANEL_WIDTH = 520f;
     /** Висота рядка параметра. */
     private static final float ROW_HEIGHT  = 46f;
     /** Ширина колонки керування всередині рядка. */
@@ -49,7 +47,7 @@ public class SettingsScreen extends BaseScreen {
         root.add(new io.jababa.lost_batalion.ui.ScreenHeader(
                     "НАЛАШТУВАННЯ", () -> game.setScreen(new MainMenuScreen(game))))
             .growX().row();
-        root.add(panel).width(PANEL_WIDTH).left().padTop(26f).row();
+        root.add(panel).growX().padTop(26f).row();
         root.add().expandY().row();   // притискає панель угору
 
         stage.addActor(root);

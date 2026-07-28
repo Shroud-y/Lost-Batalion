@@ -11,6 +11,7 @@ import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.Disposable;
 import io.jababa.lost_batalion.Team;
+import io.jababa.lost_batalion.ui.UIFactory;
 import io.jababa.lost_batalion.units.Artillery;
 import io.jababa.lost_batalion.units.Unit;
 
@@ -119,7 +120,7 @@ public class Minimap implements Disposable {
         // вікна.
         shapes.setProjectionMatrix(screenProj);
         shapes.begin(ShapeRenderer.ShapeType.Filled);
-        shapes.setColor(0f, 0f, 0f, 0.55f);
+        shapes.setColor(UIFactory.COLOR_HUD_PANEL);
         shapes.rect(x - PAD, y - PAD, w + PAD * 2f, h + PAD * 2f);
         shapes.end();
 
@@ -157,12 +158,16 @@ public class Minimap implements Disposable {
         shapes.begin(ShapeRenderer.ShapeType.Line);
         // Рамка мінікарти — лише з боку екрана: праворуч і знизу вона впритул
         // до країв вікна, і замкнений прямокутник там просто не було б видно.
-        shapes.setColor(1f, 1f, 1f, 0.35f);
+        shapes.setColor(UIFactory.COLOR_HUD_EDGE);
         shapes.line(x - PAD, y - PAD, x - PAD, y + h);
         shapes.line(x - PAD, y + h, x + w, y + h);
 
-        // Біла рамка видимої ділянки. Камера може виходити за край карти —
-        // тоді прямокутник обрізається по мінікарті, а не малюється поза нею.
+        // Біла рамка видимої ділянки. Свідомий виняток із палітри: акцентне
+        // золото зливалося з жовтуватими ділянками карти, а ця рамка постійно
+        // рухається і має читатись на будь-якому тлі під нею.
+        //
+        // Камера може виходити за край карти — тоді прямокутник обрізається по
+        // мінікарті, а не малюється поза нею.
         if (camera != null) {
             float halfW = camera.viewportWidth  * camera.zoom / 2f;
             float halfH = camera.viewportHeight * camera.zoom / 2f;

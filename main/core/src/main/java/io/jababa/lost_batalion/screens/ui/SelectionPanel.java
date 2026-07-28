@@ -7,6 +7,7 @@ import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.utils.Array;
+import io.jababa.lost_batalion.ui.UIFactory;
 import io.jababa.lost_batalion.units.Artillery;
 import io.jababa.lost_batalion.units.Unit;
 
@@ -36,6 +37,10 @@ public class SelectionPanel {
     private static final float CMDS_H        = CMD_SIZE + CMD_PAD * 2f;
     private static final float PANEL_LEFT    =  10f;
     private static final float SLIDE_TIME    =  0.20f;
+    /** Товщина рамки. Один піксель, як усюди в інтерфейсі (DESIGN §1). */
+    private static final float EDGE          =   1f;
+    /** Акцентна риска по верхньому краю панелі. */
+    private static final float ACCENT_BAR    =   2f;
 
     private float   slideProgress = 0f;
     private boolean visible       = false;
@@ -111,9 +116,13 @@ public class SelectionPanel {
         if (panelBg != null) {
             batch.draw(panelBg, panelX, panelY, PANEL_W, panelH);
         } else {
-            batch.setColor(0.06f, 0.06f, 0.10f, 0.92f);
-            batch.draw(white(), panelX, panelY, PANEL_W, panelH);
-            batch.setColor(1f, 1f, 1f, 1f);
+            fill(batch, panelX, panelY, PANEL_W, panelH, UIFactory.COLOR_HUD_PANEL);
+            stroke(batch, panelX, panelY, PANEL_W, panelH, UIFactory.COLOR_HUD_EDGE);
+            // Акцентна риска по ВЕРХНЬОМУ краю. У списках меню планка стоїть
+            // ліворуч, але панель виїжджає знизу — там верхній край і є той
+            // бік, що «входить» у кадр.
+            fill(batch, panelX, panelY + panelH - ACCENT_BAR, PANEL_W, ACCENT_BAR,
+                 UIFactory.COLOR_ACCENT);
         }
 
         // Портрети
@@ -130,14 +139,14 @@ public class SelectionPanel {
             boolean isArt = (u instanceof Artillery);
 
             if (portraitBg != null) {
-                // Артилерія — біла рамка, решта — стандартна
-                if (isArt) batch.setColor(1f, 1f, 1f, 1f);
                 batch.draw(portraitBg, px, py, PORTRAIT_SIZE, PORTRAIT_SIZE);
                 batch.setColor(1f, 1f, 1f, 1f);
             } else {
-                batch.setColor(isArt ? 0.55f : 0.20f, isArt ? 0.55f : 0.20f, isArt ? 0.55f : 0.32f, 1f);
-                batch.draw(white(), px, py, PORTRAIT_SIZE, PORTRAIT_SIZE);
-                batch.setColor(1f, 1f, 1f, 1f);
+                // Артилерія виділена акцентною рамкою, а не іншою заливкою:
+                // заливка змагалася б із самим портретом за увагу.
+                fill(batch, px, py, PORTRAIT_SIZE, PORTRAIT_SIZE, UIFactory.COLOR_HUD_SLOT);
+                stroke(batch, px, py, PORTRAIT_SIZE, PORTRAIT_SIZE,
+                       isArt ? UIFactory.COLOR_ACCENT : UIFactory.COLOR_HUD_SLOT_EDGE);
             }
 
             Texture portrait = getPortrait(u.getTexturePath());
@@ -150,9 +159,7 @@ public class SelectionPanel {
         // Кнопка формації
         float cx = panelX + CMD_PAD;
         float cy = panelY + CMD_PAD;
-        drawCmdButton(batch, cmdFormation, cx, cy, formationActive,
-            0.22f, 0.22f, 0.30f,   // inactive bg
-            0.85f, 0.85f, 0.85f);  // active (білуватий)
+        drawCmdButton(batch, cmdFormation, cx, cy, formationActive);
 
         batch.end();
     }
@@ -196,17 +203,44 @@ public class SelectionPanel {
 
     // ── Приватне ─────────────────────────────────────────────────────────
 
+    /**
+     * Кнопка команди. Увімкнений стан — акцентна рамка й світліша заливка, а
+     * не інший колір іконки: іконка має лишатись упізнаваною в обох станах.
+     */
     private void drawCmdButton(SpriteBatch batch, Texture tex,
-                               float cx, float cy, boolean active,
-                               float rI, float gI, float bI,
-                               float rA, float gA, float bA) {
+                               float cx, float cy, boolean active) {
+        fill(batch, cx, cy, CMD_SIZE, CMD_SIZE,
+             active ? UIFactory.COLOR_HUD_SLOT_ON : UIFactory.COLOR_HUD_SLOT);
+        stroke(batch, cx, cy, CMD_SIZE, CMD_SIZE,
+               active ? UIFactory.COLOR_ACCENT : UIFactory.COLOR_HUD_SLOT_EDGE);
+
         if (tex != null) {
-            batch.setColor(active ? rA : 1f, active ? gA : 1f, active ? bA : 1f, 1f);
-            batch.draw(tex, cx, cy, CMD_SIZE, CMD_SIZE);
-        } else {
-            batch.setColor(active ? rA : rI, active ? gA : gI, active ? bA : bI, 1f);
-            batch.draw(white(), cx, cy, CMD_SIZE, CMD_SIZE);
+            batch.setColor(1f, 1f, 1f, 1f);
+            batch.draw(tex, cx + 2f, cy + 2f, CMD_SIZE - 4f, CMD_SIZE - 4f);
+            batch.setColor(1f, 1f, 1f, 1f);
         }
+    }
+
+    // ── Примітиви ────────────────────────────────────────────────────────
+    //
+    // Панель малюється у SpriteBatch, а не ShapeRenderer: разом із нею йдуть
+    // портрети-текстури, і переключатись між двома рендерерами заради рамок
+    // означало б рвати батч на кожну комірку.
+
+    private void fill(SpriteBatch batch, float x, float y, float w, float h, Color c) {
+        batch.setColor(c);
+        batch.draw(white(), x, y, w, h);
+        batch.setColor(1f, 1f, 1f, 1f);
+    }
+
+    /** Рамка в один піксель — чотири смужки по краях. */
+    private void stroke(SpriteBatch batch, float x, float y, float w, float h, Color c) {
+        batch.setColor(c);
+        Texture px = white();
+        batch.draw(px, x,           y,           w,      EDGE);
+        batch.draw(px, x,           y + h - EDGE, w,     EDGE);
+        batch.draw(px, x,           y,           EDGE,   h);
+        batch.draw(px, x + w - EDGE, y,          EDGE,   h);
         batch.setColor(1f, 1f, 1f, 1f);
     }
 

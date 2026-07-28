@@ -19,7 +19,6 @@ import io.jababa.lost_batalion.ui.UIFactory;
 /** Параметри нового лоббі: назва, карта, кількість гравців. */
 public class CreateLobbyScreen extends BaseScreen {
 
-    private static final float PANEL_W = 560f;
     private static final float LABEL_W = 150f;
     private static final float FIELD_W = 330f;
     private static final float ROW_H   = 42f;
@@ -55,14 +54,19 @@ public class CreateLobbyScreen extends BaseScreen {
         form.setBackground(UIFactory.createPanelBackground());
         form.pad(22f, 24f, 22f, 24f);
 
+        // Третя колонка порожня і забирає весь надлишок ширини: панель тягнеться
+        // на весь екран, а поля лишаються читабельної ширини при лівому краї.
+        // Без неї Table розтягнув би саме поле вводу на пів екрана.
         form.add(caption("Назва лоббі")).width(LABEL_W).left();
-        form.add(buildNameField()).width(FIELD_W).height(ROW_H).left().row();
+        form.add(buildNameField()).width(FIELD_W).height(ROW_H).left();
+        form.add().expandX().row();
 
         form.add(caption("Карта")).width(LABEL_W).left().padTop(14f);
-        form.add(buildScenarioRow()).width(FIELD_W).height(ROW_H).left().padTop(14f).row();
+        form.add(buildScenarioRow()).width(FIELD_W).height(ROW_H).left().padTop(14f);
+        form.add().expandX().row();
 
         form.add(caption("Гравців")).width(LABEL_W).left().padTop(14f);
-        form.add(buildPlayersRow()).width(FIELD_W).left().padTop(14f).row();
+        form.add(buildPlayersRow()).left().padTop(14f).colspan(2).growX().row();
 
         errorLabel = new Label(error, UIFactory.createErrorStyle());
 
@@ -84,7 +88,7 @@ public class CreateLobbyScreen extends BaseScreen {
         root.add(new ScreenHeader("СТВОРИТИ ЛОББІ",
                                   () -> game.setScreen(new MultiplayerScreen(game))))
             .growX().row();
-        root.add(form).width(PANEL_W).left().padTop(26f).row();
+        root.add(form).growX().padTop(26f).row();
         root.add(errorLabel).left().padTop(10f).row();
         // Кнопка внизу, а не одразу під формою: дія, що закриває екран, має
         // стояти на постійному місці, а форма ще виросте.

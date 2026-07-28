@@ -107,6 +107,23 @@ public final class UIFactory {
     /** Затемнення під модальні вікна й паузу. */
     private static final Color SCRIM       = new Color(0.016f, 0.024f, 0.031f, 0.78f);
 
+    // ── Кольори для HUD ───────────────────────────────────────────────────
+    //
+    // HUD усередині матчу малюється вручну через SpriteBatch/ShapeRenderer і
+    // стилями scene2d користуватись не може. Щоб він не поїхав від решти гри,
+    // кольори він бере звідси — з тих самих констант, що й панелі меню.
+
+    /** Тло панелі HUD. */
+    public static final Color COLOR_HUD_PANEL     = new Color(PANEL_BG);
+    /** Рамка панелі HUD. */
+    public static final Color COLOR_HUD_EDGE      = new Color(EDGE_IDLE);
+    /** Тло комірки (портрет, кнопка) у спокої. */
+    public static final Color COLOR_HUD_SLOT      = new Color(ROW_BG);
+    /** Рамка комірки у спокої. */
+    public static final Color COLOR_HUD_SLOT_EDGE = new Color(ROW_EDGE);
+    /** Тло комірки в активному стані. */
+    public static final Color COLOR_HUD_SLOT_ON   = new Color(PLATE_OVER);
+
     // ── Форма (DESIGN §4, §6) ─────────────────────────────────────────────
 
     /** Розмір заготовки плитки. Тягнеться лише середина, краї лишаються різкими. */
