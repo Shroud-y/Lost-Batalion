@@ -168,5 +168,9 @@ public class Artillery extends Unit {
     @Override public long   sizeFixed()      { return ART_SIZE_FIXED; }
     @Override public long   hitRadiusFixed() { return ART_HIT_RADIUS; }
     @Override public float  hpBarOffsetX()   { return ART_HP_BAR_OFFSET_X; }
-    @Override public String getTexturePath() { return "units/artillery.png"; }
+    @Override public String getTexturePath() {
+        return team == Team.PLAYER
+            ? "units/artillery_player.png"
+            : "units/artillery_enemy.png";
+    }
 }

@@ -67,7 +67,8 @@ public enum UnitType {
      */
     public String texturePath(Team team) {
         switch (this) {
-            case ARTILLERY: return "units/artillery.png";
+            case ARTILLERY: return team == Team.PLAYER ? "units/artillery_player.png"
+                                                       : "units/artillery_enemy.png";
             default:        return team == Team.PLAYER ? "units/infantry_player.png"
                                                        : "units/infantry_enemy.png";
         }

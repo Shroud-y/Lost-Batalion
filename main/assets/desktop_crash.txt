@@ -1,1 +1,0 @@
-java.lang.NullPointerException: Cannot invoke "io.jababa.lost_batalion.terrain.TerrainMaskManager.getTerrainAt(float, float)" because "this.terrainMask" is null
