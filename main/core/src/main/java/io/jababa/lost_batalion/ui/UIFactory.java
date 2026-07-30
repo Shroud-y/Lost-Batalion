@@ -12,6 +12,9 @@ import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator.FreeTypeFont
 import com.badlogic.gdx.scenes.scene2d.ui.Button;
 import com.badlogic.gdx.scenes.scene2d.ui.CheckBox;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
+import com.badlogic.gdx.scenes.scene2d.ui.List;
+import com.badlogic.gdx.scenes.scene2d.ui.ScrollPane;
+import com.badlogic.gdx.scenes.scene2d.ui.SelectBox;
 import com.badlogic.gdx.scenes.scene2d.ui.Slider;
 import com.badlogic.gdx.scenes.scene2d.ui.TextField;
 import com.badlogic.gdx.scenes.scene2d.utils.Drawable;
@@ -345,6 +348,47 @@ public final class UIFactory {
         style.checkboxOver.setMinWidth(22f);
         style.checkboxOver.setMinHeight(22f);
         return style;
+    }
+
+    /**
+     * Випадний список (роздільність, режим вікна).
+     *
+     * <p>Зібраний із ТИХ САМИХ заготовок, що поле вводу й рядок списку —
+     * {@code rectPatch(PLATE_*, EDGE_*)}. DESIGN §8 забороняє другий набір
+     * правил вигляду, тож новим тут є лише збірка, а не жоден колір.
+     *
+     * <p>Стрілки в закритого списку немає навмисно: у шрифті немає ані ▼, ані
+     * жодного іншого трикутника (перевірено по {@code cmap}), а малювати її
+     * текстурою заради одного віджета — це той самий другий набір правил.
+     * Список читається як поле, що реагує на наведення.
+     */
+    public static SelectBox.SelectBoxStyle createSelectBoxStyle() {
+        SelectBox.SelectBoxStyle s = new SelectBox.SelectBoxStyle();
+
+        s.font              = generateTintableFont(SIZE_BODY, 0f);
+        s.fontColor         = new Color(COLOR_TEXT);
+        s.disabledFontColor = new Color(NOTE);
+
+        s.background         = rectPatch(PLATE_IDLE, EDGE_IDLE);
+        s.backgroundOver     = rectPatch(PLATE_OVER, EDGE_OVER);
+        s.backgroundOpen     = rectPatch(PLATE_DOWN, COLOR_ACCENT);
+        s.backgroundDisabled = rectPatch(PLATE_DOWN, EDGE_DOWN);
+
+        // Розгорнутий список лежить ПОВЕРХ екрана, тож фон у нього щільний —
+        // напівпрозорий давав би читати крізь себе те, що під ним.
+        ScrollPane.ScrollPaneStyle scroll = new ScrollPane.ScrollPaneStyle();
+        scroll.background = rectPatch(PANEL_BG, COLOR_ACCENT);
+        s.scrollStyle = scroll;
+
+        List.ListStyle list = new List.ListStyle();
+        list.font                = generateTintableFont(SIZE_BODY, 0f);
+        list.fontColorSelected   = new Color(COLOR_ACCENT);
+        list.fontColorUnselected = new Color(ITEM_REST);
+        list.selection           = rectPatch(ROW_BG_ON, ROW_EDGE_ON);
+        list.over                = rectPatch(ROW_BG,    ROW_EDGE);
+        s.listStyle = list;
+
+        return s;
     }
 
     // ── Тла ───────────────────────────────────────────────────────────────

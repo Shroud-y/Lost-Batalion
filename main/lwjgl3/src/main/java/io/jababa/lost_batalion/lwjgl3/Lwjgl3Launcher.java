@@ -37,7 +37,16 @@ public class Lwjgl3Launcher {
         //// useful for testing performance, but can also be very stressful to some hardware.
         //// You may also need to configure GPU drivers to fully disable Vsync; this can cause screen tearing.
 
-        configuration.setWindowedMode(640, 480);
+        //// Вікно нерозтяжне: розмір міняється тільки списком у налаштуваннях
+        //// (ui/ScreenResolution). HUD рахується від UIScale і на довільному
+        //// розмірі не ламається, але перевірити вигляд можна лише на скінченному
+        //// наборі — а вільне перетягування давало вікна, де панель виділення
+        //// займала пів екрана.
+        configuration.setResizable(false);
+        //// Стартовий розмір збігається з ScreenResolution.DEFAULT_*. Справжній
+        //// ставить LostBatalion.create() зі збережених налаштувань — раніше
+        //// Preferences ще не існує.
+        configuration.setWindowedMode(1280, 720);
         configuration.setBackBufferConfig(8, 8, 8, 8, 16, 8, 0);
         //// You can change these files; they are in lwjgl3/src/main/resources/ .
         //// They can also be loaded from the root of assets/ .

@@ -8,6 +8,7 @@ import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.input.GestureDetector;
 import com.badlogic.gdx.math.MathUtils;
+import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.scenes.scene2d.Actor;
@@ -64,6 +65,15 @@ public class GameScreen implements Screen {
     private static final float ZOOM_MIN  = 0.3f;
     private static final float ZOOM_MAX  = 2.0f;
     private static final float ZOOM_STEP = 0.1f;
+
+    /**
+     * Еталонний кадр: скільки світу видно при {@code userZoom == 1}.
+     *
+     * <p>Саме ПЛОЩА цього прямокутника тримається сталою на будь-якій
+     * роздільності й будь-якому співвідношенні сторін — див. {@link #aspectFit}.
+     */
+    private static final float REF_WORLD_W = 900f;
+    private static final float REF_WORLD_H = 580f;
 
     /**
      * Скільки кадрів очікування треба, щоб показати «чекаємо на гравця».
@@ -177,6 +187,8 @@ public class GameScreen implements Screen {
     /** Чи тягне гравець камеру по мінікарті просто зараз. */
     private boolean minimapDragging = false;
     private final Vector2 minimapWorld = new Vector2();
+    /** Матриця логічних координат HUD; перераховується щокадру. */
+    private final Matrix4 hudProj = new Matrix4();
     private SpriteBatch panelBatch;
     private CurvedFormationCommand curvedFormation;
 
@@ -237,8 +249,9 @@ public class GameScreen implements Screen {
         mapHeight = mapTexture != null ? mapTexture.getHeight() : 580f;
 
         camera = new OrthographicCamera();
-        gameViewport = new ExtendViewport(900, 580, camera);
+        gameViewport = new ExtendViewport(REF_WORLD_W, REF_WORLD_H, camera);
         gameViewport.update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
+        applyZoom();
 
         String maskPath = buildMaskPath(scenario.maskPath, scenario.texturePath);
         terrainMask      = new TerrainMaskManager(maskPath);                    // ліс + річки
@@ -377,6 +390,12 @@ public class GameScreen implements Screen {
         Gdx.gl.glClearColor(0f, 0f, 0f, 1f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
 
+        // Розкладка HUD рахується ДО всього іншого в кадрі: перевірки влучання
+        // читають ті самі x/y/ширини, що й малювання, і якщо порахувати їх аж
+        // під час малювання, клік у кадрі після зміни розміру вікна піде по
+        // старій розкладці.
+        layoutHud();
+
         if (!paused) {
             handleCameraMovement(delta);
 
@@ -499,24 +518,32 @@ public class GameScreen implements Screen {
                                                               cursorWorldX, cursorWorldY);
         }
 
-        // Підказка лісу і привид під курсором — обидва в екранних координатах.
+        // Далі йде HUD — він живе в ЛОГІЧНИХ одиницях (піксель / UIScale), а не
+        // в пікселях кадру, тому й розміри вікна сюди передаються логічні.
+        float hudW = UIScale.logicalWidth();
+        float hudH = UIScale.logicalHeight();
+
+        // Підказка лісу і привид під курсором — обидва біля курсора.
         boolean showTooltip = !paused && currentTerrain == TerrainType.FOREST;
         if (showTooltip || (!paused && placingType != null)) {
+            // Курсор приходить у пікселях із нулем УГОРІ; обидва перетворення
+            // робить UIScale, бо порядок «перевернути / поділити» тут важить.
+            float curX = UIScale.inputXToLogical(cursorScreenX);
+            float curY = UIScale.inputYToLogical(cursorScreenY);
+
+            hudProj.setToOrtho2D(0, 0, hudW, hudH);
+            uiBatch.setProjectionMatrix(hudProj);
             uiBatch.begin();
-            if (showTooltip) forestTooltip.draw(uiBatch, cursorScreenX, cursorScreenY);
-            if (placingType != null) {
-                // Y тут уже екранний зверху вниз, а uiBatch малює знизу вгору.
-                spawnGhosts.drawCursor(uiBatch, placingType, localTeam, cursorScreenX,
-                                       Gdx.graphics.getHeight() - cursorScreenY);
-            }
+            if (showTooltip) forestTooltip.draw(uiBatch, curX, curY);
+            if (placingType != null)
+                spawnGhosts.drawCursor(uiBatch, placingType, localTeam, curX, curY);
             uiBatch.end();
         }
 
         if (!paused) {
-            selectionPanel.draw(panelBatch, shapes, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+            selectionPanel.draw(panelBatch, shapes, hudW, hudH);
             minimap.draw(uiBatch, shapes, camera,
-                         unitManager.getAllUnits(), localTeam,
-                         Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+                         unitManager.getAllUnits(), localTeam, hudW, hudH);
         }
 
         updateHudViewport(hudStage);
@@ -836,14 +863,84 @@ public class GameScreen implements Screen {
         selecting = false;
     }
     public void setClickConsumedByUnit(boolean v)  { clickConsumedByUnit = v; }
-    public void setZoom(float z) { camera.zoom = MathUtils.clamp(z, ZOOM_MIN, ZOOM_MAX); }
+
+    // ── Масштаб ───────────────────────────────────────────────────────────
+    //
+    // camera.zoom складається з ДВОХ множників, і писати в нього напряму більше
+    // не можна:
+    //   userZoom  — те, що крутить гравець колесом чи щипком;
+    //   aspectFit — поправка на форму вікна, щоб ПЛОЩА видимого світу не
+    //               залежала від роздільності.
+    //
+    // Без поправки ExtendViewport просто дорисовував ширину: гравець у 21:9 на
+    // повний екран бачив помітно більше карти, ніж гравець у вікні — у грі, де
+    // все побудоване на видимості й розвідці, це не косметика, а перевага.
+
+    /** Масштаб, заданий гравцем. Поправка на форму вікна сюди НЕ входить. */
+    private float userZoom = 1f;
+
+    /**
+     * Поправка, що тримає площу видимого світу сталою.
+     *
+     * <p>{@code площа = worldW × worldH × zoom²}, тож щоб вона дорівнювала
+     * еталонній, потрібен корінь із їх відношення.
+     */
+    private float aspectFit() {
+        if (gameViewport == null) return 1f;
+        float ww = gameViewport.getWorldWidth();
+        float wh = gameViewport.getWorldHeight();
+        if (ww <= 0f || wh <= 0f) return 1f;
+        return (float) Math.sqrt((REF_WORLD_W * REF_WORLD_H) / (ww * wh));
+    }
+
+    /**
+     * Поставити масштаб камери.
+     *
+     * <p>Аргумент — ЕФЕКТИВНИЙ масштаб (той самий, що читається з
+     * {@code camera.zoom}), бо саме ним оперує щипок на мобільному: він множить
+     * поточне значення на відношення відстаней. Поправка знімається тут, межі
+     * застосовуються до частки гравця.
+     */
+    public void setZoom(float z) { setUserZoom(z / aspectFit()); }
+
+    private void setUserZoom(float z) {
+        userZoom = MathUtils.clamp(z, ZOOM_MIN, ZOOM_MAX);
+        applyZoom();
+    }
+
+    /** Перерахувати {@code camera.zoom}. Викликати після кожної зміни в'юпорта. */
+    private void applyZoom() {
+        camera.zoom = userZoom * aspectFit();
+        camera.update();
+    }
 
     @Override public void resize(int w, int h) {
         gameViewport.update(w, h, false);
+        // Форма вікна змінилась — поправка масштабу разом із нею, інакше площа
+        // видимого світу поїде рівно на те, від чого ця поправка й рятує.
+        applyZoom();
         if (bloom != null) bloom.resize(w, h);
         updateHudViewport(hudStage,   w, h);
         updateHudViewport(pauseStage, w, h);
         updateHudViewport(modalStage, w, h);
+        layoutHud(w / UIScale.forHeight(h), h / UIScale.forHeight(h));
+    }
+
+    /**
+     * Перерахувати розкладку намальованого вручну HUD (мінікарта, панель
+     * виділення) під поточне вікно.
+     *
+     * <p>Панель тиснеться під те, що лишилось ліворуч від мінікарти, тому
+     * порядок обов'язковий: спершу мінікарта, потім панель.
+     */
+    private void layoutHud() {
+        layoutHud(UIScale.logicalWidth(), UIScale.logicalHeight());
+    }
+
+    private void layoutHud(float logicalW, float logicalH) {
+        if (minimap != null)        minimap.layout(logicalW, logicalH);
+        if (selectionPanel != null) selectionPanel.layout(
+                logicalW, minimap != null ? minimap.frameWidth() : 0f);
     }
 
     /** Оновити в'юпорт HUD під поточне вікно. */
@@ -903,19 +1000,25 @@ public class GameScreen implements Screen {
 
     // ── Утиліти ───────────────────────────────────────────────────────────
 
+    // Ввід приходить у ФІЗИЧНИХ пікселях із нулем угорі, а HUD намальований у
+    // ЛОГІЧНИХ одиницях із нулем унизу. Обидва перетворення робить UIScale —
+    // тут навмисно немає жодного голого Gdx.graphics.getHeight().
+
     private boolean clickOnPanel(int sx, int sy) {
-        return selectionPanel.containsScreenPoint(sx, Gdx.graphics.getHeight() - sy);
+        return selectionPanel.containsScreenPoint(
+                UIScale.inputXToLogical(sx), UIScale.inputYToLogical(sy));
     }
 
     private boolean clickOnMinimap(int sx, int sy) {
         return minimap != null
-            && minimap.containsScreenPoint(sx, Gdx.graphics.getHeight() - sy);
+            && minimap.containsScreenPoint(
+                UIScale.inputXToLogical(sx), UIScale.inputYToLogical(sy));
     }
 
     /** Перенести камеру в точку карти під курсором на мінікарті. */
     private void moveCameraFromMinimap(int sx, int sy) {
         if (minimap == null) return;
-        minimap.worldAt(sx, Gdx.graphics.getHeight() - sy, minimapWorld);
+        minimap.worldAt(UIScale.inputXToLogical(sx), UIScale.inputYToLogical(sy), minimapWorld);
         camera.position.set(minimapWorld.x, minimapWorld.y, 0);
         camera.update();
     }
@@ -980,11 +1083,29 @@ public class GameScreen implements Screen {
         }
     }
 
+    /**
+     * Показати налаштування замість меню паузи.
+     *
+     * <p>Підміна вмісту тієї самої сцени, а не перехід на {@code SettingsScreen}:
+     * перехід звільнив би {@code GameScreen} разом із мережевою сесією, тобто
+     * викинув би гравця з матчу. Пауза при цьому лишається ввімкненою —
+     * {@code paused} не чіпаємо, інакше бій поїхав би під відкритим вікном.
+     */
+    private void showPauseSettings() {
+        pauseStage.clear();
+        new PauseSettingsOverlay(pauseStage, new Runnable() {
+            @Override public void run() {
+                pauseStage.clear();
+                buildPauseOverlay();
+            }
+        });
+    }
+
     private void buildPauseOverlay() {
         pauseOverlay = new PauseOverlay(pauseStage, new PauseOverlay.PauseListener() {
             @Override public void onResume()        { paused = false; pauseStage.clear(); }
             @Override public void onReturnToLobby() { game.setScreen(new io.jababa.lost_batalion.screens.scenario.ScenarioScreen(game)); }
-            @Override public void onSettings()      {}
+            @Override public void onSettings()      { showPauseSettings(); }
             @Override public void onExit()          { Gdx.app.exit(); }
         });
     }
@@ -1017,8 +1138,10 @@ public class GameScreen implements Screen {
 
             @Override public boolean scrolled(float ax, float ay) {
                 if (paused) return false;
-                camera.zoom = MathUtils.clamp(camera.zoom + ay * ZOOM_STEP, ZOOM_MIN, ZOOM_MAX);
-                camera.update(); return true;
+                // Крок додається до частки ГРАВЦЯ: інакше на широкому вікні
+                // одне клацання колеса давало б інший приріст, ніж на вузькому.
+                setUserZoom(userZoom + ay * ZOOM_STEP);
+                return true;
             }
 
             @Override
@@ -1036,9 +1159,9 @@ public class GameScreen implements Screen {
 
                     // Клік по панелі
                     if (clickOnPanel(sx, sy)) {
-                        int sh = Gdx.graphics.getHeight();
                         boolean wasForm = selectionPanel.isFormationActive();
-                        selectionPanel.handleClick(sx, sh - sy);
+                        selectionPanel.handleClick(UIScale.inputXToLogical(sx),
+                                                   UIScale.inputYToLogical(sy));
                         boolean nowForm = selectionPanel.isFormationActive();
                         if (!wasForm && nowForm) { awaitingDrawStart=true; curvedFormation.cancel(); }
                         if  (wasForm && !nowForm){ awaitingDrawStart=false; curvedFormation.cancel(); }

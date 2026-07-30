@@ -3,6 +3,8 @@ package io.jababa.lost_batalion;
 import com.badlogic.gdx.*;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import io.jababa.lost_batalion.screens.MainMenuScreen;
+import io.jababa.lost_batalion.ui.ScreenResolution;
+import io.jababa.lost_batalion.ui.ScreenResolution.WindowMode;
 
 /**
  * Ентріпоінт
@@ -22,10 +24,28 @@ public class LostBatalion extends Game {
 
     private InputMultiplexer inputMultiplexer;
 
+    /**
+     * До якого НЕповноекранного режиму повертає F11.
+     *
+     * <p>Живе в полі, а не в налаштуваннях: це пам'ять сеансу про те, звідки
+     * гравець пішов у повний екран. Без неї F11 із режиму «без рамки» повертав
+     * би у звичайне вікно — тобто мовчки міняв налаштування, якого ніхто не
+     * чіпав.
+     */
+    private WindowMode windowedPreference = WindowMode.WINDOWED;
+
     @Override
     public void create() {
 
         Gdx.app.setLogLevel(Application.LOG_DEBUG);
+
+        // Режим і розмір вікна відновлюються тут, а не в лаунчері: Preferences
+        // живуть у Gdx.app, якого на момент складання конфігурації ще не існує.
+        windowedPreference = Settings.getWindowMode();
+        if (windowedPreference == WindowMode.FULLSCREEN)
+            windowedPreference = WindowMode.WINDOWED;
+        ScreenResolution.applyMode(Settings.getWindowMode(),
+                                      Settings.getResWidth(), Settings.getResHeight());
 
         inputMultiplexer = new InputMultiplexer();
         inputMultiplexer.addProcessor(buildGlobalInput());
@@ -81,15 +101,24 @@ public class LostBatalion extends Game {
         };
     }
 
+    /**
+     * F11. Повертає в ТОЙ режим, з якого пішли в повний екран (вікно або без
+     * рамки), і зі збереженою роздільністю — раніше тут стояло зашите
+     * 1280×720, і перше ж натискання F11 мовчки скидало вибір гравця.
+     */
     private void toggleFullscreen() {
-        if (Gdx.graphics.isFullscreen()) {
+        WindowMode current = Settings.getWindowMode();
+        WindowMode next;
 
-            Gdx.graphics.setWindowedMode(1280, 720);
+        if (current == WindowMode.FULLSCREEN) {
+            next = windowedPreference;
         } else {
-
-            Graphics.DisplayMode displayMode = Gdx.graphics.getDisplayMode();
-            Gdx.graphics.setFullscreenMode(displayMode);
+            windowedPreference = current;   // запам'ятати, куди повертатись
+            next = WindowMode.FULLSCREEN;
         }
+
+        Settings.setWindowMode(next);
+        ScreenResolution.applyMode(next, Settings.getResWidth(), Settings.getResHeight());
     }
 
     public void setScreenInputProcessor(com.badlogic.gdx.InputProcessor screenProcessor) {
@@ -112,6 +141,45 @@ public class LostBatalion extends Game {
 
         public static boolean isFullscreen() { return getPrefs().getBoolean("fullscreen", false); }
         public static void setFullscreen(boolean val) { getPrefs().putBoolean("fullscreen", val).flush(); }
+
+        /**
+         * Режим вікна: у вікні / без рамки / повний екран.
+         *
+         * <p>Якщо ключа ще немає, він добудовується зі старої галочки
+         * {@code fullscreen} — інакше гравець, який колись увімкнув повний
+         * екран, після оновлення отримав би вікно без пояснень.
+         */
+        public static WindowMode getWindowMode() {
+            WindowMode fallback =
+                isFullscreen()
+                    ? WindowMode.FULLSCREEN
+                    : WindowMode.WINDOWED;
+            return WindowMode.parse(
+                    getPrefs().getString("windowMode", null), fallback);
+        }
+
+        public static void setWindowMode(WindowMode mode) {
+            // Стара галочка лишається в синхроні: на неї ще дивиться пункт
+            // «На весь екран» у збережених налаштуваннях старих збірок.
+            getPrefs().putString("windowMode", mode.name())
+                      .putBoolean("fullscreen",
+                          mode == WindowMode.FULLSCREEN)
+                      .flush();
+        }
+
+        /**
+         * Роздільність вікна. Зберігається окремо від прапорця повного екрана:
+         * це те, куди гра повернеться, вийшовши з нього.
+         */
+        public static int getResWidth() {
+            return getPrefs().getInteger("resW", ScreenResolution.DEFAULT_W);
+        }
+        public static int getResHeight() {
+            return getPrefs().getInteger("resH", ScreenResolution.DEFAULT_H);
+        }
+        public static void setResolution(int w, int h) {
+            getPrefs().putInteger("resW", w).putInteger("resH", h).flush();
+        }
 
         /** Нік для мультиплеєра. Запам'ятовується, щоб не вводити його щоразу. */
         public static String getNick() { return getPrefs().getString("nick", ""); }

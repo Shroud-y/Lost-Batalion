@@ -12,6 +12,7 @@ import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.Disposable;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.ui.UIFactory;
+import io.jababa.lost_batalion.ui.UIScale;
 import io.jababa.lost_batalion.units.Artillery;
 import io.jababa.lost_batalion.units.Unit;
 
@@ -21,10 +22,11 @@ import io.jababa.lost_batalion.units.Unit;
  * <p>Показує всю карту цілком і білою рамкою — ділянку, яку зараз видно на
  * екрані. Клік (або протяг) по мінікарті переносить камеру в те місце.
  *
- * <p>Координати тут ЕКРАННІ, з нулем унизу зліва — як їх бачить {@code
- * SpriteBatch} зі стандартною матрицею. Обробник вводу отримує від libGDX
- * координати з нулем угорі, тому в нього y треба перевертати ({@code
- * Gdx.graphics.getHeight() - sy}), як це вже робить панель виділення.
+ * <p>Координати тут ЛОГІЧНІ (піксель, поділений на {@link UIScale}), з нулем
+ * унизу зліва. Обробник вводу отримує від libGDX ФІЗИЧНІ пікселі з нулем
+ * угорі, тому їх треба проганяти через {@link UIScale#inputXToLogical} і
+ * {@link UIScale#inputYToLogical} — обидва перетворення разом, інакше влучання
+ * розійдеться з намальованим.
  *
  * <p>Текстура карти НЕ належить мінікарті — вона приходить з екрану гри й
  * там же звільняється. Своя тут лише запасна однопіксельна заливка на випадок,
@@ -32,9 +34,22 @@ import io.jababa.lost_batalion.units.Unit;
  */
 public class Minimap implements Disposable {
 
-    /** Найбільший розмір рамки на екрані; пропорції карти зберігаються. */
+    /**
+     * Найбільший розмір рамки в ЛОГІЧНИХ одиницях; пропорції карти зберігаються.
+     *
+     * <p>Логічних, а не піксельних: розміри тут ділить на себе {@link UIScale},
+     * тому в повний екран мінікарта росте разом із рештою HUD, а не лишається
+     * поштовою маркою в кутку.
+     */
     private static final float MAX_W  = 320f;
     private static final float MAX_H  = 230f;
+    /**
+     * Стеля відносно вікна. На вузькому вікні 320 логічних одиниць — це вже
+     * третина ширини, і мінікарта наїжджає на панель виділення. Частка тримає
+     * її в межах кутка на будь-якому розмірі.
+     */
+    private static final float MAX_W_FRACTION = 0.26f;
+    private static final float MAX_H_FRACTION = 0.30f;
     /**
      * Відступ від краю вікна. Нуль: мінікарта лягає впритул у куток —
      * вільна смужка між нею і краєм екрана виглядала як недомальований UI.
@@ -71,16 +86,31 @@ public class Minimap implements Disposable {
         }
     }
 
-    /** Перерахувати місце рамки під поточний розмір вікна. */
-    public void layout(int screenW, int screenH) {
+    /**
+     * Перерахувати місце рамки під поточний розмір вікна.
+     *
+     * @param logicalW ширина HUD у ЛОГІЧНИХ одиницях ({@link UIScale#logicalWidth()}),
+     *                 не в пікселях кадру
+     * @param logicalH висота HUD у логічних одиницях
+     */
+    public void layout(float logicalW, float logicalH) {
+        float capW = Math.min(MAX_W, logicalW * MAX_W_FRACTION);
+        float capH = Math.min(MAX_H, logicalH * MAX_H_FRACTION);
+
         // Пропорції карти зберігаються: інакше рамка видимої ділянки на
         // мінікарті не збігалася б з тим, що насправді видно.
-        float scale = Math.min(MAX_W / mapWidth, MAX_H / mapHeight);
+        float scale = Math.min(capW / mapWidth, capH / mapHeight);
         w = mapWidth  * scale;
         h = mapHeight * scale;
-        x = screenW - w - MARGIN;
+        x = logicalW - w - MARGIN;
         y = MARGIN;
     }
+
+    /**
+     * Ширина зайнятого мінікартою кутка разом із підкладкою, у логічних
+     * одиницях. Панель виділення впирається в це число, щоб не залізти під неї.
+     */
+    public float frameWidth() { return w + PAD * 2f; }
 
     /** Чи потрапляє екранна точка (нуль унизу) в мінікарту. */
     public boolean containsScreenPoint(float sx, float syFromBottom) {
@@ -108,9 +138,9 @@ public class Minimap implements Disposable {
      * об'єкти, все одно виставляє свою матрицю сам.
      */
     public void draw(SpriteBatch batch, ShapeRenderer shapes, OrthographicCamera camera,
-                     Iterable<Unit> units, Team viewer, int screenW, int screenH) {
-        layout(screenW, screenH);
-        screenProj.setToOrtho2D(0, 0, screenW, screenH);
+                     Iterable<Unit> units, Team viewer, float logicalW, float logicalH) {
+        layout(logicalW, logicalH);
+        screenProj.setToOrtho2D(0, 0, logicalW, logicalH);
 
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);

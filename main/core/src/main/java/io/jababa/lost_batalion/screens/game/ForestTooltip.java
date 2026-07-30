@@ -24,13 +24,19 @@ public class ForestTooltip {
         }
     }
 
-    public void draw(SpriteBatch batch, int screenX, int screenY) {
+    /**
+     * Намалювати підказку біля курсора.
+     *
+     * <p>Координати ЛОГІЧНІ, з нулем УНИЗУ — перевертає й ділить їх викликач
+     * через {@code UIScale.inputXToLogical} / {@code inputYToLogical}. Раніше
+     * підказка перевертала y сама, і після переходу HUD у логічні одиниці це
+     * була б єдина річ на екрані, що досі рахує в пікселях кадру.
+     */
+    public void draw(SpriteBatch batch, float logicalX, float logicalY) {
         if (icon == null) return;
 
-        float glY = Gdx.graphics.getHeight() - screenY;
-
-        float drawX = screenX + OFFSET_X;
-        float drawY = glY - TOOLTIP_H - OFFSET_Y_BELOW;
+        float drawX = logicalX + OFFSET_X;
+        float drawY = logicalY - TOOLTIP_H - OFFSET_Y_BELOW;
 
         batch.draw(icon, drawX, drawY, TOOLTIP_W, TOOLTIP_H);
     }
