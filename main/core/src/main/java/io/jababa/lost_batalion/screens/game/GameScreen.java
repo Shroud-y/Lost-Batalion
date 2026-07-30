@@ -18,6 +18,7 @@ import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
+import com.badlogic.gdx.utils.viewport.Viewport;
 import io.jababa.lost_batalion.LostBatalion;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.commands.CurvedFormationCommand;
@@ -52,6 +53,7 @@ import io.jababa.lost_batalion.terrain.TerrainQuery;
 import io.jababa.lost_batalion.terrain.TerrainType;
 import io.jababa.lost_batalion.ui.PlateButton;
 import io.jababa.lost_batalion.ui.UIFactory;
+import io.jababa.lost_batalion.ui.UIScale;
 import io.jababa.lost_batalion.units.*;
 import io.jababa.lost_batalion.visibility.FogOfWarRenderer;
 import io.jababa.lost_batalion.visibility.VisibilitySystem;
@@ -289,11 +291,14 @@ public class GameScreen implements Screen {
         });
 
         UIFactory.disposeAll();
-        pauseStage = new Stage(new ScreenViewport(), batch);
+        // В'юпорти HUD прив'язані до UIScale: одиниця сцени більша за піксель,
+        // тому панелі ростуть разом із вікном, а кути лишаються кутами при
+        // будь-якому співвідношенні сторін.
+        pauseStage = new Stage(UIScale.createViewport(), batch);
         buildPauseOverlay();
-        hudStage = new Stage(new ScreenViewport(), batch);
+        hudStage = new Stage(UIScale.createViewport(), batch);
         buildHud();
-        modalStage = new Stage(new ScreenViewport(), batch);
+        modalStage = new Stage(UIScale.createViewport(), batch);
 
         InputMultiplexer mux = new InputMultiplexer();
         // Вікно десинхрону перехоплює ввід першим: поки стан розійшовся,
@@ -514,20 +519,20 @@ public class GameScreen implements Screen {
                          Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         }
 
-        hudStage.getViewport().update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
+        updateHudViewport(hudStage);
         hudStage.act(delta);
         if (disposed) return;
         hudStage.draw();
 
         if (paused) {
-            pauseStage.getViewport().update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
+            updateHudViewport(pauseStage);
             pauseStage.act(delta);
             if (disposed) return;
             pauseStage.draw();
         }
 
         if (modalActive()) {
-            modalStage.getViewport().update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
+            updateHudViewport(modalStage);
             modalStage.act(delta);
             if (disposed) return;
             modalStage.draw();
@@ -836,9 +841,28 @@ public class GameScreen implements Screen {
     @Override public void resize(int w, int h) {
         gameViewport.update(w, h, false);
         if (bloom != null) bloom.resize(w, h);
-        hudStage.getViewport().update(w, h, true);
-        pauseStage.getViewport().update(w, h, true);
-        if (modalStage != null) modalStage.getViewport().update(w, h, true);
+        updateHudViewport(hudStage,   w, h);
+        updateHudViewport(pauseStage, w, h);
+        updateHudViewport(modalStage, w, h);
+    }
+
+    /** Оновити в'юпорт HUD під поточне вікно. */
+    private void updateHudViewport(Stage stage) {
+        updateHudViewport(stage, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+    }
+
+    /**
+     * Оновити в'юпорт HUD під заданий розмір.
+     *
+     * <p>Множник ставиться ПЕРЕД {@code update}: {@code ScreenViewport} рахує
+     * розмір світу з того {@code unitsPerPixel}, який стоїть на момент виклику,
+     * а множник змінюється разом із висотою вікна.
+     */
+    private void updateHudViewport(Stage stage, int w, int h) {
+        if (stage == null) return;
+        Viewport vp = stage.getViewport();
+        if (vp instanceof ScreenViewport) UIScale.apply((ScreenViewport) vp, h);
+        vp.update(w, h, true);
     }
     @Override public void hide()   { game.setScreenInputProcessor(new InputAdapter()); }
     @Override public void pause()  {}
