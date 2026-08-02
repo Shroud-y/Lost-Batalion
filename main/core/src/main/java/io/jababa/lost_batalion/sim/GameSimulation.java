@@ -137,7 +137,10 @@ public class GameSimulation implements CommandContext {
     private void spawnArmy(Team team, long baseX) {
         unitManager.spawnSquad(team, baseX, mapH >> 1);
         unitManager.spawnSquad(team, baseX, Fixed.div(mapH, Fixed.fromFloat(1.7f)));
-        unitManager.spawnSquad(team, baseX, Fixed.div(mapH, Fixed.fromFloat(1.5f)));
+        // Третє відділення — кіннота: стартова армія має чим наздогнати, а не
+        // лише чим стріляти.
+        unitManager.spawnSquad(team, baseX, Fixed.div(mapH, Fixed.fromFloat(1.5f)),
+                               UnitType.CAVALRY);
 
         long artY = (mapH >> 1) - Fixed.fromInt(60);
         unitManager.addUnit(new Artillery(team, baseX - Fixed.fromInt(80), artY));

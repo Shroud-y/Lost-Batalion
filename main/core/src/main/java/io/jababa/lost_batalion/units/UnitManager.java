@@ -62,9 +62,20 @@ public class UnitManager {
     private static final long GRID_SPACING  = Infantry.INF_SIZE_FIXED + Fixed.fromInt(12);
 
     public void spawnSquad(Team team, long centerX, long centerY) {
-        addUnit(new Infantry(team, centerX - SQUAD_SPACING, centerY));
-        addUnit(new Infantry(team, centerX, centerY));
-        addUnit(new Infantry(team, centerX + SQUAD_SPACING, centerY));
+        spawnSquad(team, centerX, centerY, UnitType.INFANTRY);
+    }
+
+    /**
+     * Відділення з трьох юнітів заданого типу.
+     *
+     * <p>Через {@link UnitType}, а не через клас: тип уже знає, як створити
+     * юніта, і другого місця з таким знанням у грі бути не має — інакше новий
+     * рід військ доводилось би вписувати ще й сюди.
+     */
+    public void spawnSquad(Team team, long centerX, long centerY, UnitType type) {
+        addUnit(type.create(team, centerX - SQUAD_SPACING, centerY));
+        addUnit(type.create(team, centerX, centerY));
+        addUnit(type.create(team, centerX + SQUAD_SPACING, centerY));
     }
 
     /**
