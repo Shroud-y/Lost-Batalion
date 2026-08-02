@@ -183,6 +183,16 @@ public class GameScreen implements Screen {
      */
     private UnitType placingType;
 
+    /**
+     * Скільки штук цього типу замовлено кліками по меню.
+     *
+     * <p>Клік по тому самому пункту додає ще одну; усі вони висаджуються одним
+     * дотиком по карті. Клік по ІНШОМУ типу починає лік заново — змішаного
+     * замовлення немає навмисно: гравець має бачити під курсором те саме, що
+     * потім стане на карті.
+     */
+    private int placingCount;
+
     private Minimap minimap;
     /** Чи тягне гравець камеру по мінікарті просто зараз. */
     private boolean minimapDragging = false;
@@ -536,7 +546,7 @@ public class GameScreen implements Screen {
             uiBatch.begin();
             if (showTooltip) forestTooltip.draw(uiBatch, curX, curY);
             if (placingType != null)
-                spawnGhosts.drawCursor(uiBatch, placingType, localTeam, curX, curY);
+                spawnGhosts.drawCursor(uiBatch, placingType, placingCount, localTeam, curX, curY);
             uiBatch.end();
         }
 
@@ -738,13 +748,18 @@ public class GameScreen implements Screen {
      * «сюди висадити», і залишена під ним рота сприйняла б його як свій наказ.
      */
     private void beginPlacing(UnitType type) {
-        placingType = type;
+        // Повторний клік по тому самому пункту додає ще одну штуку до партії.
+        placingCount = (type == placingType) ? placingCount + 1 : 1;
+        placingType  = type;
         unitManager.clearSelection();
-        commandPanel.closeMenu();
+        // Меню лишається розгорнутим: саме по ньому й клікають далі.
+        commandPanel.setPlacing(placingType, placingCount);
     }
 
     private void cancelPlacing() {
-        placingType = null;
+        placingType  = null;
+        placingCount = 0;
+        commandPanel.setPlacing(null, 0);
     }
 
     /**
@@ -756,12 +771,26 @@ public class GameScreen implements Screen {
      * з'явиться.
      */
     public void issueSpawn(float worldX, float worldY) {
-        if (placingType == null) return;
-        runner.issue(new SpawnCommand(runner.getLocalPlayerId(), placingType.ordinal(),
-                                      Fixed.fromFloat(worldX), Fixed.fromFloat(worldY)));
+        if (placingType == null || placingCount <= 0) return;
+
+        // Партія розкладається сіткою навколо точки, а не в одну координату:
+        // привиди замовлень стояли б стосом, і клікнути по потрібному, щоб
+        // скасувати, було б неможливо.
+        float spacing = placingType.sizePx() + 8f;
+        int   cols    = (int) Math.ceil(Math.sqrt(placingCount));
+
+        for (int i = 0; i < placingCount; i++) {
+            float col = (i % cols) - (cols - 1) / 2f;
+            float row = i / cols;
+            runner.issue(new SpawnCommand(
+                runner.getLocalPlayerId(), placingType.ordinal(),
+                Fixed.fromFloat(worldX + col * spacing),
+                Fixed.fromFloat(worldY - row * spacing)));
+        }
+
         // Позначки наказу тут навмисно немає: місце висадки й так показує сам
         // привид, а світляний хрест поверх нього просто засвітив би силует.
-        placingType = null;
+        cancelPlacing();
     }
 
     /**

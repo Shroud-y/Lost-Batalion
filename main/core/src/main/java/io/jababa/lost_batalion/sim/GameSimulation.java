@@ -265,8 +265,14 @@ public class GameSimulation implements CommandContext {
      *
      * <p>Шлях будується від центроїда виділення до цілі, і ним ідуть усі. Це і
      * дешевше (один пошук замість десятка), і виглядає правильніше: група
-     * рухається разом, а не розпливається окремими стежками. Розходяться юніти
-     * лише в кінці — кожен у своє місце в строю, як і при звичайному наказі.
+     * рухається разом, а не розпливається окремими стежками.
+     *
+     * <p>Але йдуть вони не ПО ньому, а кожен своєю смугою — маршрутом,
+     * зсунутим на його місце в строю. Спільна нитка означала б, що всі націлені
+     * в ту саму точку: юніти збивались у купу біля кожної проміжної точки,
+     * розштовхування крутило пари одне навколо одного, і група спершу довго
+     * шикувалась на місці й лише потім рушала. Зі зсувами строй складається сам
+     * по дорозі — кожен від першого ж тіку йде ТУДИ, а не до сусіда.
      */
     @Override
     public void pathMoveUnits(int playerId, int[] unitIds, long targetX, long targetY) {
@@ -289,11 +295,34 @@ public class GameSimulation implements CommandContext {
 
         if (waypoints == null) return;   // ціль поруч або шлях не знайдено — йдемо прямо
 
-        // …а потім кажемо кожному пройти спільним маршрутом до свого місця.
+        // Габарити маршруту — щоб зсунута смуга не вийшла за карту.
+        long minWX = Long.MAX_VALUE, maxWX = Long.MIN_VALUE;
+        long minWY = Long.MAX_VALUE, maxWY = Long.MIN_VALUE;
+        for (int i = 0; i + 1 < waypoints.length; i += 2) {
+            if (waypoints[i]     < minWX) minWX = waypoints[i];
+            if (waypoints[i]     > maxWX) maxWX = waypoints[i];
+            if (waypoints[i + 1] < minWY) minWY = waypoints[i + 1];
+            if (waypoints[i + 1] > maxWY) maxWY = waypoints[i + 1];
+        }
+
+        // …а потім кажемо кожному пройти маршрутом, зсунутим на його місце
+        // в строю, і в кінці стати рівно туди, куди він і мав стати.
         for (int i = 0; i < units.size; i++) {
             Unit u = units.get(i);
-            u.followPath(waypoints, u.getTargetX(), u.getTargetY());
+            long slotX = u.getTargetX(), slotY = u.getTargetY();
+
+            long half = u.sizeFixed() >> 1;
+            long offX = clampOffset(slotX - targetX, half - minWX, mapW - half - maxWX);
+            long offY = clampOffset(slotY - targetY, half - minWY, mapH - half - maxWY);
+
+            u.followPath(waypoints, offX, offY, slotX, slotY);
         }
+    }
+
+    /** Зсув смуги в межах [lo, hi]; якщо маршрут сам упритул до краю — без зсуву. */
+    private static long clampOffset(long off, long lo, long hi) {
+        if (hi < lo) return 0;
+        return off < lo ? lo : (off > hi ? hi : off);
     }
 
     private void ensureNavigation() {

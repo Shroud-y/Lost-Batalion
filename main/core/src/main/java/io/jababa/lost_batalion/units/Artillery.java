@@ -29,7 +29,13 @@ public class Artillery extends Unit {
      * на спрайті займає лише середину — стріляти й клікати по порожніх кутах
      * не мало б працювати.
      */
-    private static final long ART_HIT_RADIUS = Fixed.fromInt(6);
+    private static final long ART_HIT_RADIUS = Fixed.fromInt(7);
+    /**
+     * Розмір спрайта. Більший за {@link #ART_SIZE_FIXED}: гармата з обслугою
+     * має читатись як важка техніка, а не як трохи ширша піхота. Хітбокс при
+     * цьому лишається старий — виросла картинка, а не машина.
+     */
+    private static final float ART_RENDER_SIZE = 18f;
     /** Спрайт гармати зміщений вліво від центру — бар зсуваємо правіше. */
     private static final float ART_HP_BAR_OFFSET_X = 2f;
 
@@ -166,6 +172,7 @@ public class Artillery extends Unit {
     @Override public float  spriteFacingOffsetDeg() { return ART_SPRITE_FACING_OFFSET; }
 
     @Override public long   sizeFixed()      { return ART_SIZE_FIXED; }
+    @Override public float  renderSizePx()   { return ART_RENDER_SIZE; }
     @Override public long   hitRadiusFixed() { return ART_HIT_RADIUS; }
     @Override public float  hpBarOffsetX()   { return ART_HP_BAR_OFFSET_X; }
     @Override public String getTexturePath() {

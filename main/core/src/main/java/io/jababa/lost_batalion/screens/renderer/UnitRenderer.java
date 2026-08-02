@@ -48,7 +48,7 @@ public class UnitRenderer {
             // getSizePx(), а НЕ getSize(): друге повертає fixed-point long, і
             // Java мовчки розширила б його у float — юніт розміром 10 малювався б
             // розміром 655360 і закривав би собою всю карту.
-            float size  = u.getSizePx();
+            float size  = u.renderSizePx();
             float x     = u.renderX(alpha) - size / 2f;
             float y     = u.renderY(alpha) - size / 2f;
 

@@ -43,17 +43,53 @@ public class SpawnGhostRenderer {
      */
     private static final float CURSOR_OFFSET = 6f;
 
+    /**
+     * Розмір силуета під курсором, частками розміру юніта. Більший за одиницю
+     * (інакше піхота під курсором — крапка), але не вдвічі: партія з кількох
+     * штук тоді закриває саме те місце, куди гравець цілиться.
+     */
+    private static final float CURSOR_SCALE = 1.3f;
+
+    /**
+     * Крок між силуетами партії, частками розміру. Більший за одиницю — між
+     * ними лишається просвіт, і видно, що їх кілька, а не один розмазаний.
+     */
+    private static final float CURSOR_STACK = 1.2f;
+
+    /**
+     * Скільки силуетів узагалі малювати. Точну кількість показують квадратики
+     * в меню; курсор лише каже «беремо кілька».
+     */
+    private static final int CURSOR_MAX_GHOSTS = 5;
+
     private final ObjectMap<String, Texture> cache = new ObjectMap<>();
 
     /** Привид під курсором. Координати екранні, Y уже перевернутий викликачем. */
     public void drawCursor(SpriteBatch uiBatch, UnitType type, Team team,
                            float screenX, float screenY) {
-        if (type == null) return;
-        float size = type.sizePx() * 2f;   // курсор дрібніший за карту — інакше не роздивитись
+        drawCursor(uiBatch, type, 1, team, screenX, screenY);
+    }
+
+    /**
+     * Те саме для партії з кількох штук: силуети йдуть рядком ЛІВОРУЧ від
+     * курсора, з нахлистом, щоб довга черга не перекрила пів екрана.
+     *
+     * @param count скільки замовлено; ≤0 — не малюється нічого
+     */
+    public void drawCursor(SpriteBatch uiBatch, UnitType type, int count, Team team,
+                           float screenX, float screenY) {
+        if (type == null || count <= 0) return;
+        float size = type.sizePx() * CURSOR_SCALE;
         Texture tex = texture(type, team);
 
+        int shown = Math.min(count, CURSOR_MAX_GHOSTS);
+        float step = size * CURSOR_STACK;
+
         uiBatch.setColor(1f, 1f, 1f, CURSOR_ALPHA);
-        uiBatch.draw(tex, screenX - CURSOR_OFFSET - size, screenY - size / 2f, size, size);
+        for (int i = 0; i < shown; i++) {
+            uiBatch.draw(tex, screenX - CURSOR_OFFSET - size - i * step,
+                         screenY - size / 2f, size, size);
+        }
         uiBatch.setColor(1f, 1f, 1f, 1f);
     }
 

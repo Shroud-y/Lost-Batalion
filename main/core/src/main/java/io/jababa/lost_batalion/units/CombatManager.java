@@ -788,8 +788,8 @@ public class CombatManager {
             float pulse    = (float) Math.abs(Math.sin(art.aimTicks * 0.175f));
 
             float cx   = art.worldX();
-            float cy   = art.worldY() + art.getSizePx() / 2f + 6f;
-            float barW = art.getSizePx() * 1.2f;
+            float cy   = art.worldY() + art.renderSizePx() / 2f + 6f;
+            float barW = art.renderSizePx() * 1.2f;
             float barH = 5f;
             float bx   = cx - barW / 2f;
 

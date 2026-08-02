@@ -92,6 +92,20 @@ public abstract class Unit {
     private int    pathIndex;
 
     /**
+     * Особистий зсув юніта відносно спільного маршруту (Q47.16).
+     *
+     * <p>Маршрут будується один на всю групу, але йти всім в ОДНУ точку не
+     * можна: біля кожної проміжної точки юніти збивались у купу, розштовхування
+     * крутило пари одне навколо одного, і лише потім група рушала далі. Тому
+     * кожен іде своєю «смугою» — маршрутом, зсунутим на його місце в строю.
+     * Зсув сталий на весь шлях, тож строй складається САМ по дорозі, а не
+     * збирається на місці перед виходом.
+     *
+     * <p>Це стан симуляції — пишеться у знімок разом із маршрутом.
+     */
+    private long pathOffX, pathOffY;
+
+    /**
      * Позиція на початок поточного тіку. Рендер малює юніта між нею і поточною,
      * інакше при 144 Гц рух виглядав би ривками по 25 мс.
      * До симуляції не належить і в checksum не входить.
@@ -207,6 +221,8 @@ public abstract class Unit {
         moving  = true;
         path      = null;      // прямий наказ скасовує маршрут
         pathIndex = 0;
+        pathOffX  = 0;
+        pathOffY  = 0;
     }
 
     /**
@@ -218,31 +234,65 @@ public abstract class Unit {
      * @param waypoints пари координат підряд; null або порожній → звичайний рух
      */
     public void followPath(long[] waypoints, long finalX, long finalY) {
+        followPath(waypoints, 0, 0, finalX, finalY);
+    }
+
+    /**
+     * Те саме, але зі зсувом смуги (див. {@link #pathOffX}).
+     *
+     * @param offX,offY зсув, який додається до КОЖНОЇ точки маршруту
+     */
+    public void followPath(long[] waypoints, long offX, long offY, long finalX, long finalY) {
         if (waypoints == null || waypoints.length < 2) {
             moveTo(finalX, finalY);
             return;
         }
         path   = waypoints;
         moving = true;
+        pathOffX = offX;
+        pathOffY = offY;
         this.finalX = finalX;
         this.finalY = finalY;
 
-        // Починаємо з найближчої до себе точки, а не з нульової. Маршрут
-        // будується від центроїда групи, тож для юніта з переднього краю
-        // перші точки лежать ПОЗАДУ — без цього він спершу йшов би назад.
-        pathIndex = nearestWaypoint(waypoints);
-        targetX = waypoints[pathIndex * 2];
-        targetY = waypoints[pathIndex * 2 + 1];
+        pathIndex = joinIndex(waypoints);
+        targetX = waypoints[pathIndex * 2]     + pathOffX;
+        targetY = waypoints[pathIndex * 2 + 1] + pathOffY;
     }
 
-    private int nearestWaypoint(long[] waypoints) {
-        int best = 0;
-        long bestDist = Long.MAX_VALUE;
-        for (int i = 0; i * 2 + 1 < waypoints.length; i++) {
-            long d = Fixed.dstSq(x, y, waypoints[i * 2], waypoints[i * 2 + 1]);
-            if (d < bestDist) { bestDist = d; best = i; }
+    /**
+     * Наскільки далеко юніт може «підхопити» маршрут одразу, навпростець.
+     *
+     * <p>Точки лежать по сітці 8 px, а розліт групи — кілька десятків, тож цього
+     * вистачає, щоб той, хто вже стоїть попереду інших, не йшов назад. Більше
+     * ставити не можна: пряма ділянка виходу на маршрут НЕ перевіряється на
+     * прохідність, і з великим порогом юніт зрізав би саме ту перешкоду, заради
+     * якої шлях і шукали.
+     */
+    private static final long JOIN_RADIUS = Fixed.fromInt(48);
+
+    /**
+     * З якої точки маршруту юніту починати.
+     *
+     * <p>Маршрут будується від центроїда групи, тож для юніта з переднього краю
+     * перші точки лежать ПОЗАДУ — без відбору він спершу йшов би назад. Тому
+     * береться НАЙДАЛІ пройдена точка з тих, що поруч: усе, що група вже
+     * фактично минула, просто пропускається. Якщо поруч немає жодної (юніт
+     * відстав або стоїть збоку) — найближча, і він доганяє.
+     */
+    private int joinIndex(long[] waypoints) {
+        int points = waypoints.length / 2;
+
+        int  nearest     = 0;
+        long nearestDist = Long.MAX_VALUE;
+
+        for (int i = points - 1; i >= 0; i--) {
+            long dx = waypoints[i * 2]     + pathOffX - x;
+            long dy = waypoints[i * 2 + 1] + pathOffY - y;
+            long d  = Fixed.length(dx, dy);
+            if (d <= JOIN_RADIUS) return i;     // обхід іде з кінця → це найдальша
+            if (d < nearestDist) { nearestDist = d; nearest = i; }
         }
-        return best;
+        return nearest;
     }
 
     /** Куди юніт стане, коли пройде весь маршрут. */
@@ -354,14 +404,16 @@ public abstract class Unit {
 
         pathIndex++;
         if (pathIndex * 2 + 1 < path.length) {
-            targetX = path[pathIndex * 2];
-            targetY = path[pathIndex * 2 + 1];
+            targetX = path[pathIndex * 2]     + pathOffX;
+            targetY = path[pathIndex * 2 + 1] + pathOffY;
             return true;
         }
 
         // Маршрут скінчився — лишається стати на своє місце в строю.
         path      = null;
         pathIndex = 0;
+        pathOffX  = 0;
+        pathOffY  = 0;
         if (finalX != x || finalY != y) {
             targetX = finalX;
             targetY = finalY;
@@ -436,6 +488,8 @@ public abstract class Unit {
         moving  = false;
         path      = null;
         pathIndex = 0;
+        pathOffX  = 0;
+        pathOffY  = 0;
     }
 
     // ── Знімок стану (ресинк) ─────────────────────────────────────────────
@@ -462,6 +516,8 @@ public abstract class Unit {
         out.writeLong(finalX);
         out.writeLong(finalY);
         out.writeInt(pathIndex);
+        out.writeLong(pathOffX);
+        out.writeLong(pathOffY);
         out.writeInt(path == null ? 0 : path.length);
         if (path != null) for (int i = 0; i < path.length; i++) out.writeLong(path[i]);
     }
@@ -483,6 +539,8 @@ public abstract class Unit {
         finalX    = in.readLong();
         finalY    = in.readLong();
         pathIndex = in.readInt();
+        pathOffX  = in.readLong();
+        pathOffY  = in.readLong();
         int pathLength = in.readInt();
         if (pathLength <= 0) {
             path = null;
@@ -519,6 +577,17 @@ public abstract class Unit {
 
     /** Розмір у пікселях — єдине, що можна брати в рендер. */
     public float getSizePx() { return Fixed.toFloat(sizeFixed()); }
+
+    /**
+     * Розмір спрайта в пікселях.
+     *
+     * <p>Окремо від {@link #sizeFixed()} навмисно: той бере участь у симуляції
+     * (обрізання цілі по краю карти), і збільшити картинку через нього означало
+     * б посунути правила гри заради вигляду. За замовчуванням збігається з
+     * розміром юніта — розходяться лише ті, чий спрайт малює більше, ніж
+     * займає сама машина.
+     */
+    public float renderSizePx() { return getSizePx(); }
 
     /** Радіус влучання в пікселях — для UI-пікінгу (клік/рамка). */
     public float getHitRadiusPx() { return Fixed.toFloat(hitRadiusFixed()); }
