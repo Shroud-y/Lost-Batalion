@@ -24,9 +24,11 @@ import io.jababa.lost_batalion.units.Unit;
  * hottest loop in the tick.
  *
  * Hard elevation occlusion (overrides everything):
- *   Terrain that rises above the straight line-of-sight between observer and
- *   target hides the target completely — you see a unit ON a hill, but not one
- *   BEHIND it. See {@link #isSightBlockedByElevation}.
+ *   Terrain that rises a full tier above the straight sight LINE between the two
+ *   units hides the target completely — you see a unit ON a hill, but not one
+ *   BEHIND it, and from inside a hollow you see little but the hollow. The line
+ *   runs between the endpoints' own ground heights, so the rule is symmetric.
+ *   See {@link #isSightBlockedByElevation}.
  *
  * All terrain access goes through {@link TerrainQuery}, which knows which of the
  * scenario's two masks holds what (rivers live in the forest mask, height tiers
@@ -42,7 +44,7 @@ import io.jababa.lost_batalion.units.Unit;
  *   deep inside 1.8 × 4.0 = 7.2 → stealth clamps to 0.9 → seen at 0.1 × sight.
  *
  * Observer terrain (sightMod):
- *   forest × 0.55 | lowlands × 0.80 | pre-lowlands × 0.92
+ *   forest × 0.55 | lowlands × 0.40 | pre-lowlands × 0.65
  *   highlands × 1.30 | pre-highlands × 1.15
  *
  * Target elevation (elevationStealthMod):
@@ -50,15 +52,46 @@ import io.jababa.lost_batalion.units.Unit;
  */
 public class VisibilitySystem {
 
-    private static final long FOREST_SIGHT_PENALTY = Fixed.fromFloat(0.55f);
+    /*
+     * Sight multipliers by observer terrain — PUBLIC and float, because the fog
+     * renderer draws the sight circle from the same numbers. It used to keep its
+     * own copy of this table with a "must stay in sync" comment above it, which
+     * is exactly the arrangement that drifts: the circle on screen would promise
+     * a range detection no longer granted.
+     *
+     * The simulation still works in fixed-point; these floats are converted once,
+     * at class load, and never enter the tick.
+     */
+    public static final float SIGHT_MOD_FOREST         = 0.55f;
+    public static final float SIGHT_MOD_HIGHLANDS      = 1.30f;
+    public static final float SIGHT_MOD_PRE_HIGHLANDS  = 1.15f;
+    /**
+     * Перед-низини. Було 0.92 — тобто фактично нічого.
+     *
+     * <p>Причина зниження суто картографічна: справжніх {@code LOWLANDS} на
+     * Жовтих Водах лише 2.06% карти, п'ять плям радіусом 37–66 одиниць. Штраф,
+     * що діє тільки на них, гравець просто не зустрічає — улоговини, які видно
+     * оком, намальовані саме перед-низинами (6.4%). Разом з 0.40 у самих
+     * низинах виходить сходинка 0.40 → 0.65 → 1.0, а не обрив на 2% карти.
+     */
+    public static final float SIGHT_MOD_PRE_LOWLANDS   = 0.65f;
+    /**
+     * Нізини. Було 0.80 — разом із виправленням перекриття огляду рельєфом
+     * виявилось, що цього замало: юніт у ямі втрачав напрямки, але не дальність,
+     * і далі розвідував майже на повну. Половина від колишнього значення робить
+     * низину тим, чим вона є, — місцем, де ти не бачиш нічого й тебе не бачать.
+     */
+    public static final float SIGHT_MOD_LOWLANDS       = 0.40f;
+
+    private static final long FOREST_SIGHT_PENALTY = Fixed.fromFloat(SIGHT_MOD_FOREST);
     private static final long FOREST_STEALTH_BONUS = Fixed.fromFloat(1.8f);   // target standing in forest
     private static final long FOREST_LOS_BLOCK_MOD = Fixed.fromFloat(4.0f);   // forest on the LOS path
     private static final long MAX_EFFECTIVE_STEALTH = Fixed.fromFloat(0.90f);
 
-    private static final long SIGHT_HIGHLANDS     = Fixed.fromFloat(1.30f);
-    private static final long SIGHT_PRE_HIGHLANDS = Fixed.fromFloat(1.15f);
-    private static final long SIGHT_PRE_LOWLANDS  = Fixed.fromFloat(0.92f);
-    private static final long SIGHT_LOWLANDS      = Fixed.fromFloat(0.80f);
+    private static final long SIGHT_HIGHLANDS     = Fixed.fromFloat(SIGHT_MOD_HIGHLANDS);
+    private static final long SIGHT_PRE_HIGHLANDS = Fixed.fromFloat(SIGHT_MOD_PRE_HIGHLANDS);
+    private static final long SIGHT_PRE_LOWLANDS  = Fixed.fromFloat(SIGHT_MOD_PRE_LOWLANDS);
+    private static final long SIGHT_LOWLANDS      = Fixed.fromFloat(SIGHT_MOD_LOWLANDS);
 
     private static final long STEALTH_PRE_LOWLANDS = Fixed.fromFloat(1.08f);
     private static final long STEALTH_LOWLANDS     = Fixed.fromFloat(1.20f);
@@ -213,19 +246,27 @@ public class VisibilitySystem {
     // ── Elevation line-of-sight ──────────────────────────────────────────────
 
     /**
-     * True if a hill between observer and target blocks vision.
+     * True if terrain between observer and target blocks vision.
      *
-     * A tile occludes only when it is taller than BOTH endpoints — i.e. a genuine
-     * crest poking above the pair. Ground at or below either endpoint never
-     * blocks, so:
-     *   - high ground sees across and down onto lower terrain freely,
-     *   - a unit ON a hill is visible from lower ground (its own slope ≤ itself),
-     *   - only a ridge taller than observer and target hides what's behind it.
+     * Ground occludes when it rises a full tier above the straight SIGHT LINE
+     * between the two units — the line running from the observer's ground height
+     * to the target's, not a flat ceiling over both. Consequences:
+     *   - high ground still sees across and down onto lower terrain freely,
+     *   - a unit ON a hill is still visible from lower ground (its own slope
+     *     lies on the line, not above it),
+     *   - a unit in a hollow is now hemmed in by the hollow's own rim, because
+     *     the line out of it passes low over that rim.
      *
-     * Heights are integer tiers, so "taller than both by more than half a tier"
-     * is exactly "at least one tier above the taller endpoint" — see
-     * {@link TerrainQuery#blockingHeightFor}. Sampling skips both endpoints' own
-     * tiles so standing on a peak never self-occludes.
+     * The old rule used a constant ceiling of max(hObs,hTgt)+1, which asked the
+     * terrain to out-top BOTH ends. Nothing between a valley (tier 1) and the
+     * plain above it (tier 3) could ever reach tier 4, so a unit in a hollow saw
+     * out of it as freely as one standing in the open — measured on Zhovti Vody:
+     * 57.7% of targets in sight range visible from lowlands vs 58.0% from plains,
+     * and 100% of highland targets. With the sight line those become 19.1% and
+     * 28.6%. See {@link TerrainQuery#ELEVATION_BLOCK_MARGIN_TIERS}.
+     *
+     * Sampling skips both endpoints' own tiles so standing on a peak never
+     * self-occludes. The rule is symmetric: the same line serves both directions.
      */
     private boolean isSightBlockedByElevation(Unit observer, Unit target) {
         if (terrain == null) return false;
@@ -233,8 +274,8 @@ public class VisibilitySystem {
         int hObs = terrain.heightF(observer.x, observer.y);
         int hTgt = terrain.heightF(target.x, target.y);
 
-        return terrain.hasGroundAboveOnSegmentF(observer.x, observer.y, target.x, target.y,
-                                                TerrainQuery.blockingHeightFor(hObs, hTgt));
+        return terrain.hasGroundAboveOnSegmentF(observer.x, observer.y,
+                                                target.x, target.y, hObs, hTgt);
     }
 
     private boolean isForest(long rawX, long rawY) {

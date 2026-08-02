@@ -32,31 +32,34 @@ import io.jababa.lost_batalion.math.Fixed;
 public class TerrainQuery {
 
     /**
-     * Наскільки (в ярусах висоти) місцевість має підніматися над лінією зору,
+     * Наскільки (в ярусах висоти) місцевість має підніматися над ЛІНІЄЮ ЗОРУ,
      * щоб перекрити її.
      *
-     * Усі яруси — цілі числа, тому запас працює як поріг «на скільки ярусів
-     * гребінь має підніматися над ОБОМА кінцями лінії»:
-     *   запас 0.5 → досить 1 ярусу;
-     *   запас 1.0 → потрібно 2 яруси.
+     * <h3>Лінія, а не стеля</h3>
+     * Раніше поріг був сталий уздовж усього відрізка: {@code max(hA,hB) + 1},
+     * тобто «гребінь мусить бути вищим за ОБИДВА кінці». Це прощало найгрубішу
+     * помилку рельєфу: юніт у низині (ярус 1) дивився на рівнину (3) — і
+     * перекрити його огляд могло тільки щось від 4-го ярусу. Обід улоговини,
+     * через який він насправді нічого не бачить, за побудовою не рахувався.
+     * На Жовтих Водах це давало 100% видимості з ями на височини й 57.7% на всі
+     * цілі в радіусі огляду — з рівнини було 58.0%, тобто яма нічим не
+     * відрізнялась від відкритого поля.
      *
-     * При 0.5:
-     *   HIGHLANDS(5) перекриває огляд через PLAINS(3)              → перекрито
-     *   PRE_HIGHLANDS(4) перекриває огляд через PLAINS(3)          → перекрито
-     *   юніт, що стоїть НА підйомі(4), видно з рівнини(3):
-     *       стеля = max(3,4)+0.5 = 4.5, гребінь 4, 4 > 4.5 хибно   → видно
-     *   юніт на плато HIGHLANDS дивиться вздовж свого ж плато:
-     *       стеля = 5.5, гребінь 5                                 → видно
+     * <p>Тепер поріг іде вздовж прямої між висотами кінців:
+     * {@code h(d) = hA + (hB − hA)·d/L}, а перекриває те, що піднімається над
+     * НЕЮ на цілий ярус. Це звичайна геометрія прямої видимості: дивлячись із
+     * ями вгору, ти впираєшся у власний обід, бо промінь проходить над ним
+     * низько. Симетрія збережена — пряма та сама в обидва боки.
      *
-     * Було 1.0, і тоді PRE_HIGHLANDS (18.5% карти!) не перекривав узагалі
-     * нічого, окрім нізин — висоти виглядали декоративними.
+     * <p>Заміряно на масках Жовтих Вод після зміни: з низин видно 19.1% цілей
+     * (було 57.7%), з рівнин 51.8% (було 58.0%), з височин 80.6% (було 100%).
      *
-     * <p>Симуляція цю константу не використовує: для ЦІЛИХ висот «вище за
-     * max+0.5» тотожне «>= max+1», і саме так це записано в
-     * {@link #blockingHeightFor(int, int)}. Половинка лишається тільки в
-     * рендері оверлея, де математика йде по-старому у float.
+     * <p>Ціле число, а не 0.5: яруси цілі, і «вище за лінію більш ніж на пів
+     * ярусу» для них означало б те саме, що «не нижче за наступний ярус» лише
+     * на пласкій лінії. На похилій лінія дробова, тож запас має бути чесним
+     * ярусом.
      */
-    public static final float ELEVATION_BLOCK_MARGIN = 0.5f;
+    public static final int ELEVATION_BLOCK_MARGIN_TIERS = 1;
 
     /** Базова висота рівнини — для NONE/FOREST, які не несуть даних про ярус. */
     public static final int   PLAINS_BASELINE_HEIGHT_INT = 3;
@@ -216,16 +219,19 @@ public class TerrainQuery {
     }
 
     /**
-     * Найменший ярус, що вже перекриває огляд між двома точками з висотами
-     * {@code hA} і {@code hB}.
+     * Поріг перекриття на відстані {@code d} від початку відрізка довжиною
+     * {@code dist}, у Q47.16.
      *
-     * <p>Раніше це записувалось як {@code max(hA,hB) + ELEVATION_BLOCK_MARGIN}
-     * і порівнювалось у float. Для цілих ярусів «вище за max+0.5» — це рівно
-     * «не менше за max+1», тож половинки не потрібні, а разом із ними зникає
-     * останній float із гарячого шляху видимості.
+     * <p>Пряма між висотами кінців плюс запас у цілий ярус — див.
+     * {@link #ELEVATION_BLOCK_MARGIN_TIERS}. Нахил передається готовим, бо в
+     * гарячому циклі він сталий, а ділення — найдорожча операція fixed-point.
+     *
+     * @param hStartFixed висота початку відрізка (Q47.16)
+     * @param slope       {@code (hEnd − hStart) / dist}, теж Q47.16
      */
-    public static int blockingHeightFor(int hA, int hB) {
-        return Math.max(hA, hB) + 1;
+    private static long occlusionCeiling(long hStartFixed, long slope, long d) {
+        return hStartFixed + Fixed.mul(slope, d)
+             + Fixed.fromInt(ELEVATION_BLOCK_MARGIN_TIERS);
     }
 
     // ── Блокове зведення: прискорення ray-marching ────────────────────────────
@@ -279,24 +285,32 @@ public class TerrainQuery {
      */
     public boolean hasForestOnSegmentF(long x1, long y1, long x2, long y2,
                                        long skipNearStart, long skipNearEnd) {
-        return segmentHits(x1, y1, x2, y2, true, 0, skipNearStart, skipNearEnd);
+        return segmentHits(x1, y1, x2, y2, true, 0, 0, skipNearStart, skipNearEnd);
     }
 
     /**
-     * Чи є на відрізку гребінь з ярусом не нижчим за {@code blockingHeight}, що
-     * перекриває лінію зору. Обидва кінці виключені: юніт не перекриває сам себе.
+     * Чи перекриває гребінь лінію зору між двома точками. Обидва кінці
+     * виключені: юніт не перекриває сам себе.
+     *
+     * <p>Поріг НЕ сталий — він іде вздовж прямої між висотами кінців, див.
+     * {@link #ELEVATION_BLOCK_MARGIN_TIERS}. Висоти передаються аргументами, а
+     * не читаються тут, бо той, хто питає, вже їх знає: {@code VisibilitySystem}
+     * бере їх для обох юнітів на початку перевірки.
      *
      * <p>Одного пікселя замало — підйом має протриматись
      * {@link #LOS_CREST_MIN_RUN} одиниць поспіль, інакше зубчаста межа ярусу
      * рвала б видимість від кожного кутового пікселя (та сама причина, що й
      * «штрихи» в ALT-оверлеї).
+     *
+     * @param hStart ярус висоти в точці {@code (x1,y1)}
+     * @param hEnd   ярус висоти в точці {@code (x2,y2)}
      */
     public boolean hasGroundAboveOnSegmentF(long x1, long y1, long x2, long y2,
-                                            int blockingHeight) {
-        return segmentHits(x1, y1, x2, y2, false, blockingHeight, 0, 0);
+                                            int hStart, int hEnd) {
+        return segmentHits(x1, y1, x2, y2, false, hStart, hEnd, 0, 0);
     }
 
-    /** Float-обгортки для рендеру. */
+    /** Float-обгортка для рендеру. */
     public boolean hasForestOnSegment(float x1, float y1, float x2, float y2,
                                       float skipNearStart, float skipNearEnd) {
         return hasForestOnSegmentF(Fixed.fromFloat(x1), Fixed.fromFloat(y1),
@@ -305,25 +319,16 @@ public class TerrainQuery {
                                    Fixed.fromFloat(skipNearEnd));
     }
 
-    public boolean hasGroundAboveOnSegment(float x1, float y1, float x2, float y2,
-                                           float ceiling) {
-        // Стеля в рендері — дробова (max + 0.5); у цілих ярусах перекриває
-        // все, що не нижче за наступний ярус.
-        return hasGroundAboveOnSegmentF(Fixed.fromFloat(x1), Fixed.fromFloat(y1),
-                                        Fixed.fromFloat(x2), Fixed.fromFloat(y2),
-                                        (int) Math.floor(ceiling) + 1);
-    }
-
     /**
      * Спільний обхід відрізка блоками (DDA) з детальним доходженням лише там,
      * де це потрібно. Уся математика — цілочисельна.
      *
-     * <p>Тут поріг перекриття СТАЛИЙ уздовж усього відрізка (він рахується з
-     * висот обох кінців, які відомі наперед), тому пропуск блоку тривіально
-     * точний: {@code blockMax < blockingHeight} означає, що жоден піксель у
-     * блоці порога не сягає. Для лісу так само: немає лісу в блоці — немає що
-     * шукати. Це простіше за промінь ALT-оверлея, де поріг залежить від
-     * поточної точки, а гребінь накопичується.
+     * <p>Поріг перекриття вздовж відрізка НЕ сталий: він іде прямою між
+     * висотами кінців. Пропуск блоку від цього не перестає бути точним, бо
+     * пряма монотонна — найнижчий поріг на ділянці блоку неодмінно припадає на
+     * один із її кінців. Якщо навіть найвищий піксель блоку не сягає цього
+     * мінімуму, пропустити блок безпечно. Для лісу все як було: немає лісу в
+     * блоці — немає що шукати.
      *
      * <p>У режимі висот блокує не окремий піксель, а лише суцільний підйом
      * завдовжки {@link #LOS_CREST_MIN_RUN} — лічильник {@code crestRun}. Він
@@ -331,10 +336,12 @@ public class TerrainQuery {
      * дозволений лише тоді, коли в блоці гарантовано немає жодного пікселя від
      * порога, тобто підйом там точно уривається.
      *
-     * @param forestMode true → шукаємо ліс; false → шукаємо землю від порога
+     * @param forestMode true → шукаємо ліс; false → шукаємо гребінь над лінією
+     * @param hStart     висота початку відрізка (значуще лише для висот)
+     * @param hEnd       висота кінця відрізка
      */
     private boolean segmentHits(long x1, long y1, long x2, long y2,
-                                boolean forestMode, int blockingHeight,
+                                boolean forestMode, int hStart, int hEnd,
                                 long skipNearStart, long skipNearEnd) {
         long dx = x2 - x1, dy = y2 - y1;
         long dist = Fixed.length(dx, dy);
@@ -344,6 +351,12 @@ public class TerrainQuery {
         if (limit <= LOS_FINE_STEP_FIXED) return false;
 
         long ux = Fixed.div(dx, dist), uy = Fixed.div(dy, dist);
+
+        // Нахил лінії зору рахується РАЗ: у циклі він сталий, а ділення —
+        // найдорожча операція fixed-point.
+        final long hStartFixed = Fixed.fromInt(hStart);
+        final long slope = forestMode ? 0
+                : Fixed.div(Fixed.fromInt(hEnd - hStart), dist);
 
         final int  B  = TerrainMaskManager.BLOCK_SIZE;
         final long BF = Fixed.fromInt(B);
@@ -369,9 +382,19 @@ public class TerrainQuery {
             long dExit = Fixed.min(Fixed.min(tMaxX, tMaxY), limit);
 
             boolean inRange = bx >= 0 && by >= 0 && bx < nBx && by < nBy;
-            boolean mustWalk = !inRange
-                || (forestMode ? blockHasForest(bx, by)
-                               : blockMaxHeight(bx, by) >= blockingHeight);
+            boolean mustWalk;
+            if (!inRange) {
+                mustWalk = true;
+            } else if (forestMode) {
+                mustWalk = blockHasForest(bx, by);
+            } else {
+                // Поріг монотонний по d, тож його мінімум на ділянці блоку — на
+                // одному з її кінців. Беремо менший і звіряємо з найвищим
+                // пікселем блоку: не дотягує — у блоці нема чого шукати.
+                long ceilMin = Fixed.min(occlusionCeiling(hStartFixed, slope, dEnter),
+                                         occlusionCeiling(hStartFixed, slope, dExit));
+                mustWalk = Fixed.fromInt(blockMaxHeight(bx, by)) >= ceilMin;
+            }
 
             if (mustWalk) {
                 // Вибірки прив'язані до глобальної сітки кроку, щоб межі блоків
@@ -383,7 +406,8 @@ public class TerrainQuery {
                     long wx = x1 + Fixed.mul(ux, d), wy = y1 + Fixed.mul(uy, d);
                     if (forestMode) {
                         if (isForestF(wx, wy)) return true;
-                    } else if (heightF(wx, wy) >= blockingHeight) {
+                    } else if (Fixed.fromInt(heightF(wx, wy))
+                                   >= occlusionCeiling(hStartFixed, slope, d)) {
                         crestRun += LOS_FINE_STEP_FIXED;
                         if (crestRun >= LOS_CREST_MIN_RUN_FIXED) return true;
                     } else {

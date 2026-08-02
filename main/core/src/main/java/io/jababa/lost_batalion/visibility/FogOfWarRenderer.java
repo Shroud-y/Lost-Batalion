@@ -31,10 +31,10 @@ public class FogOfWarRenderer {
     private static final float SOFT_ZONE        = 40f;
     private static final int   CIRCLE_SEGMENTS  = 48;
 
-    // Must stay in sync with VisibilitySystem
-    private static final float FOREST_SIGHT_PENALTY   = 0.55f;
-    /** @see TerrainQuery#ELEVATION_BLOCK_MARGIN — single source of truth. */
-    private static final float ELEVATION_BLOCK_MARGIN = TerrainQuery.ELEVATION_BLOCK_MARGIN;
+    /** @see VisibilitySystem#SIGHT_MOD_FOREST — single source of truth. */
+    private static final float FOREST_SIGHT_PENALTY   = VisibilitySystem.SIGHT_MOD_FOREST;
+    /** @see TerrainQuery#ELEVATION_BLOCK_MARGIN_TIERS — single source of truth. */
+    private static final float ELEVATION_BLOCK_MARGIN = TerrainQuery.ELEVATION_BLOCK_MARGIN_TIERS;
 
     // ── ALT sight overlay colours ─────────────────────────────────────────────
     /** Opaque light brown, drawn along the fan boundary. */
@@ -143,9 +143,21 @@ public class FogOfWarRenderer {
     // observer through every call.
     private float buildCx, buildCy, buildHCursor;
 
-    // Scratch state for one ray's pixel walk, so it survives across the blocks the
-    // ray crosses (castRay drives the blocks, walkPixels the pixels inside them).
-    private float rayCrest;     // tallest ground CONFIRMED as a crest so far
+    /*
+     * Scratch state for one ray's pixel walk, so it survives across the blocks the
+     * ray crosses (castRay drives the blocks, walkPixels the pixels inside them).
+     *
+     * The ray tracks a SLOPE, not a height. VisibilitySystem occludes when ground
+     * rises a tier above the straight sight line between two known endpoints; a
+     * ray has no endpoint, so the same rule is carried in the equivalent form:
+     *
+     *   crest at distance s, height h  →  slope (h − hCursor − MARGIN) / s
+     *   point at distance d, height g  →  hidden when (g − hCursor) / d ≤ raySlope
+     *
+     * The two are the same inequality rearranged, so the overlay keeps showing
+     * exactly what detection computes.
+     */
+    private float raySlope;     // steepest CONFIRMED crest slope so far
     private float rayCand;      // height of the rise currently being measured
     private float rayCandLen;   // how far that rise has persisted, world units
 
@@ -228,11 +240,11 @@ public class FogOfWarRenderer {
      *     as they do without the overlay
      *   - the fan boundary itself is traced in opaque light brown
      *
-     * Elevation occlusion mirrors VisibilitySystem: a point is hidden only when a
-     * crest already passed on the ray is taller than BOTH the cursor and that
-     * point (by ELEVATION_BLOCK_MARGIN). Same-height or lower terrain never
-     * blocks, so high ground sees across and down freely; only a ridge taller
-     * than the observer hides what lies behind it.
+     * Elevation occlusion mirrors VisibilitySystem: a point is hidden when the
+     * straight sight line to it passes UNDER a crest already met on the ray —
+     * carried here as a slope comparison, see raySlope. High ground still sees
+     * across and down freely; a hollow, on the other hand, is now closed in by
+     * its own rim, exactly as detection computes it.
      *
      * The fan is cached and only recomputed when the cursor moves more than
      * OVERLAY_CACHE_EPS — holding ALT with a still cursor costs nothing.
@@ -407,7 +419,12 @@ public class FogOfWarRenderer {
     /**
      * Marches one ray and returns how far it travels before something stops it:
      * forest, an occluding crest, or the map edge. Rays are never range-limited —
-     * the overlay analyses terrain, it does not model a unit's sight radius.
+     * the overlay analyses TERRAIN, it does not model a unit's sight radius.
+     *
+     * <p>Це свідомий вибір, а не недогляд: оверлей відповідає на питання «куди
+     * звідси взагалі можна дивитись», а не «що бачить конкретний юніт». Радіус
+     * огляду вже показаний колом туману навколо самого юніта, і дублювати його
+     * тут означало б змішати два різні запитання в одній картинці.
      *
      * <h3>Two-level march</h3>
      * Stepping every pixel across a 1440-px map would cost ~2800 samples per ray.
@@ -421,14 +438,18 @@ public class FogOfWarRenderer {
      * A block is skipped only when walking it could change nothing:
      * <ol>
      *   <li>no forest in it — nothing to stop the ray;</li>
-     *   <li>{@code blockMax <= crest} — every pixel in it is at or below the
-     *       tallest ground already passed, so the fine walk could not raise the
-     *       crest either. The crest therefore stays exact and is left untouched;</li>
-     *   <li>{@code crest <= max(hCursor, blockMin) + margin} — even against the
-     *       LOWEST ground in the block, the crest cannot breach the occlusion
-     *       ceiling, so no pixel here can break the ray.</li>
+     *   <li>the steepest slope the block could contribute, {@code (blockMax −
+     *       hCursor − margin) / s}, does not beat the confirmed slope anywhere
+     *       inside it. The slope therefore stays exact and is left untouched;</li>
+     *   <li>the shallowest slope the block could OFFER as a target,
+     *       {@code (blockMin − hCursor) / s}, still clears the confirmed slope,
+     *       so no pixel here can be occluded.</li>
      * </ol>
-     * Note the crest is deliberately NOT raised to {@code blockMax} on a skip:
+     * Both bounds vary with distance, so each is evaluated at the two ends of the
+     * block's span along the ray and taken at its worst — the numerator is
+     * constant, so a monotone quotient cannot hide an extremum in between.
+     *
+     * <p>Note the slope is deliberately NOT raised to {@code blockMax} on a skip:
      * {@code blockMax} covers the whole block, including pixels this ray never
      * touches, and adopting it would over-estimate the crest and occlude later
      * ground that is really visible. Condition 2 is what makes leaving it alone
@@ -468,7 +489,7 @@ public class FogOfWarRenderer {
                     : dy < 0 ? (by * B - cy) / dy
                     : Float.MAX_VALUE;
 
-        rayCrest   = -Float.MAX_VALUE;   // tallest ground confirmed as a crest
+        raySlope   = -Float.MAX_VALUE;   // steepest slope confirmed as a crest
         rayCand    = -Float.MAX_VALUE;
         rayCandLen = 0f;
         float dEnter = 0f;
@@ -480,9 +501,13 @@ public class FogOfWarRenderer {
 
             int blockMin = terrain.blockMinHeight(bx, by);
             int blockMax = terrain.blockMaxHeight(bx, by);
-            boolean canSkip = !terrain.blockHasForest(bx, by)
-                && blockMax <= rayCrest
-                && rayCrest <= Math.max(hCursor, blockMin) + ELEVATION_BLOCK_MARGIN;
+
+            // The block starts at the origin: every slope through it is unbounded,
+            // so there is nothing to compare against — walk it.
+            boolean canSkip = dEnter > 0f
+                && !terrain.blockHasForest(bx, by)
+                && maxSlope(blockMax - hCursor - ELEVATION_BLOCK_MARGIN, dEnter, dExit) <= raySlope
+                && minSlope(blockMin - hCursor, dEnter, dExit) > raySlope;
 
             if (canSkip) {
                 // Nothing here reaches above the confirmed crest, so any rise that
@@ -565,12 +590,22 @@ public class FogOfWarRenderer {
                 return Math.max(d, ORIGIN_FOREST_SKIP);
 
             float hGround = terrain.height(sx, sy);
-            if (rayCrest > Math.max(hCursor, hGround) + ELEVATION_BLOCK_MARGIN) return d;
 
-            if (hGround > rayCrest) {
+            // Occlusion first: a pixel never occludes itself. The sight line to
+            // THIS point is shallower than a crest already passed → it is hidden.
+            float dMid = 0.5f * (d + dNext);
+            if (dMid > 0f && (hGround - hCursor) / dMid <= raySlope) return d;
+
+            // The rise is still tracked by HEIGHT, not slope: the crest-run rule
+            // exists to reject single stray pixels of a staircase boundary, and
+            // that is a question about the ground, not about the angle. The slope
+            // is taken at the far end of the run — the conservative end, since
+            // the same height yields a shallower slope the further out it sits.
+            float cand = (hGround - hCursor - ELEVATION_BLOCK_MARGIN) / dMid;
+            if (dMid > 0f && cand > raySlope) {
                 if (hGround == rayCand) rayCandLen += dNext - d;
                 else { rayCand = hGround; rayCandLen = dNext - d; }
-                if (rayCandLen >= CREST_MIN_RUN) rayCrest = rayCand;
+                if (rayCandLen >= CREST_MIN_RUN) raySlope = cand;
             } else {
                 rayCand    = -Float.MAX_VALUE;
                 rayCandLen = 0f;
@@ -581,6 +616,23 @@ public class FogOfWarRenderer {
             d = dNext;
         }
         return -1f;
+    }
+
+    /**
+     * Largest value of {@code rise / d} over {@code d ∈ [dNear, dFar]}.
+     *
+     * <p>The numerator is fixed and the interval starts above zero, so the
+     * quotient is monotone: the extremum is always at one end. Which end flips
+     * with the sign of the rise, hence both are evaluated rather than reasoned
+     * about at the call site.
+     */
+    private static float maxSlope(float rise, float dNear, float dFar) {
+        return Math.max(rise / dNear, rise / dFar);
+    }
+
+    /** Smallest value of {@code rise / d} over the same interval. */
+    private static float minSlope(float rise, float dNear, float dFar) {
+        return Math.min(rise / dNear, rise / dFar);
     }
 
     /**
@@ -640,22 +692,24 @@ public class FogOfWarRenderer {
     private float computeEffectiveSight(Unit observer) {
         // sightRange живе у fixed-point (це стан гри) — на межі рендеру
         // переводимо його у float рівно один раз, тут.
-        float x = observer.worldX();
-        float y = observer.worldY();
+        return Fixed.toFloat(observer.sightRange)
+             * sightModAt(observer.worldX(), observer.worldY());
+    }
 
+    /** Множник дальності від місцевості. Дзеркало {@code VisibilitySystem.sightMod}. */
+    private float sightModAt(float x, float y) {
         float mod = isForestAt(x, y) ? FOREST_SIGHT_PENALTY : 1f;
 
         if (terrain != null) {
             switch (terrain.elevation(x, y)) {
-                case HIGHLANDS:     mod *= 1.30f; break;
-                case PRE_HIGHLANDS: mod *= 1.15f; break;
-                case PRE_LOWLANDS:  mod *= 0.92f; break;
-                case LOWLANDS:      mod *= 0.80f; break;
+                case HIGHLANDS:     mod *= VisibilitySystem.SIGHT_MOD_HIGHLANDS;     break;
+                case PRE_HIGHLANDS: mod *= VisibilitySystem.SIGHT_MOD_PRE_HIGHLANDS; break;
+                case PRE_LOWLANDS:  mod *= VisibilitySystem.SIGHT_MOD_PRE_LOWLANDS;  break;
+                case LOWLANDS:      mod *= VisibilitySystem.SIGHT_MOD_LOWLANDS;      break;
                 default: break;
             }
         }
-
-        return Fixed.toFloat(observer.sightRange) * mod;
+        return mod;
     }
 
     private boolean isForestAt(float x, float y) {
