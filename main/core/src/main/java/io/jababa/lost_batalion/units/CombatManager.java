@@ -34,27 +34,15 @@ public class CombatManager {
 
     private static final int  MAX_SHOTS        = 64;
     /**
-     * Інтервал між юнітами в бойовій лінії (Q47.16).
+     * Наскільки близько до точки розходження треба підійти, щоб вважатись на
+     * місці.
      *
-     * <p>Мусить перевищувати діаметр юніта: піхота має радіус хітбокса 8, тобто
-     * двоє не можуть стояти ближче ніж за 16 одна від одної. Було 12 — і поки
-     * юніти проходили крізь одне одного, це працювало. З появою колізій лінія
-     * з інтервалом 12 стала нездійсненною: юніти штовхались, не доходили до
-     * своїх місць, група вічно лишалась у фазі розходження й НІКОЛИ не
-     * переходила в атаку.
-     */
-    private static final long LINE_SPACING     = Fixed.fromInt(20);
-
-    /**
-     * Наскільки близько до своєї точки в лінії треба підійти, щоб вважатись
-     * на місці.
-     *
-     * <p>Теж збільшено разом із колізіями: сусіди штовхаються, і стати рівно
-     * в призначену точку з точністю до трьох одиниць уже неможливо. Строю
-     * досить бути приблизно там, де треба.
+     * <p>Нові накази атаки шикування більше не роблять (див.
+     * {@link #orderDirectCharge}), але фаза SPREAD лишається в коді заради
+     * знімків: наказ, збережений старою версією, може прийти в цій фазі.
      */
     private static final long SPREAD_THRESHOLD = Fixed.fromInt(10);
-    /** Частка дальності, на якій лінія зупиняється перед ціллю. */
+    /** Частка дальності, на якій юніт зупиняється перед ціллю. */
     private static final long STOP_DIST_FACTOR = Fixed.fromFloat(0.85f);
     /** Множник захисту цілі, що стоїть у лісі. */
     private static final long FOREST_DEFENSE_BONUS = Fixed.fromFloat(1.5f);
@@ -155,7 +143,7 @@ public class CombatManager {
         for (int i = groups.size - 1; i >= 0; i--)
             if (groups.get(i).isEmpty()) groups.removeIndex(i);
 
-        // Артилерія не шикується в лінію — їй виставляємо ручну ціль (ПКМ по ворогу).
+        // Артилерія не біжить на ціль — їй виставляємо ручну ціль (ПКМ по ворогу).
         Array<Unit> attackers = new Array<>();
         for (int i = 0; i < units.size; i++) {
             Unit u = units.get(i);
@@ -166,7 +154,7 @@ public class CombatManager {
             }
         }
 
-        if (attackers.size > 0) formLineAndOrder(attackers, enemy);
+        if (attackers.size > 0) orderDirectCharge(attackers, enemy);
     }
 
     /**
@@ -475,41 +463,30 @@ public class CombatManager {
 
     // ── Приватне ─────────────────────────────────────────────────────────
 
-    private void formLineAndOrder(Array<Unit> units, Unit enemy) {
+    /**
+     * Наказ атаки без шикування: усі йдуть просто на ціль.
+     *
+     * <p>Групу лишаємо, бо від неї залежать знімок і checksum, але одразу в
+     * фазі {@code ADVANCE} — етап SPREAD пропускається повністю. perpOffset
+     * нульовий, тож кожен юніт цілиться в саму ціль, а не в своє місце в лінії.
+     */
+    private void orderDirectCharge(Array<Unit> units, Unit enemy) {
         int count = units.size;
         if (count == 0) return;
 
-        long cx = 0, cy = 0;
-        for (int i = 0; i < count; i++) { cx += units.get(i).x; cy += units.get(i).y; }
-        cx /= count; cy /= count;
-
-        // Напрямок на ціль і перпендикуляр до нього — уздовж нього шикується лінія.
-        long len = Fixed.normalize(enemy.x - cx, enemy.y - cy, dir);
-        long nx = len == 0 ? Fixed.ONE : dir[0];
-        long ny = len == 0 ? 0         : dir[1];
-        long px = -ny, py = nx;
-
-        // Сортування за проєкцією на перпендикуляр: хто лівіше — той лівіше й
-        // лишається. Ключ цілочисельний, тож порядок однаковий на всіх клієнтах;
-        // Array.sort стабільний (merge sort), тож рівні ключі теж не переставляються.
-        Array<Unit> sorted = new Array<>(units);
-        final long fpx = px, fpy = py;
-        sorted.sort((u1, u2) -> Long.compare(
-            Fixed.mul(u1.x, fpx) + Fixed.mul(u1.y, fpy),
-            Fixed.mul(u2.x, fpx) + Fixed.mul(u2.y, fpy)));
-
-        long stopDist = Fixed.mul(sorted.get(0).attackRange, STOP_DIST_FACTOR);
         AttackGroup group = new AttackGroup(enemy);
+        group.phase = AttackGroup.Phase.ADVANCE;
 
         for (int i = 0; i < count; i++) {
-            Unit u = sorted.get(i);
-            // (i - (count-1)/2) з половинкою — лінія центрується навколо центроїда.
-            long offset = Fixed.mul(Fixed.fromInt(i * 2 - (count - 1)) >> 1, LINE_SPACING);
-            long sx = cx + Fixed.mul(px, offset), sy = cy + Fixed.mul(py, offset);
-            long fx = enemy.x - Fixed.mul(nx, stopDist) + Fixed.mul(px, offset);
-            long fy = enemy.y - Fixed.mul(ny, stopDist) + Fixed.mul(py, offset);
-            u.moveTo(sx, sy);
-            AttackOrder order = new AttackOrder(u, enemy, sx, sy, fx, fy, group);
+            Unit u = units.get(i);
+            long stopDist = Fixed.mul(u.attackRange, STOP_DIST_FACTOR);
+            long len = Fixed.normalize(enemy.x - u.x, enemy.y - u.y, dir);
+            long nx = len == 0 ? Fixed.ONE : dir[0];
+            long ny = len == 0 ? 0         : dir[1];
+            long fx = enemy.x - Fixed.mul(nx, stopDist);
+            long fy = enemy.y - Fixed.mul(ny, stopDist);
+            u.moveTo(fx, fy);
+            AttackOrder order = new AttackOrder(u, enemy, fx, fy, fx, fy, 0L, group);
             orders.add(order);
             group.addOrder(order);
         }
