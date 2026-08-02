@@ -149,6 +149,30 @@ Two grayscale/colour PNG masks per scenario, sampled by pixel colour
 - Кнопки «МЕНЮ» в лівому верхньому куті БІЛЬШЕ НЕМАЄ — там економіка. Паузу
   відкриває ESC; на мобільному вона зараз недоступна.
 
+### Масштабування інтерфейсу (`ui/UIScale`, `ui/ScreenResolution`)
+- `UIScale.forHeight(h)` = `clamp(snap(h/720, 0.25), 0.75, 2.0)` — ОДИН множник на
+  весь HUD. Стеля 2.0× — це запас різкості шрифту: `UIFactory.generateTintableFont`
+  пече гліфи вдвічі більшими й малює з `setScale(0.5f)`.
+- Три сцени матчу (`hudStage`, `pauseStage`, `modalStage`) — `ScreenViewport` із
+  `setUnitsPerPixel(1/scale)`. Ставити множник ТРЕБА до `viewport.update(...)`.
+- **HUD живе в логічних одиницях, ввід — у фізичних пікселях.** Усе, що перевіряє
+  влучання по намальованому вручну HUD (`Minimap`, `SelectionPanel`), зобов'язане
+  пройти через `UIScale.inputXToLogical` / `inputYToLogical`. Голого
+  `Gdx.graphics.getHeight() - sy` в `GameScreen` більше немає — не повертати.
+- `GameScreen.layoutHud()` рахує розкладку на початку кадру: мінікарта задає
+  `frameWidth()`, під нього тиснеться `SelectionPanel.layout(...)`. Малювання й
+  перевірка влучання читають ті самі числа.
+- **Площа видимого світу стала.** `camera.zoom = userZoom × aspectFit()`, де
+  `aspectFit = sqrt(900×580 / (worldW×worldH))`. У `camera.zoom` НЕ пишуть напряму —
+  тільки `setZoom` (ефективний масштаб) або `setUserZoom`. Без цього гравець на
+  21:9 бачив на 34% більше карти, ніж гравець у вікні.
+- Вікно нерозтяжне (`setResizable(false)`); розмір міняє лише список пресетів у
+  налаштуваннях. Роздільність і повний екран лежать у `LostBatalion.Settings`,
+  відновлює їх `LostBatalion.create()` — у лаунчері `Preferences` ще не існує.
+- Зміна режиму з обробника scene2d — ТІЛЬКИ через `Gdx.app.postRunnable`:
+  `BaseScreen.resize` перескладає сцену, тобто звільняє кнопку, всередині
+  обробника якої ти стоїш.
+
 ### Formations / commands
 - `FormationDragHandler` — RMB-drag to place a straight formation line.
 - `CurvedFormationCommand` — freehand drawn curve; samples path, prevents

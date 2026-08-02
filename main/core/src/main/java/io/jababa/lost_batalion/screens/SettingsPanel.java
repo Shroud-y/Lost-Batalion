@@ -2,16 +2,20 @@ package io.jababa.lost_batalion.screens;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.scenes.scene2d.Actor;
+import com.badlogic.gdx.scenes.scene2d.InputEvent;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.SelectBox;
 import com.badlogic.gdx.scenes.scene2d.ui.Slider;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
+import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
 import com.badlogic.gdx.utils.Array;
 import io.jababa.lost_batalion.LostBatalion;
+import io.jababa.lost_batalion.audio.AudioManager;
 import io.jababa.lost_batalion.ui.ScreenResolution;
 import io.jababa.lost_batalion.ui.ScreenResolution.WindowMode;
 import io.jababa.lost_batalion.ui.UIFactory;
+import io.jababa.lost_batalion.ui.UIScale;
 
 /**
  * Самі параметри — гучність, режим вікна, роздільність — без екрана навколо.
@@ -43,9 +47,33 @@ public class SettingsPanel {
     private SelectBox<ScreenResolution.Mode> resolutionBox;
     private SelectBox<WindowMode>            modeBox;
 
-    public SettingsPanel() {
+    /**
+     * Чи ігнорувати події списків.
+     *
+     * <p>Ставиться, поки панель сама переставляє вміст списку роздільностей:
+     * {@code setItems}/{@code setSelected} шлють {@code ChangeEvent}, не
+     * відрізнити від людського вибору, і без цього прапорця показ поточної
+     * роздільності записався б у налаштування як намір гравця.
+     */
+    private boolean suppressEvents;
+
+    /**
+     * Чим перескласти інтерфейс після зміни масштабу.
+     *
+     * <p>Панель не знає, де вона висить — на екрані налаштувань чи на паузі
+     * посеред матчу, — а перескладати треба різне: там сцену меню, тут три
+     * сцени HUD. Тому це справа господаря.
+     */
+    private final Runnable onUiScaleChanged;
+
+    public SettingsPanel(Runnable onUiScaleChanged) {
+        this.onUiScaleChanged = onUiScaleChanged;
+
         table.top();
-        table.add(buildVolumeRow()).growX().height(ROW_HEIGHT).row();
+        table.add(buildMasterVolumeRow()).growX().height(ROW_HEIGHT).row();
+        table.add(buildMusicVolumeRow()).growX().height(ROW_HEIGHT).padTop(6f).row();
+        table.add(buildSfxVolumeRow()).growX().height(ROW_HEIGHT).padTop(6f).row();
+        table.add(buildUiScaleRow()).growX().height(ROW_HEIGHT).padTop(6f).row();
         table.add(buildWindowModeRow()).growX().height(ROW_HEIGHT).padTop(6f).row();
         table.add(buildResolutionRow()).growX().height(ROW_HEIGHT).padTop(6f).row();
     }
@@ -55,15 +83,47 @@ public class SettingsPanel {
 
     // ── Рядки ─────────────────────────────────────────────────────────────
 
-    private Table buildVolumeRow() {
+    /** Куди повзунок віддає нове значення. */
+    private interface VolumeSink { void accept(float value); }
+
+    private Table buildMasterVolumeRow() {
+        return volumeRow("Загальна гучність", LostBatalion.Settings.getVolume(),
+                new VolumeSink() {
+                    @Override public void accept(float v) { AudioManager.setMaster(v); }
+                });
+    }
+
+    private Table buildMusicVolumeRow() {
+        return volumeRow("Музика", LostBatalion.Settings.getMusicVolume(),
+                new VolumeSink() {
+                    @Override public void accept(float v) { AudioManager.setMusic(v); }
+                });
+    }
+
+    private Table buildSfxVolumeRow() {
+        return volumeRow("Звуки", LostBatalion.Settings.getSfxVolume(),
+                new VolumeSink() {
+                    @Override public void accept(float v) { AudioManager.setSfx(v); }
+                });
+    }
+
+    /**
+     * Рядок гучності.
+     *
+     * <p>Значення йде в {@link AudioManager}, а не просто в {@code Preferences}:
+     * шина тримає їх у полях, і без перечитування новий рівень почався б аж із
+     * наступного запуску гри — рівно та поведінка, через яку повзунок здавався
+     * несправним.
+     */
+    private static Table volumeRow(String caption, float initial, final VolumeSink sink) {
         final Slider slider = new Slider(0f, 1f, 0.05f, false, UIFactory.createSliderStyle());
-        slider.setValue(LostBatalion.Settings.getVolume());
+        slider.setValue(initial);
 
         final Label value = new Label(percent(slider.getValue()), UIFactory.createHintStyle());
 
         slider.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent event, Actor actor) {
-                LostBatalion.Settings.setVolume(slider.getValue());
+                sink.accept(slider.getValue());
                 // Цифра поруч із повзунком: без неї незрозуміло, чи 40% це
                 // «тихо» чи «майже вимкнено», і доводиться перевіряти на слух.
                 value.setText(percent(slider.getValue()));
@@ -73,7 +133,77 @@ public class SettingsPanel {
         Table control = new Table();
         control.add(slider).growX();
         control.add(value).width(48f).right().padLeft(10f);
-        return row("Гучність", control);
+        return row(caption, control);
+    }
+
+    /**
+     * Масштаб інтерфейсу МАТЧУ, 50–200%.
+     *
+     * <p>Стосується того, що намальовано поверх бою: мінікарти, панелі
+     * виділення, панелі військ, меню паузи. Меню поза матчем він не чіпає — там
+     * розкладка й так росте разом із вікном. Тому на екрані налаштувань із
+     * головного меню повзунок нічого не перемальовує: значення просто чекає
+     * наступного бою.
+     *
+     * <p>Множник особистий і лягає ПОВЕРХ автоматичного (той тримає HUD
+     * однакового розміру відносно екрана на різних роздільностях) — див.
+     * {@link UIScale}.
+     *
+     * <p>Застосовується не миттєво, а наступним кадром: перескладання сцени
+     * звільняє повзунок, усередині обробника якого ми зараз стоїмо. Та сама
+     * пастка, що й у режимі вікна.
+     *
+     * <p>І не на кожному кроці, а по відпусканню. Перескладання перепікає всі
+     * шрифти FreeType і створює сцену наново — тобто знищує сам повзунок разом
+     * із захопленням миші. Протягування від 50% до 200% розсипалось би на
+     * півтора десятка перебудов, кожна з яких обриває перетягування на першому
+     * ж кроці. Цифра поруч при цьому міняється одразу, тож зворотний звʼязок
+     * лишається миттєвим.
+     */
+    private Table buildUiScaleRow() {
+        final Slider slider = new Slider(UIScale.USER_MIN, UIScale.USER_MAX,
+                                         UIScale.USER_STEP, false,
+                                         UIFactory.createSliderStyle());
+        slider.setValue(UIScale.user());
+
+        final Label value = new Label(percent(slider.getValue()), UIFactory.createHintStyle());
+
+        slider.addListener(new ChangeListener() {
+            @Override public void changed(ChangeEvent event, Actor actor) {
+                value.setText(percent(slider.getValue()));
+                // Не перетягують — значить, це вже кінцеве значення (клік по
+                // жолобу, клавіші). Під час протягування чекаємо відпускання.
+                if (!slider.isDragging()) commitUiScale(slider.getValue());
+            }
+        });
+        slider.addListener(new ClickListener() {
+            @Override public void touchUp(InputEvent event, float x, float y, int pointer, int button) {
+                super.touchUp(event, x, y, pointer, button);
+                commitUiScale(slider.getValue());
+            }
+        });
+
+        Table control = new Table();
+        control.add(slider).growX();
+        control.add(value).width(48f).right().padLeft(10f);
+        return row("Масштаб інтерфейсу", control);
+    }
+
+    /**
+     * Записати масштаб і перескласти інтерфейс — якщо він справді змінився.
+     *
+     * <p>Перевірка обовʼязкова: відпускання повзунка приходить і тоді, коли
+     * гравець просто торкнувся його й нічого не зрушив, а перебудова сцени
+     * посеред матчу коштує помітної паузи.
+     */
+    private void commitUiScale(float value) {
+        if (value == UIScale.user()) return;
+
+        UIScale.setUser(value);
+        if (onUiScaleChanged == null) return;
+        apply(new Runnable() {
+            @Override public void run() { onUiScaleChanged.run(); }
+        });
     }
 
     /**
@@ -115,16 +245,12 @@ public class SettingsPanel {
 
     /** Випадний список роздільностей. */
     private Table buildResolutionRow() {
-        modes = ScreenResolution.available();
-
         resolutionBox = new SelectBox<>(UIFactory.createSelectBoxStyle());
-        resolutionBox.setItems(modes);
-        resolutionBox.setSelected(modes.get(ScreenResolution.indexOfSaved(modes,
-                LostBatalion.Settings.getResWidth(),
-                LostBatalion.Settings.getResHeight())));
 
         resolutionBox.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent event, Actor actor) {
+                if (suppressEvents) return;
+
                 final ScreenResolution.Mode m = resolutionBox.getSelected();
                 if (m == null) return;
 
@@ -146,16 +272,49 @@ public class SettingsPanel {
     }
 
     /**
-     * Доступність списку роздільностей.
+     * Що показує список роздільностей і чи можна його чіпати.
      *
      * <p>Розмір вікна щось значить лише в режимі «у вікні»: і без рамки, і в
-     * повний екран його диктує монітор. Список у цих режимах гасне — вибір у
-     * ньому запам'ятається, але зараз ні на що не вплине.
+     * повний екран його диктує монітор. Тому в цих режимах список гасне — але
+     * показує при цьому ФАКТИЧНИЙ розмір, а не збережений віконний. Раніше він
+     * лишався на 1280×720, поки гра йшла в 1920×1080, і це читалось як
+     * несправність, а не як «тут зараз керує монітор».
+     *
+     * <p>Збережену віконну роздільність це не чіпає: вона просто не
+     * показується, поки не діє, і повертається в список разом із режимом
+     * «у вікні».
      */
     private void refreshResolutionRow() {
         if (resolutionBox == null) return;
-        resolutionBox.setDisabled(
-                LostBatalion.Settings.getWindowMode() != WindowMode.WINDOWED);
+
+        boolean windowed =
+                LostBatalion.Settings.getWindowMode() == WindowMode.WINDOWED;
+        resolutionBox.setDisabled(!windowed);
+
+        // Наповнення списку саме по собі шле ChangeEvent, а обробник записав би
+        // показане значення в налаштування як вибір гравця. Тобто без цього
+        // гейта показ поточної роздільності мовчки затирав би збережену.
+        suppressEvents = true;
+        try {
+            if (windowed) {
+                modes = ScreenResolution.available();
+                resolutionBox.setItems(modes);
+                resolutionBox.setSelected(modes.get(ScreenResolution.indexOfSaved(modes,
+                        LostBatalion.Settings.getResWidth(),
+                        LostBatalion.Settings.getResHeight())));
+            } else {
+                modes = ScreenResolution.availableWithDesktop();
+                ScreenResolution.Mode desktop = ScreenResolution.desktopMode();
+                resolutionBox.setItems(modes);
+                // Береться елемент СПИСКУ, а не свіжий об'єкт: Mode не
+                // перекриває equals, тож SelectBox шукає пункт за тотожністю і
+                // на чужому екземплярі мовчки відкотився б на перший.
+                resolutionBox.setSelected(modes.get(
+                        ScreenResolution.indexOfSaved(modes, desktop.w, desktop.h)));
+            }
+        } finally {
+            suppressEvents = false;
+        }
     }
 
     /**

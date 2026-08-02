@@ -131,6 +131,35 @@ public final class ScreenResolution {
         return out;
     }
 
+    /**
+     * Фактичний розмір, який зараз диктує монітор.
+     *
+     * <p>Саме він потрібен спискам у режимах «повний екран» і «без рамки»: там
+     * збережена віконна роздільність ні на що не впливає, і показувати її —
+     * значить брехати. Гравець із 1920×1080 бачив у налаштуваннях 1280×720 і
+     * мав усі підстави вважати це помилкою.
+     */
+    public static Mode desktopMode() {
+        Graphics.DisplayMode desktop = Gdx.graphics.getDisplayMode();
+        return new Mode(desktop.width, desktop.height);
+    }
+
+    /**
+     * Пресети плюс розмір монітора, якщо його серед них немає.
+     *
+     * <p>Потрібно, щоб {@code SelectBox} мав що показати: він уміє вибрати лише
+     * той елемент, який реально є в його списку, а монітор цілком може бути
+     * нестандартним (2560×1080 і подібні).
+     */
+    public static Array<Mode> availableWithDesktop() {
+        Array<Mode> out = available();
+        Mode desktop = desktopMode();
+        for (int i = 0; i < out.size; i++)
+            if (out.get(i).is(desktop.w, desktop.h)) return out;
+        out.add(desktop);
+        return out;
+    }
+
     /** Індекс збереженої роздільності в {@link #available()}; 0, якщо її там немає. */
     public static int indexOfSaved(Array<Mode> modes, int savedW, int savedH) {
         for (int i = 0; i < modes.size; i++)

@@ -27,7 +27,11 @@ public class SettingsScreen extends BaseScreen {
         panel.setBackground(UIFactory.createPanelBackground());
         panel.pad(22f, 24f, 22f, 24f);
         panel.top();
-        panel.add(new SettingsPanel().getTable()).growX().row();
+
+        // Перескладати нічого: повзунок масштабу керує тільки інтерфейсом
+        // матчу, а цей екран від нього не залежить. Значення просто
+        // запам'ятовується і подіє, коли почнеться бій.
+        panel.add(new SettingsPanel(null).getTable()).growX().row();
 
         Table root = new Table();
         root.setFillParent(true);

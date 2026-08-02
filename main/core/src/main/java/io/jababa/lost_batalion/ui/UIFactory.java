@@ -497,9 +497,15 @@ public final class UIFactory {
      * <p>Тут запікається білий, тож єдиним джерелом кольору лишається тінт.
      */
     private static BitmapFont generateTintableFont(int size, float letterSpacing) {
+        // Запас різкості. Був зашитий двократним, і цього вистачало, поки
+        // масштаб інтерфейсу впирався в стелю 2.0×. З повзунком 50–200% верхня
+        // межа поїхала вгору, і фіксований запас означав би розмитий текст рівно
+        // там, де гравець просив ЗБІЛЬШИТИ інтерфейс.
+        final float density = UIScale.fontDensity();
+
         FreeTypeFontGenerator gen = new FreeTypeFontGenerator(Gdx.files.internal(FONT_PATH));
         FreeTypeFontParameter p   = new FreeTypeFontParameter();
-        p.size       = size * 2;
+        p.size       = Math.max(1, Math.round(size * 2f * density));
         p.color      = Color.WHITE;
         p.characters = FONT_CHARS;
         p.minFilter  = TextureFilter.Linear;
@@ -507,8 +513,8 @@ public final class UIFactory {
         p.genMipMaps = true;
 
         BitmapFont font = gen.generateFont(p);
-        if (letterSpacing != 0f) applyLetterSpacing(font, letterSpacing);
-        font.getData().setScale(0.5f);
+        if (letterSpacing != 0f) applyLetterSpacing(font, letterSpacing, density);
+        font.getData().setScale(0.5f / density);
         gen.dispose();
         createdFonts.add(font);
 
@@ -521,14 +527,14 @@ public final class UIFactory {
      * додається до {@code xadvance} кожного гліфа — це рівно те, що зробив би
      * такий параметр, якби існував.
      *
-     * <p>Множник 2 — бо шрифт генерується вдвічі більшим і потім стискається
-     * {@code setScale(0.5f)}; без нього розрідження вийшло б удвічі меншим за
-     * замовлене. Викликати ОБОВʼЯЗКОВО до {@code setScale}: масштаб множиться на
-     * {@code xadvance} під час рендеру, і додавати після нього означало б
-     * додавати в інших одиницях.
+     * <p>Крок множиться на ту саму щільність, з якою запечено гліфи, і
+     * скорочується подальшим {@code setScale(0.5/density)}; без цього розрідження
+     * вийшло б у {@code density} разів меншим за замовлене. Викликати
+     * ОБОВʼЯЗКОВО до {@code setScale}: масштаб множиться на {@code xadvance} під
+     * час рендеру, і додавати після нього означало б додавати в інших одиницях.
      */
-    private static void applyLetterSpacing(BitmapFont font, float pixels) {
-        int step = Math.round(pixels * 2f);
+    private static void applyLetterSpacing(BitmapFont font, float pixels, float density) {
+        int step = Math.round(pixels * 2f * density);
         if (step == 0) return;
         for (BitmapFont.Glyph[] page : font.getData().glyphs) {
             if (page == null) continue;

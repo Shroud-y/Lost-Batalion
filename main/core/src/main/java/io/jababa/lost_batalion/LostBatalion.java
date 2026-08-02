@@ -2,6 +2,8 @@ package io.jababa.lost_batalion;
 
 import com.badlogic.gdx.*;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import io.jababa.lost_batalion.audio.AudioManager;
+import io.jababa.lost_batalion.audio.MusicManager;
 import io.jababa.lost_batalion.screens.MainMenuScreen;
 import io.jababa.lost_batalion.ui.ScreenResolution;
 import io.jababa.lost_batalion.ui.ScreenResolution.WindowMode;
@@ -21,6 +23,13 @@ public class LostBatalion extends Game {
     public static final String VERSION = "0.1.0";
 
     public SpriteBatch batch;
+
+    /**
+     * Фонова музика. Належить грі, а не екрану: {@link #setScreen} звільняє
+     * попередній екран, і музика, прив'язана до нього, обривалась би на кожному
+     * переході — навіть на вході в налаштування й назад.
+     */
+    private MusicManager music;
 
     private InputMultiplexer inputMultiplexer;
 
@@ -51,8 +60,28 @@ public class LostBatalion extends Game {
         inputMultiplexer.addProcessor(buildGlobalInput());
         Gdx.input.setInputProcessor(inputMultiplexer);
 
+        // Гучності читаються один раз і живуть у полях шини — постріли йдуть
+        // десятками за секунду, і кожен похід у Preferences там зайвий.
+        AudioManager.refresh();
+        music = new MusicManager();
+
         batch = new SpriteBatch();
         setScreen(new MainMenuScreen(this));
+    }
+
+    /** Фонова музика застосунку. Екрани кажуть їй режим у своєму {@code show()}. */
+    public MusicManager music() { return music; }
+
+    /**
+     * Кадр гри плюс фейди музики.
+     *
+     * <p>Оновлення музики стоїть саме тут, а не в екрані: воно має відбуватись
+     * на КОЖНОМУ екрані й не перериватись на переходах між ними.
+     */
+    @Override
+    public void render() {
+        if (music != null) music.update(Gdx.graphics.getDeltaTime());
+        super.render();
     }
 
     /**
@@ -136,8 +165,23 @@ public class LostBatalion extends Game {
             return com.badlogic.gdx.Gdx.app.getPreferences(PREFS_NAME);
         }
 
+        /**
+         * Загальна гучність. Множиться на все, що звучить.
+         *
+         * <p>Ключ лишився старим (`volume`), хоч сенс уточнився з «гучність» на
+         * «загальна гучність»: перейменування мовчки скинуло б налаштування
+         * кожному, хто вже його чіпав.
+         */
         public static float getVolume() { return getPrefs().getFloat("volume", 1f); }
         public static void setVolume(float val) { getPrefs().putFloat("volume", val).flush(); }
+
+        /** Гучність музики. За замовчуванням тихіша за бій — це фон, а не подія. */
+        public static float getMusicVolume() { return getPrefs().getFloat("volumeMusic", 0.7f); }
+        public static void setMusicVolume(float val) { getPrefs().putFloat("volumeMusic", val).flush(); }
+
+        /** Гучність ефектів: постріли, вибухи, інтерфейс. */
+        public static float getSfxVolume() { return getPrefs().getFloat("volumeSfx", 1f); }
+        public static void setSfxVolume(float val) { getPrefs().putFloat("volumeSfx", val).flush(); }
 
         public static boolean isFullscreen() { return getPrefs().getBoolean("fullscreen", false); }
         public static void setFullscreen(boolean val) { getPrefs().putBoolean("fullscreen", val).flush(); }
@@ -181,6 +225,17 @@ public class LostBatalion extends Game {
             getPrefs().putInteger("resW", w).putInteger("resH", h).flush();
         }
 
+        /**
+         * Особистий множник розміру інтерфейсу, 0.5–2.0.
+         *
+         * <p>Множиться на автоматичний масштаб за висотою вікна, а не заміняє
+         * його: автоматичний тримає HUD однакового розміру ВІДНОСНО ЕКРАНА на
+         * різних роздільностях, і викидати його заради повзунка означало б
+         * повернути стару ваду — той самий інтерфейс удвічі дрібніший на 1440p.
+         */
+        public static float getUiScale() { return getPrefs().getFloat("uiScale", 1f); }
+        public static void setUiScale(float val) { getPrefs().putFloat("uiScale", val).flush(); }
+
         /** Нік для мультиплеєра. Запам'ятовується, щоб не вводити його щоразу. */
         public static String getNick() { return getPrefs().getString("nick", ""); }
         public static void setNick(String val) { getPrefs().putString("nick", val == null ? "" : val).flush(); }
@@ -196,6 +251,11 @@ public class LostBatalion extends Game {
             current.hide();
             current.dispose();
             this.screen = null;
+        }
+
+        if (music != null) {
+            music.dispose();
+            music = null;
         }
 
         io.jababa.lost_batalion.screens.menu.MenuBackdrop.disposeShared();

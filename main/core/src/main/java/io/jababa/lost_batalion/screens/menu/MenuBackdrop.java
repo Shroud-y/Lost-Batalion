@@ -5,6 +5,7 @@ import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.Batch;
+import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.Stage;
@@ -63,6 +64,14 @@ public class MenuBackdrop extends Actor implements Disposable {
      */
     private static Texture sharedMap;
     private static String  sharedMapPath;
+
+    /**
+     * Вирізка карти під поточний кадр дрейфу.
+     *
+     * <p>Одна на весь час життя тла: межі переставляються щокадру, а сам
+     * обʼєкт — лише пара float-ів і посилання на текстуру, яку він не володіє.
+     */
+    private final TextureRegion region = new TextureRegion();
 
     private final Texture map;      // спільна, цей об'єкт її НЕ звільняє
     private final Texture wash;
@@ -146,27 +155,38 @@ public class MenuBackdrop extends Actor implements Disposable {
      * не її форма.
      */
     private void drawMap(Batch batch, float x, float y, float w, float h, float alpha) {
-        int texW = map.getWidth(), texH = map.getHeight();
+        float texW = map.getWidth(), texH = map.getHeight();
 
-        int srcH = Math.round(texH * VIEW_FRACTION);
-        int srcW = Math.round(srcH * (w / h));
+        float srcH = texH * VIEW_FRACTION;
+        float srcW = srcH * (w / h);
         // Екран може виявитись ширшим за карту — тоді впираємось у ширину і
         // показуємо менше по висоті.
         if (srcW > texW) {
             srcW = texW;
-            srcH = Math.round(srcW * (h / w));
+            srcH = srcW * (h / w);
         }
 
-        int slackX = texW - srcW, slackY = texH - srcH;
+        float slackX = texW - srcW, slackY = texH - srcH;
         float phase = MathUtils.PI2 * (time / DRIFT_PERIOD);
 
         // Коло, а не маятник: у маятника є дві точки зупинки, і на них рух стає
         // помітним саме тим, що припиняється.
-        int srcX = Math.round(slackX * (0.5f + 0.5f * DRIFT_AMOUNT * MathUtils.cos(phase)));
-        int srcY = Math.round(slackY * (0.5f + 0.5f * DRIFT_AMOUNT * MathUtils.sin(phase)));
+        float srcX = slackX * (0.5f + 0.5f * DRIFT_AMOUNT * MathUtils.cos(phase));
+        float srcY = slackY * (0.5f + 0.5f * DRIFT_AMOUNT * MathUtils.sin(phase));
+
+        // Вирізка задається в UV, а не в цілих пікселях.
+        //
+        // Перевантаження batch.draw(...) з піксельними межами бере ЦІЛІ src-
+        // координати, тож безперервний дрейф доводилось округляти. Вирізка
+        // стрибала на цілий піксель текстури щоразу, коли округлення міняло
+        // знак, — а карта розтягнута на екран у 2–3 рази, тобто на екрані це
+        // був ривок у кілька пікселів. Саме він і читався як «фон смикається».
+        region.setTexture(map);
+        region.setRegion(srcX / texW,  srcY / texH,
+                        (srcX + srcW) / texW, (srcY + srcH) / texH);
 
         batch.setColor(MAP_TINT.r, MAP_TINT.g, MAP_TINT.b, alpha);
-        batch.draw(map, x, y, w, h, srcX, srcY, srcW, srcH, false, false);
+        batch.draw(region, x, y, w, h);
     }
 
     /** Градієнт зліва направо — підкладка під колонку меню. */

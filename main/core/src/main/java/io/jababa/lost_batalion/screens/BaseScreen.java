@@ -7,8 +7,10 @@ import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.actions.Actions;
 import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import io.jababa.lost_batalion.LostBatalion;
+import io.jababa.lost_batalion.audio.MusicManager;
 import io.jababa.lost_batalion.screens.menu.MenuBackdrop;
 import io.jababa.lost_batalion.ui.UIFactory;
+import io.jababa.lost_batalion.ui.UIScale;
 
 
 /**
@@ -65,7 +67,10 @@ public abstract class BaseScreen implements Screen {
             stage.dispose();
         }
 
-        stage = new Stage(new ExtendViewport(900, 580), game.batch);
+        // Світ сцени сталий: повзунок масштабу інтерфейсу керує тільки HUD
+        // матчу, а меню й так ростуть разом із вікном.
+        stage = new Stage(new ExtendViewport(UIScale.MENU_WORLD_WIDTH,
+                                             UIScale.MENU_WORLD_HEIGHT), game.batch);
         stage.getViewport().update(width, height, true);
         game.setScreenInputProcessor(stage);
 
@@ -92,6 +97,10 @@ public abstract class BaseScreen implements Screen {
 
     @Override
     public void show() {
+        // Кожен екран поза матчем — це «меню». Повторний виклик із тим самим
+        // режимом менеджер ігнорує, тож перехід меню → налаштування → меню
+        // музику не чіпає.
+        if (game.music() != null) game.music().setContext(MusicManager.Context.MENU);
         rebuildStage(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
     }
 

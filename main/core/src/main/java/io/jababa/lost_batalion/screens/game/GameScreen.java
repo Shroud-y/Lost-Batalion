@@ -22,6 +22,7 @@ import com.badlogic.gdx.utils.viewport.ScreenViewport;
 import com.badlogic.gdx.utils.viewport.Viewport;
 import io.jababa.lost_batalion.LostBatalion;
 import io.jababa.lost_batalion.Team;
+import io.jababa.lost_batalion.audio.MusicManager;
 import io.jababa.lost_batalion.commands.CurvedFormationCommand;
 import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.mobile.GameInputHandler;
@@ -107,6 +108,16 @@ public class GameScreen implements Screen {
 
     private boolean paused = false;
     private PauseOverlay pauseOverlay;
+
+    /**
+     * Чи показано зараз сторінку налаштувань замість меню паузи.
+     *
+     * <p>Потрібно на зміні розміру вікна: рядок роздільності показує ФАКТИЧНИЙ
+     * розмір, а він щойно змінився — наприклад, гравець натиснув F11, не
+     * виходячи з налаштувань. Без перескладання список лишався б із попереднім
+     * числом, тобто рівно з тією вадою, яку він і мав прибрати.
+     */
+    private boolean pauseSettingsOpen;
     private Stage pauseStage;
     private Stage hudStage;
     private Label waitLabel;
@@ -247,6 +258,8 @@ public class GameScreen implements Screen {
 
     @Override
     public void show() {
+        if (game.music() != null) game.music().setContext(MusicManager.Context.BATTLE);
+
         batch      = new SpriteBatch();
         uiBatch    = new SpriteBatch();
         panelBatch = new SpriteBatch();
@@ -313,15 +326,42 @@ public class GameScreen implements Screen {
             }
         });
 
+        buildUiAndInput();
+    }
+
+    /**
+     * Сцени інтерфейсу матчу і розкладка вводу над ними.
+     *
+     * <p>Окремим методом, бо це доводиться робити двічі: на вході в матч і після
+     * зміни масштабу інтерфейсу. Друге неможливо звести до «оновити вʼюпорт» —
+     * стилі й шрифти запечені під старий множник, а {@code UIFactory.disposeAll}
+     * знищує їх усі разом, тобто сцени мусять зібратись наново.
+     *
+     * <p>Ввід перескладається разом зі сценами навмисно: мультиплексор тримає
+     * {@code hudStage} прямим посиланням, і залишений старим він слав би події у
+     * вже звільнену сцену.
+     */
+    private void buildUiAndInput() {
         UIFactory.disposeAll();
         // В'юпорти HUD прив'язані до UIScale: одиниця сцени більша за піксель,
         // тому панелі ростуть разом із вікном, а кути лишаються кутами при
         // будь-якому співвідношенні сторін.
+        //
+        // Кожна сцена ОДРАЗУ отримує розмір вікна, ще до наповнення: інакше
+        // вміст будується проти нульового світу. Найпомітніше це на сторінці
+        // налаштувань — вона рахує стелю прокрутки від висоти сцени й на нулі
+        // стиснула б список до мінімуму. У звичайному кадрі це робить
+        // updateHudViewport, але він відпрацює аж наступним кадром.
         pauseStage = new Stage(UIScale.createViewport(), batch);
-        buildPauseOverlay();
+        updateHudViewport(pauseStage);
+        if (paused) buildPauseOverlay();
+
         hudStage = new Stage(UIScale.createViewport(), batch);
+        updateHudViewport(hudStage);
         buildHud();
+
         modalStage = new Stage(UIScale.createViewport(), batch);
+        updateHudViewport(modalStage);
 
         InputMultiplexer mux = new InputMultiplexer();
         // Вікно десинхрону перехоплює ввід першим: поки стан розійшовся,
@@ -952,7 +992,11 @@ public class GameScreen implements Screen {
         updateHudViewport(hudStage,   w, h);
         updateHudViewport(pauseStage, w, h);
         updateHudViewport(modalStage, w, h);
-        layoutHud(w / UIScale.forHeight(h), h / UIScale.forHeight(h));
+        layoutHud(w / UIScale.scaleFor(h), h / UIScale.scaleFor(h));
+
+        // Вікно змінило розмір, поки відкриті налаштування — перескласти їх,
+        // інакше рядок роздільності показуватиме те, чого вже немає.
+        if (paused && pauseSettingsOpen) showPauseSettings();
     }
 
     /**
@@ -1122,15 +1166,45 @@ public class GameScreen implements Screen {
      */
     private void showPauseSettings() {
         pauseStage.clear();
-        new PauseSettingsOverlay(pauseStage, new Runnable() {
-            @Override public void run() {
-                pauseStage.clear();
-                buildPauseOverlay();
-            }
-        });
+        pauseSettingsOpen = true;
+        new PauseSettingsOverlay(pauseStage,
+            new Runnable() {
+                @Override public void run() {
+                    pauseStage.clear();
+                    buildPauseOverlay();
+                }
+            },
+            new Runnable() {
+                @Override public void run() { rebuildUiForUiScale(); }
+            });
+    }
+
+    /**
+     * Перескласти інтерфейс матчу під новий масштаб.
+     *
+     * <p>Вʼюпорт оновити замало: стилі й шрифти запечені під старий множник, а
+     * спільний кеш {@code UIFactory} звільняється цілком. Тому сцени
+     * перезбираються, і сторінка налаштувань відкривається знову — гравець
+     * лишився там, де стояв, і може одразу посунути повзунок ще раз.
+     *
+     * <p>Модальних вікон тут бути не може: поки видно десинхрон чи підсумок
+     * матчу, ввід не доходить навіть до паузи, тобто налаштування недосяжні.
+     *
+     * <p>Кликати ТІЛЬКИ поза обробником події — метод звільняє сцену, якій
+     * належить актор-джерело події.
+     */
+    private void rebuildUiForUiScale() {
+        if (pauseStage != null) pauseStage.dispose();
+        if (hudStage   != null) hudStage.dispose();
+        if (modalStage != null) modalStage.dispose();
+
+        buildUiAndInput();
+        layoutHud();
+        showPauseSettings();
     }
 
     private void buildPauseOverlay() {
+        pauseSettingsOpen = false;
         pauseOverlay = new PauseOverlay(pauseStage, new PauseOverlay.PauseListener() {
             @Override public void onResume()        { paused = false; pauseStage.clear(); }
             @Override public void onReturnToLobby() { game.setScreen(new io.jababa.lost_batalion.screens.scenario.ScenarioScreen(game)); }

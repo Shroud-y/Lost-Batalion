@@ -7,6 +7,7 @@ import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.utils.Array;
 import io.jababa.lost_batalion.Team;
+import io.jababa.lost_batalion.audio.AudioManager;
 import io.jababa.lost_batalion.math.DeterministicRandom;
 import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.screens.effects.Fx;
@@ -78,7 +79,14 @@ public class CombatManager {
 
     private TargetPopupManager popupManager;
     private Sound              shotSound;
-    private final float        soundVolume = 0.35f;
+
+    /**
+     * Власна гучність пострілу відносно решти звуків — властивість ассета, а не
+     * налаштування. Що з нею зробить гравець, вирішує {@link AudioManager}:
+     * раніше тут стояло кінцеве значення, і повзунок гучності на постріли не
+     * впливав узагалі.
+     */
+    private static final float SHOT_GAIN = 0.35f;
 
     /**
      * Видимість очима конкретного юніта.
@@ -918,7 +926,7 @@ public class CombatManager {
         shots.get(0).show(from.worldX(), from.worldY(), to.worldX(), to.worldY());
     }
 
-    private void playShot() { if (shotSound != null) shotSound.play(soundVolume); }
+    private void playShot() { AudioManager.playSfx(shotSound, SHOT_GAIN); }
 
     private static class AttackGroup {
         enum Phase { SPREAD, ADVANCE }

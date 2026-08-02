@@ -2,6 +2,7 @@ package io.jababa.lost_batalion.ui;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
+import io.jababa.lost_batalion.LostBatalion;
 
 /**
  * Єдиний множник розміру інтерфейсу.
@@ -32,21 +33,71 @@ import com.badlogic.gdx.utils.viewport.ScreenViewport;
  */
 public final class UIScale {
 
-    /** Висота вікна, на якій множник дорівнює одиниці. */
+    /** Висота вікна, на якій автоматичний множник дорівнює одиниці. */
     public static final float REFERENCE_HEIGHT = 720f;
 
     public static final float MIN  = 0.75f;
     public static final float MAX  = 2.0f;
     public static final float STEP = 0.25f;
 
+    /** Межі особистого множника з налаштувань: 50–200%. */
+    public static final float USER_MIN  = 0.5f;
+    public static final float USER_MAX  = 2.0f;
+    public static final float USER_STEP = 0.1f;
+
+    /**
+     * Світ сцени меню. СТАЛИЙ — повзунок масштабу його не чіпає.
+     *
+     * <p>Повзунок керує лише інтерфейсом МАТЧУ: мінікартою, панеллю виділення,
+     * панеллю військ, меню паузи. Меню поза матчем — це суцільні scene2d-таблиці
+     * в {@code ExtendViewport}, вони і без того ростуть разом із вікном, і
+     * другий множник поверх них лише ламав би розкладку заради нічого.
+     */
+    public static final float MENU_WORLD_WIDTH  = 900f;
+    public static final float MENU_WORLD_HEIGHT = 580f;
+
+    /**
+     * Стеля щільності запікання шрифту.
+     *
+     * <p>Гліфи печуться вдвічі більшими за потрібний кегль і малюються з
+     * {@code setScale(0.5)} — це і є запас різкості. Понад цю щільність атлас
+     * шрифту росте квадратично й упирається в максимальний розмір текстури, а
+     * виграш на око вже непомітний. На поєднанні 1440p + 200% текст трохи
+     * мʼякший за ідеал — це усвідомлений розмін.
+     */
+    private static final float FONT_DENSITY_CAP = 3f;
+
+    /**
+     * Особистий множник із налаштувань, кешований.
+     *
+     * <p>{@link #get()} кличеться десятки разів за кадр (кожна перевірка
+     * влучання по HUD), а {@code Preferences} — це похід у файлову абстракцію.
+     * Значення читається один раз і оновлюється через {@link #refreshUser()},
+     * коли гравець посунув повзунок.
+     */
+    private static float user = -1f;
+
     private UIScale() {}
 
-    /** Множник для поточного вікна. */
+    /** Підсумковий множник для поточного вікна: автоматичний × особистий. */
     public static float get() {
-        return forHeight(Gdx.graphics.getHeight());
+        return scaleFor(Gdx.graphics.getHeight());
     }
 
-    /** Множник для заданої висоти вікна. Виділено окремо заради тестів і макетів. */
+    /**
+     * Підсумковий множник для заданої висоти вікна.
+     *
+     * <p>Потрібен у {@code resize(w, h)}: там нова висота приходить аргументом,
+     * і покладатись на {@code Gdx.graphics} під час зворотного виклику не можна.
+     */
+    public static float scaleFor(int screenHeight) {
+        return forHeight(screenHeight) * user();
+    }
+
+    /**
+     * АВТОМАТИЧНА частина множника — лише за висотою вікна, без налаштувань.
+     * Виділено окремо заради тестів і макетів.
+     */
     public static float forHeight(int screenHeight) {
         if (screenHeight <= 0) return 1f;
         float raw     = screenHeight / REFERENCE_HEIGHT;
@@ -54,6 +105,52 @@ public final class UIScale {
         if (snapped < MIN) return MIN;
         if (snapped > MAX) return MAX;
         return snapped;
+    }
+
+    /** Особистий множник із налаштувань (50–200%). */
+    public static float user() {
+        if (user < 0f) refreshUser();
+        return user;
+    }
+
+    /** Перечитати особистий множник із налаштувань. */
+    public static void refreshUser() {
+        user = clampUser(LostBatalion.Settings.getUiScale());
+    }
+
+    /**
+     * Записати особистий множник.
+     *
+     * <p>Саме по собі це нічого не перемальовує: стилі, шрифти й вʼюпорти вже
+     * створені під старе значення. Той, хто це кличе, зобовʼязаний перескласти
+     * сцени — інакше повзунок «спрацює» аж на наступному запуску.
+     */
+    public static void setUser(float value) {
+        LostBatalion.Settings.setUiScale(clampUser(value));
+        refreshUser();
+    }
+
+    private static float clampUser(float v) {
+        if (v < USER_MIN) return USER_MIN;
+        if (v > USER_MAX) return USER_MAX;
+        return v;
+    }
+
+    /**
+     * У скільки разів пекти гліфи відносно кегля стилю.
+     *
+     * <p>Береться максимум із двох сцен — HUD і меню, — бо шрифти в них спільні:
+     * запекти під дрібнішу означало б розмити текст у більшій. Меню особистого
+     * множника не мають, тож їхня щільність залежить лише від висоти вікна.
+     * Одиниця — це колишня поведінка (рівно двократний запас), тобто нижче
+     * базового рівня різкості щільність не опускається навіть на 50%.
+     */
+    public static float fontDensity() {
+        float hud  = get();
+        float menu = Gdx.graphics.getHeight() / MENU_WORLD_HEIGHT;
+        float d = Math.max(hud, menu);
+        if (d < 1f) return 1f;
+        return d > FONT_DENSITY_CAP ? FONT_DENSITY_CAP : d;
     }
 
     /** Ширина HUD в логічних одиницях. */
@@ -113,7 +210,7 @@ public final class UIScale {
      */
     public static void apply(ScreenViewport viewport, int screenHeight) {
         if (viewport == null) return;
-        viewport.setUnitsPerPixel(1f / forHeight(screenHeight));
+        viewport.setUnitsPerPixel(1f / scaleFor(screenHeight));
     }
 
     /** Створити в'юпорт сцени, уже прив'язаний до множника. */
