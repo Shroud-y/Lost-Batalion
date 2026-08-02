@@ -1,5 +1,6 @@
 package io.jababa.lost_batalion.units;
 
+import com.badlogic.gdx.math.MathUtils;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.math.Fixed;
 
@@ -433,6 +434,90 @@ public abstract class Unit {
         return Fixed.toFloat(prevY) + (Fixed.toFloat(y) - Fixed.toFloat(prevY)) * alpha;
     }
 
+    // ── Тремтіння бою (чистий візуал) ─────────────────────────────────────
+    //
+    // У знімок і в checksum НЕ входить — так само, як відкат гармати. Позиція
+    // в симуляції під час бою не тремтить: інакше кожен удар зсував би дальність
+    // і хто кого дістає, а два клієнти з різними FPS розійшлись би за секунди.
+
+    /**
+     * Скільки секунд тремтіння живе після удару.
+     *
+     * <p>Довше за будь-який кулдаун (найповільніший — 1.2 с у піхоти): удари
+     * йдуть частіше, ніж таймер спливає, тож поки бій триває, юніт тремтить
+     * БЕЗПЕРЕРВНО. З коротким таймером виходив пульс — смикнувся, завмер,
+     * смикнувся, і саме він читався як шаблон.
+     */
+    private static final float SHAKE_DURATION = 1.5f;
+    /**
+     * Хвіст затухання. Гасне лише в останні чверть секунди, а не весь час:
+     * плавне згасання від самого удару — це знову той самий пульс.
+     */
+    private static final float SHAKE_FADE = 0.25f;
+    /** Розмах у пікселях. Пів пікселя: це нерв, а не рух. */
+    private static final float SHAKE_AMPLITUDE = 0.5f;
+
+    /**
+     * Частоти трьох складових.
+     *
+     * <p>Три, а не одна, і в неспівмірних відношеннях: одна синусоїда дає
+     * впізнаване рівне коливання, дві складаються в биття з чутним періодом, і
+     * лише три без спільного дільника не повторюються на око взагалі.
+     */
+    private static final float[] SHAKE_FREQ = { 23.5f, 41.3f, 67.9f };
+
+    /**
+     * Приріст фази на кожен id — золотий кут у радіанах.
+     *
+     * <p>Ірраціональне число тут не для краси: будь-яке раціональне дало б
+     * юнітам, чиї id відрізняються на період, однакову фазу, і сусіди в
+     * шерензі тремтіли б синхронно.
+     */
+    private static final float SHAKE_PHASE_STEP = 2.399963f;
+
+    private float shakeTimer;
+    /** Власний годинник анімації. Йде за часом КАДРУ, до симуляції не належить. */
+    private float shakeClock;
+
+    /** Смикнути юніта: викликається на кожен удар — і по тому, хто б'є, і по цілі. */
+    public void kickCombatShake() { shakeTimer = SHAKE_DURATION; }
+
+    /** Просунути тремтіння за часом кадру. */
+    public void updateCombatShake(float delta) {
+        if (shakeTimer <= 0f) return;
+        shakeTimer  = Math.max(0f, shakeTimer - delta);
+        shakeClock += delta;
+    }
+
+    /** Поточний зсув спрайта по X у пікселях. */
+    public float shakeOffsetX() { return shakeOffset(0f); }
+
+    /** ...і по Y. Інша базова фаза — інакше юніт їздив би по діагоналі. */
+    public float shakeOffsetY() { return shakeOffset(1.913f); }
+
+    /**
+     * Сума трьох неспівмірних синусоїд, поділена на їхню кількість.
+     *
+     * <p>Не {@code random()}: зсув читається в рендері по кілька разів за кадр
+     * (спрайт, а колись і оверлеї), і випадкове число давало б юніту різні
+     * позиції в межах одного кадру — тобто не тремтіння, а розрив картинки.
+     * Функція від часу повертає те саме значення скільки її не клич.
+     */
+    private float shakeOffset(float axisPhase) {
+        if (shakeTimer <= 0f) return 0f;
+
+        float phase = id * SHAKE_PHASE_STEP + axisPhase;
+        float sum   = 0f;
+        for (int i = 0; i < SHAKE_FREQ.length; i++) {
+            // Фаза кожної складової своя і теж залежить від id — інакше три
+            // синусоїди стартували б разом і перший пік був би однаковий у всіх.
+            sum += MathUtils.sin(shakeClock * SHAKE_FREQ[i] + phase * (i + 1));
+        }
+
+        float fade = Math.min(1f, shakeTimer / SHAKE_FADE);
+        return sum / SHAKE_FREQ.length * SHAKE_AMPLITUDE * fade;
+    }
+
     /** Позиція у світових одиницях для UI-запитів (клік, підказка). */
     public float worldX() { return Fixed.toFloat(x); }
     public float worldY() { return Fixed.toFloat(y); }
@@ -516,6 +601,9 @@ public abstract class Unit {
         out.writeLong(finalX);
         out.writeLong(finalY);
         out.writeInt(pathIndex);
+        out.writeLong(pushVelX);
+        out.writeLong(pushVelY);
+        out.writeInt(pushTicks);
         out.writeLong(pathOffX);
         out.writeLong(pathOffY);
         out.writeInt(path == null ? 0 : path.length);
@@ -539,6 +627,9 @@ public abstract class Unit {
         finalX    = in.readLong();
         finalY    = in.readLong();
         pathIndex = in.readInt();
+        pushVelX  = in.readLong();
+        pushVelY  = in.readLong();
+        pushTicks = in.readInt();
         pathOffX  = in.readLong();
         pathOffY  = in.readLong();
         int pathLength = in.readInt();
@@ -574,6 +665,71 @@ public abstract class Unit {
 
     /** Радіус влучання (Q47.16). */
     public long hitRadiusFixed() { return sizeFixed() >> 1; }
+
+    // ── Поштовх ближнього бою ─────────────────────────────────────────────
+
+    /**
+     * Залишок поштовху: зсув за тік і скільки тіків його ще застосовувати.
+     *
+     * <p>Стан симуляції — входить у знімок. Розтягування по тіках і є вся суть:
+     * перша версія зсувала ціль одним стрибком у момент удару, і юніт раз на
+     * 0.7 с підскакував на пів корпусу. Тепер той самий зсув розкладений на
+     * увесь проміжок до наступного удару, тож ціль рівно повзе, поки її б'ють.
+     */
+    private long pushVelX, pushVelY;
+    private int  pushTicks;
+
+    /**
+     * Отримати поштовх: {@code force} одиниць у напрямку {@code (dirX, dirY)},
+     * розкладених на {@code ticks} тіків.
+     *
+     * <p>Новий удар ЗАМІНЮЄ залишок попереднього, а не додається до нього:
+     * інакше двоє вершників на одній цілі розганяли б її вдвічі, троє — втричі,
+     * і юніт відлітав би тим далі, чим більше на нього налізло.
+     *
+     * @param dirX,dirY одиничний напрямок (Q47.16)
+     */
+    public void applyKnockback(long dirX, long dirY, long force, int ticks) {
+        if (ticks <= 0 || force <= 0) return;
+        long perTick = Fixed.divInt(force, ticks);
+        pushVelX  = Fixed.mul(dirX, perTick);
+        pushVelY  = Fixed.mul(dirY, perTick);
+        pushTicks = ticks;
+    }
+
+    /**
+     * Просунути поштовх на один тік. Кличе {@code UnitManager} одразу після
+     * {@link #tick} — межі карти знає саме він.
+     */
+    public void advanceKnockback(long mapW, long mapH) {
+        if (pushTicks <= 0) return;
+        pushTicks--;
+
+        long half = hitRadiusFixed();
+        if (mapW > half * 2 && mapH > half * 2) {
+            x = Fixed.clamp(x + pushVelX, half, mapW - half);
+            y = Fixed.clamp(y + pushVelY, half, mapH - half);
+        }
+        if (pushTicks == 0) { pushVelX = 0; pushVelY = 0; }
+    }
+
+    /**
+     * Сила поштовху при влучанні (Q47.16); 0 — юніт нікого не зрушує.
+     *
+     * <p>Тут, а не {@code instanceof Cavalry} у бою: штовхати вміє не «клас
+     * кінноти», а удар з розгону, і наступний такий юніт має отримати це,
+     * перевизначивши одне число, а не додавши ще одну гілку в {@code tryAttack}.
+     */
+    public long knockbackForce() { return 0; }
+
+    /**
+     * Чи супроводжується удар пострілом — трасером і звуком.
+     *
+     * <p>Ближній бій не стріляє: у кінноти немає ні ствола, ні пострілу, і
+     * трасер від неї до цілі, яку вона щойно збила конем, читався б як промах
+     * рендера.
+     */
+    public boolean usesRangedFx() { return true; }
 
     /** Розмір у пікселях — єдине, що можна брати в рендер. */
     public float getSizePx() { return Fixed.toFloat(sizeFixed()); }

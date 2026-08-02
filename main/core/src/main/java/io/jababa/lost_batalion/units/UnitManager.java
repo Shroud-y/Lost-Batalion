@@ -86,6 +86,9 @@ public class UnitManager {
                 ? terrain.movementMultiplierF(u.x, u.y)
                 : Fixed.ONE;
             u.tick(multiplier);
+            // Поштовх ближнього бою — ПІСЛЯ власного руху: удар зсуває ціль
+            // на додачу до її кроку, а не замість нього.
+            u.advanceKnockback(mapW, mapH);
         }
 
         // Розштовхування — ПІСЛЯ руху всіх: інакше юніт, який ходить раніше за
@@ -257,13 +260,16 @@ public class UnitManager {
     /** Дискримінатор типу юніта у знімку. Значення — частина формату. */
     private static final byte KIND_INFANTRY  = 0;
     private static final byte KIND_ARTILLERY = 1;
+    private static final byte KIND_CAVALRY   = 2;
 
     public void writeSnapshot(java.io.DataOutputStream out) throws java.io.IOException {
         out.writeInt(nextId);
         out.writeInt(allUnits.size);
         for (int i = 0; i < allUnits.size; i++) {
             Unit u = allUnits.get(i);
-            out.writeByte(u instanceof Artillery ? KIND_ARTILLERY : KIND_INFANTRY);
+            out.writeByte(u instanceof Artillery ? KIND_ARTILLERY
+                        : u instanceof Cavalry   ? KIND_CAVALRY
+                                                 : KIND_INFANTRY);
             out.writeInt(u.team.ordinal());
             u.writeSnapshot(out);
         }
@@ -296,6 +302,7 @@ public class UnitManager {
             Team team = teams[in.readInt()];
 
             Unit u = kind == KIND_ARTILLERY ? new Artillery(team, 0, 0)
+                   : kind == KIND_CAVALRY   ? new Cavalry(team, 0, 0)
                                             : new Infantry(team, 0, 0);
             u.readSnapshot(in);
 

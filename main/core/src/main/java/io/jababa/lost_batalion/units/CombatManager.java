@@ -75,6 +75,7 @@ public class CombatManager {
     /** Буфер під нормалізований напрямок — щоб не алокувати масив у бою щотіку. */
     private final long[] dir = new long[2];
 
+
     private TargetPopupManager popupManager;
     private Sound              shotSound;
     private final float        soundVolume = 0.35f;
@@ -254,6 +255,7 @@ public class CombatManager {
         Array<Unit> all = unitManager.getAllUnits();
         for (int i = 0; i < all.size; i++) {
             Unit u = all.get(i);
+            u.updateCombatShake(delta);
             if (u instanceof Artillery) ((Artillery) u).updateRecoil(delta);
         }
 
@@ -479,7 +481,7 @@ public class CombatManager {
 
         for (int i = 0; i < count; i++) {
             Unit u = units.get(i);
-            long stopDist = Fixed.mul(u.attackRange, STOP_DIST_FACTOR);
+            long stopDist = standoff(u, enemy);
             long len = Fixed.normalize(enemy.x - u.x, enemy.y - u.y, dir);
             long nx = len == 0 ? Fixed.ONE : dir[0];
             long ny = len == 0 ? 0         : dir[1];
@@ -501,7 +503,12 @@ public class CombatManager {
 
         if (Fixed.dstSq(attacker.x, attacker.y, target.x, target.y)
                 <= Fixed.mul(attacker.attackRange, attacker.attackRange)) {
-            attacker.stopMoving();
+            // Стрілець б'є з місця; рукопашник ТРИМАЄТЬСЯ впритул і повзе за
+            // ціллю, яку сам же відштовхує. Без цього він щотіку то ставав
+            // (ціль у радіусі), то смикався вперед (ціль виїхала з радіуса) —
+            // саме це й виглядало як тремтіння кінноти під час удару.
+            if (attacker.usesRangedFx()) attacker.stopMoving();
+            else                         keepContact(attacker, target);
             tryAttack(attacker, target);
             return;
         }
@@ -518,7 +525,7 @@ public class CombatManager {
                 if (len != 0) {
                     long fnx = dir[0], fny = dir[1];
                     long fpx = -fny, fpy = fnx;
-                    long reach = Fixed.mul(attacker.attackRange, STOP_DIST_FACTOR);
+                    long reach = standoff(attacker, target);
                     attacker.moveTo(
                         target.x - Fixed.mul(fnx, reach) + Fixed.mul(fpx, order.perpOffset),
                         target.y - Fixed.mul(fny, reach) + Fixed.mul(fpy, order.perpOffset));
@@ -526,6 +533,47 @@ public class CombatManager {
                 break;
             }
         }
+    }
+
+    /**
+     * Запас понад дотик хітбоксів, на якому зупиняється рукопашник.
+     *
+     * <p>Малий, але не нульовий, і в цьому вся річ: якщо ціль зупинки збігається
+     * з відстанню, на якій спрацьовує розштовхування, юніт щотіку робить крок
+     * уперед і його щотіку відпихають назад.
+     */
+    private static final long MELEE_PAD = Fixed.fromInt(2);
+
+    /**
+     * На якій відстані від цілі спинятись.
+     *
+     * <p>Для стрільця це просто частка дальності. Для рукопашника дальність
+     * менша за суму хітбоксів помножену на будь-що — стати «на 85% від 18»
+     * означає стати ВСЕРЕДИНІ цілі, звідки його виштовхує
+     * {@link UnitSeparation}. Тому береться більше з двох: дотик хітбоксів із
+     * запасом ніколи не заходить у зону розштовхування.
+     */
+    private long standoff(Unit attacker, Unit target) {
+        long ranged  = Fixed.mul(attacker.attackRange, STOP_DIST_FACTOR);
+        long contact = attacker.hitRadiusFixed() + target.hitRadiusFixed() + MELEE_PAD;
+        return Math.max(ranged, contact);
+    }
+
+    /**
+     * Тримати рукопашника впритул до цілі, поки він її б'є.
+     *
+     * <p>Наказ віддається щотіку заново, і це навмисно: ціль повзе від
+     * поштовху, і юніт має повзти за нею тим самим темпом. Крок руху
+     * обрізається залишком відстані, тож на місці він не смикається — просто
+     * весь час стоїть там, де треба.
+     */
+    private void keepContact(Unit attacker, Unit target) {
+        long len = Fixed.normalize(target.x - attacker.x, target.y - attacker.y, dir);
+        if (len == 0) return;
+
+        long reach = standoff(attacker, target);
+        attacker.moveTo(target.x - Fixed.mul(dir[0], reach),
+                        target.y - Fixed.mul(dir[1], reach));
     }
 
     /** Атака з урахуванням місцевості. Артилерія не може атакувати через цей метод. */
@@ -536,6 +584,7 @@ public class CombatManager {
         if (Fixed.dstSq(attacker.x, attacker.y, target.x, target.y)
                 > Fixed.mul(attacker.attackRange, attacker.attackRange)) return;
 
+        boolean hit;
         if (terrain != null) {
             TerrainType atkElev = terrain.elevationF(attacker.x, attacker.y);
             TerrainType defElev = terrain.elevationF(target.x, target.y);
@@ -543,13 +592,47 @@ public class CombatManager {
             long defMult = TerrainCombatModifier.getDefenseMultiplier(atkElev, defElev);
             if (targetInForest) defMult = Fixed.mul(defMult, FOREST_DEFENSE_BONUS);
 
-            attacker.attackWithTerrain(target, defMult);
+            hit = attacker.attackWithTerrain(target, defMult);
         } else {
-            attacker.attack(target);
+            hit = attacker.attack(target);
         }
+        if (!hit) return;
 
-        spawnShot(attacker, target);
-        playShot();
+        // Тремтять обидва: той, хто вдарив, і той, кого вдарили. Це лише
+        // картинка — позиції в симуляції не змінюються.
+        attacker.kickCombatShake();
+        target.kickCombatShake();
+
+        applyKnockback(attacker, target);
+
+        // Ближній бій обходиться без трасера й пострілу.
+        if (attacker.usesRangedFx()) {
+            spawnShot(attacker, target);
+            playShot();
+        }
+    }
+
+    /**
+     * Відкинути ціль ударом.
+     *
+     * <p>Напрямок — від атакуючого до цілі, тобто рівно той, у якому він на неї
+     * і біг: удар з розгону продовжує рух вершника, а не штовхає навмання.
+     *
+     * <p>Зсув не застосовується тут: він розкладається на весь проміжок до
+     * наступного удару і йде по тіку в {@code Unit.advanceKnockback}. Тому
+     * атака штовхає ціль РІВНО, поки триває, а не смикає її раз на кулдаун.
+     *
+     * <p>Це СТАН симуляції, а не рендер: збита позиція міняє дальність до інших
+     * і місцевість під ногами.
+     */
+    private void applyKnockback(Unit attacker, Unit target) {
+        long force = attacker.knockbackForce();
+        if (force <= 0) return;
+
+        long len = Fixed.normalize(target.x - attacker.x, target.y - attacker.y, dir);
+        if (len == 0) return;   // стоять в одній точці — напрямку немає
+
+        target.applyKnockback(dir[0], dir[1], force, attacker.attackCooldownTicks);
     }
 
     /**

@@ -49,8 +49,11 @@ public class UnitRenderer {
             // Java мовчки розширила б його у float — юніт розміром 10 малювався б
             // розміром 655360 і закривав би собою всю карту.
             float size  = u.renderSizePx();
-            float x     = u.renderX(alpha) - size / 2f;
-            float y     = u.renderY(alpha) - size / 2f;
+            // Тремтіння бою — тільки спрайт. Обводка виділення й HP-бар стоять
+            // рівно: смужка, що дрижить разом із фігурою, читається як брак
+            // рендера, а не як напруга бою.
+            float x     = u.renderX(alpha) - size / 2f + u.shakeOffsetX();
+            float y     = u.renderY(alpha) - size / 2f + u.shakeOffsetY();
 
             if (u instanceof Artillery) {
                 // Віддача: гармату відкидає НАЗАД уздовж ствола. Це рендер —

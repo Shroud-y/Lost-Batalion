@@ -18,12 +18,14 @@ import io.jababa.lost_batalion.Team;
 public enum UnitType {
 
     INFANTRY (Category.INF, "ПІХОТА",    50),
-    ARTILLERY(Category.ART, "ГАРМАТА",  150);
+    ARTILLERY(Category.ART, "ГАРМАТА",  150),
+    CAVALRY  (Category.CAV, "КІННОТА",   80);
 
     /** Розділ у меню замовлення. */
     public enum Category {
         INF("INF", "Піхота"),
-        ART("ART", "Артилерія");
+        ART("ART", "Артилерія"),
+        CAV("CAV", "Кіннота");
 
         /** Коротка назва розділу — саме її бачить гравець у меню. */
         public final String code;
@@ -57,6 +59,7 @@ public enum UnitType {
     public Unit create(Team team, long rawX, long rawY) {
         switch (this) {
             case ARTILLERY: return new Artillery(team, rawX, rawY);
+            case CAVALRY:   return new Cavalry(team, rawX, rawY);
             default:        return new Infantry(team, rawX, rawY);
         }
     }
@@ -69,6 +72,8 @@ public enum UnitType {
         switch (this) {
             case ARTILLERY: return team == Team.PLAYER ? "units/artillery_player.png"
                                                        : "units/artillery_enemy.png";
+            case CAVALRY:   return team == Team.PLAYER ? "units/cavalry_player.png"
+                                                       : "units/cavalry_enemy.png";
             default:        return team == Team.PLAYER ? "units/infantry_player.png"
                                                        : "units/infantry_enemy.png";
         }
@@ -76,6 +81,10 @@ public enum UnitType {
 
     /** Розмір спрайта в пікселях — теж для привида. */
     public float sizePx() {
-        return this == ARTILLERY ? Artillery.ART_SIZE : Infantry.INF_SIZE;
+        switch (this) {
+            case ARTILLERY: return Artillery.ART_SIZE;
+            case CAVALRY:   return Cavalry.CAV_SIZE;
+            default:        return Infantry.INF_SIZE;
+        }
     }
 }
