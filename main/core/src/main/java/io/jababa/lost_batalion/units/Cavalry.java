@@ -82,9 +82,8 @@ public class Cavalry extends Unit {
     @Override public boolean usesRangedFx() { return false; }
 
     /**
-     * Тремтіння від шаблі слабше за пострільне: ціль і так уже їде від
-     * поштовху, і повний розмах поверх цього руху читається як дрижання
-     * картинки, а не як удар.
+     * Єдиний тип, чий бій тремтить: у сутичці впритул рух доречний, у
+     * перестрілці — ні (див. {@code Unit.combatShakeScale}).
      */
     @Override public float combatShakeScale() { return CAV_SHAKE_SCALE; }
 
