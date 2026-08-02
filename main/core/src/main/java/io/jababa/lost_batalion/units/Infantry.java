@@ -20,7 +20,8 @@ public class Infantry extends Unit {
     public static final long INF_SIZE_FIXED = Fixed.fromInt(15);
     /** Той самий розмір у пікселях — для розкладки й рендеру. */
     public static final float INF_SIZE       = 10f;
-    private static final long INF_HIT_RADIUS = Fixed.fromInt(8);
+    /** Публічний, бо кіннота свідомо повторює піхотний габарит. */
+    public static final long INF_HIT_RADIUS = Fixed.fromInt(8);
 
     public Infantry(Team team, long rawX, long rawY) {
         super(team);

@@ -32,22 +32,24 @@ public class Cavalry extends Unit {
     /**
      * Дальність удару.
      *
-     * <p>Сума хітбоксів кінноти й піхоти — 15, і розштовхування не дасть їм
-     * зійтись ближче. Тому 18: це «впритул плюс запас на тремтіння», а не
-     * дистанція. З меншим числом кіннота підбігала б до цілі й не могла вдарити
-     * взагалі — її відпихав би той самий код, що не дає юнітам налазити.
+     * <p>Сума хітбоксів кінноти й піхоти — 16, і розштовхування не дасть їм
+     * зійтись ближче; {@code CombatManager.standoff} додає ще 2 запасу. Тому
+     * 20: це «впритул», а не дистанція. З меншим числом кіннота підбігала б до
+     * цілі й не могла вдарити взагалі — її тримав би на відстані, більшій за
+     * власну дальність, той самий код, що не дає юнітам налазити.
      */
-    private static final long CAV_RANGE   = Fixed.fromInt(18);
+    private static final long CAV_RANGE   = Fixed.fromInt(20);
 
     /** 0.7 с при 40 Гц. Б'є частіше за піхоту, але слабше. */
     private static final int  CAV_COOLDOWN_TICKS = 28;
 
-    /** Розмір у світових одиницях (Q47.16) і в пікселях. */
-    public static final long  CAV_SIZE_FIXED = Fixed.fromInt(15);
-    public static final float CAV_SIZE       = 14f;
-    private static final long CAV_HIT_RADIUS = Fixed.fromInt(7);
-    /** Спрайт трохи більший за хітбокс: кінь із вершником довший за піхотинця. */
-    private static final float CAV_RENDER_SIZE = 18f;
+    /**
+     * Розміри — рівно піхотні: та сама фігура на полі, той самий хітбокс.
+     * Кіннота відрізняється швидкістю й ударом, а не габаритом.
+     */
+    public static final long  CAV_SIZE_FIXED = Infantry.INF_SIZE_FIXED;
+    public static final float CAV_SIZE       = Infantry.INF_SIZE;
+    private static final long CAV_HIT_RADIUS = Infantry.INF_HIT_RADIUS;
 
     /**
      * Скільки одиниць ціль проїжджає від одного удару (Q47.16).
@@ -58,6 +60,9 @@ public class Cavalry extends Unit {
      * читався як смикання — юніт то стояв, то підскакував раз на 0.7 с.
      */
     private static final long CAV_KNOCKBACK = Fixed.fromInt(5);
+
+    /** Частка загального розмаху тремтіння для ударів кінноти. */
+    private static final float CAV_SHAKE_SCALE = 0.65f;
 
     public Cavalry(Team team, long rawX, long rawY) {
         super(team);
@@ -76,13 +81,19 @@ public class Cavalry extends Unit {
     @Override public long  knockbackForce() { return CAV_KNOCKBACK; }
     @Override public boolean usesRangedFx() { return false; }
 
+    /**
+     * Тремтіння від шаблі слабше за пострільне: ціль і так уже їде від
+     * поштовху, і повний розмах поверх цього руху читається як дрижання
+     * картинки, а не як удар.
+     */
+    @Override public float combatShakeScale() { return CAV_SHAKE_SCALE; }
+
     @Override public long  sizeFixed()      { return CAV_SIZE_FIXED; }
-    @Override public float renderSizePx()   { return CAV_RENDER_SIZE; }
     @Override public long  hitRadiusFixed() { return CAV_HIT_RADIUS; }
 
     @Override public String getTexturePath() {
         return team == Team.PLAYER
-            ? "units/cavalry_player.png"
-            : "units/cavalry_enemy.png";
+            ? "units/light_cavalry_player.png"
+            : "units/light_cavalry_enemy.png";
     }
 }

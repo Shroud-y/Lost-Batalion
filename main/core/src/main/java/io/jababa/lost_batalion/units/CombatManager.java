@@ -600,8 +600,16 @@ public class CombatManager {
 
         // Тремтять обидва: той, хто вдарив, і той, кого вдарили. Це лише
         // картинка — позиції в симуляції не змінюються.
-        attacker.kickCombatShake();
-        target.kickCombatShake();
+        if (target.alive) {
+            attacker.kickCombatShake(attacker.combatShakeScale());
+            target.kickCombatShake(attacker.combatShakeScale());
+        } else {
+            // Удар був смертельний — бою більше немає. Без цього переможець
+            // ще півтори секунди дрижав би над порожнім місцем: таймер
+            // навмисно довший за кулдаун, щоб триваючий бій не пульсував.
+            attacker.clearCombatShake();
+            target.clearCombatShake();
+        }
 
         applyKnockback(attacker, target);
 

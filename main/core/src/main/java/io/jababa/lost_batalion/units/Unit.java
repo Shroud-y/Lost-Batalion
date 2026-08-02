@@ -476,11 +476,35 @@ public abstract class Unit {
     private static final float SHAKE_PHASE_STEP = 2.399963f;
 
     private float shakeTimer;
+    /** Частка розмаху поточного тремтіння — від зброї того, хто вдарив. */
+    private float shakeScale = 1f;
     /** Власний годинник анімації. Йде за часом КАДРУ, до симуляції не належить. */
     private float shakeClock;
 
+    /**
+     * Частка розмаху, з якою тремтять учасники удару цього юніта.
+     *
+     * <p>Належить тому, хто Б'Є: тремтіння — це відлуння удару, і його силу
+     * задає зброя, а не той, кому дісталось. Шабля з розгону смикає слабше за
+     * залп упритул, хоч і болючіша.
+     */
+    public float combatShakeScale() { return 1f; }
+
     /** Смикнути юніта: викликається на кожен удар — і по тому, хто б'є, і по цілі. */
-    public void kickCombatShake() { shakeTimer = SHAKE_DURATION; }
+    public void kickCombatShake(float scale) {
+        if (scale <= 0f) return;
+        shakeTimer = SHAKE_DURATION;
+        shakeScale = scale;
+    }
+
+    /**
+     * Обірвати тремтіння негайно.
+     *
+     * <p>Потрібне рівно на смерть цілі: таймер живе довше за кулдаун, щоб бій
+     * тремтів безперервно, і без цього переможець ще півтори секунди дрижав би
+     * над порожнім місцем.
+     */
+    public void clearCombatShake() { shakeTimer = 0f; }
 
     /** Просунути тремтіння за часом кадру. */
     public void updateCombatShake(float delta) {
@@ -515,7 +539,7 @@ public abstract class Unit {
         }
 
         float fade = Math.min(1f, shakeTimer / SHAKE_FADE);
-        return sum / SHAKE_FREQ.length * SHAKE_AMPLITUDE * fade;
+        return sum / SHAKE_FREQ.length * SHAKE_AMPLITUDE * shakeScale * fade;
     }
 
     /** Позиція у світових одиницях для UI-запитів (клік, підказка). */

@@ -72,8 +72,8 @@ public enum UnitType {
         switch (this) {
             case ARTILLERY: return team == Team.PLAYER ? "units/artillery_player.png"
                                                        : "units/artillery_enemy.png";
-            case CAVALRY:   return team == Team.PLAYER ? "units/cavalry_player.png"
-                                                       : "units/cavalry_enemy.png";
+            case CAVALRY:   return team == Team.PLAYER ? "units/light_cavalry_player.png"
+                                                       : "units/light_cavalry_enemy.png";
             default:        return team == Team.PLAYER ? "units/infantry_player.png"
                                                        : "units/infantry_enemy.png";
         }
