@@ -50,6 +50,38 @@ Base package: `io.jababa.lost_batalion`
 - `./gradlew server:run` — run server stub
 - **No tests exist** (`src/test` absent). `./gradlew test` is a no-op.
 
+### Скріншоти (`debug/`)
+
+Єдиний спосіб для того, хто не сидить перед монітором, побачити, як гра
+СПРАВДІ виглядає. До появи цього все про вигляд перевірялось реконструкціями
+в PIL, а вони не відтворюють ні метрик шрифту libGDX, ні `NinePatch`, ні `Table`.
+
+- **`F12`** — знімок у `~/LostBatalion/screenshots/` (глобально, поряд із `F11`;
+  повний шлях друкується в лог тегом `SCREENSHOT`).
+- Типова тека — **домашня, а не проєктна, і це важливо**: робоча тека процесу при
+  запуску через Gradle — `main/assets/`, тож `Gdx.files.local` складав знімки прямо
+  в асети, звідки їх забирав `generateAssetList` і пакував у jar. Тому в
+  `Screenshot.resolve` стоїть `Gdx.files.external`. Не міняти назад на `local`.
+- **Режим «запустись, знімись, закрийся»** — системні властивості, не налаштування:
+
+```bash
+java -Dlb.shotAt=2,5 -Dlb.autoMatch=true -Dlb.shotExit=true \
+     -Dlb.shotDir=<куди> -jar "lwjgl3/build/libs/Lost Batalion-1.0.0.jar"
+```
+
+| властивість | що робить |
+|---|---|
+| `lb.shotAt=2,5` | секунди від старту; вмикає весь режим (без неї нічого не діє) |
+| `lb.autoMatch=true` | одразу в матч повз меню — інакше знімок покаже лише головне меню |
+| `lb.shotExit=true` | вийти після останнього знімка |
+| `lb.shotDir` | тека (абсолютна або відносна); типово `screenshots/` |
+| `lb.scenario` | id карти; типово перша з `ScenarioCatalog` |
+
+Дві пастки, вже обійдені в `Screenshot.capture`, — не «спрощувати» назад:
+**flipY** (OpenGL віддає рядки знизу вгору) і **альфа з буфера приходить нульовою**,
+тож канал забивається `0xFF` вручну — без цього PNG виходить цілком прозорим.
+Знімається саме кадровий буфер, тобто з HUD, bloom і туманом війни.
+
 ---
 
 ## Architecture

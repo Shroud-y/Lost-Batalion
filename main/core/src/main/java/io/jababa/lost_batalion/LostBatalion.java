@@ -4,7 +4,11 @@ import com.badlogic.gdx.*;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import io.jababa.lost_batalion.audio.AudioManager;
 import io.jababa.lost_batalion.audio.MusicManager;
+import io.jababa.lost_batalion.debug.AutoCapture;
+import io.jababa.lost_batalion.debug.Screenshot;
 import io.jababa.lost_batalion.screens.MainMenuScreen;
+import io.jababa.lost_batalion.screens.game.GameScreen;
+import io.jababa.lost_batalion.screens.scenario.ScenarioCatalog;
 import io.jababa.lost_batalion.ui.ScreenResolution;
 import io.jababa.lost_batalion.ui.ScreenResolution.WindowMode;
 
@@ -32,6 +36,9 @@ public class LostBatalion extends Game {
     private MusicManager music;
 
     private InputMultiplexer inputMultiplexer;
+
+    /** Знімки за розкладом; {@code null} — режим не ввімкнено. */
+    private AutoCapture autoCapture;
 
     /**
      * До якого НЕповноекранного режиму повертає F11.
@@ -66,7 +73,21 @@ public class LostBatalion extends Game {
         music = new MusicManager();
 
         batch = new SpriteBatch();
-        setScreen(new MainMenuScreen(this));
+
+        // Режим «запустись, знімись, закрийся» — інструмент розробки, керується
+        // системними властивостями. Не задано нічого — тут порожньо.
+        autoCapture = AutoCapture.fromSystemProperties();
+
+        // -Dlb.autoMatch=true веде одразу в матч, повз меню і вибір сценарію:
+        // без цього автознімок показував би лише головне меню, а перевіряти
+        // зазвичай треба саме HUD бою.
+        if (Boolean.parseBoolean(System.getProperty("lb.autoMatch"))) {
+            Gdx.app.log("SCREENSHOT", "lb.autoMatch — старт одразу в матч");
+            setScreen(new GameScreen(this, ScenarioCatalog.byId(
+                System.getProperty("lb.scenario"))));
+        } else {
+            setScreen(new MainMenuScreen(this));
+        }
     }
 
     /** Фонова музика застосунку. Екрани кажуть їй режим у своєму {@code show()}. */
@@ -82,6 +103,9 @@ public class LostBatalion extends Game {
     public void render() {
         if (music != null) music.update(Gdx.graphics.getDeltaTime());
         super.render();
+        // Після super.render(): знімається намальований кадр, а не порожній
+        // буфер від попереднього.
+        if (autoCapture != null) autoCapture.update(Gdx.graphics.getDeltaTime());
     }
 
     /**
@@ -123,6 +147,12 @@ public class LostBatalion extends Game {
             public boolean keyDown(int keycode) {
                 if (keycode == Input.Keys.F11) {
                     toggleFullscreen();
+                    return true;
+                }
+                // F12 — знімок екрана. Глобально, поряд із F11: кадр буває
+                // потрібен на будь-якому екрані, а не лише в матчі.
+                if (keycode == Input.Keys.F12) {
+                    Screenshot.capture();
                     return true;
                 }
                 return false;
