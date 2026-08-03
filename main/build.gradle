@@ -27,7 +27,11 @@ allprojects {
 
 configure(subprojects - project(':android')) {
   apply plugin: 'java-library'
-  java.sourceCompatibility = 23
+  // 21, а не 23: жодної мовної фічі понад 21 у коді немає (перевірено —
+  // усі модулі компілюються з --release 21), зате 23 вимагав рідкісний JDK,
+  // ламав construo-бандли під Linux/macOS (вони несуть JRE 21) і робив
+  // свіжий клон незбирабельним. 21 — LTS.
+  java.sourceCompatibility = 21
 
   // From https://lyze.dev/2021/04/29/libGDX-Internal-Assets-List/
   // The article can be helpful when using assets.txt in your project.

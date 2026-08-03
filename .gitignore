@@ -12,6 +12,11 @@
 
 # Package Files #
 *.jar
+# Виняток: без цього jar-а gradlew не стартує взагалі, і свіжий клон репозиторію
+# неможливо зібрати з командного рядка. Wrapper для того й існує, щоб збірка не
+# вимагала заздалегідь встановленого Gradle — тримати його поза репо безглуздо.
+!gradle/wrapper/gradle-wrapper.jar
+!main/gradle/wrapper/gradle-wrapper.jar
 *.war
 *.nar
 *.ear

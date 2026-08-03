@@ -24,7 +24,7 @@ The Gradle project root is **`main/`**, NOT the repo root. The repo root
 ## Stack
 
 - **Engine:** libGDX `1.14.0`
-- **Language:** Java, `sourceCompatibility = 23` (desktop compiles with `release 23`; Android module uses Java 17)
+- **Language:** Java, `sourceCompatibility = 21` (desktop compiles with `release 21`; Android module uses Java 17). Було 23 — знижено 2026-08-03, бо жодної мовної фічі понад 21 у коді немає, а 23 вимагав рідкісний JDK і ламав construo-бандли під Linux/macOS (вони несуть JRE 21). Не піднімати назад без реальної потреби.
 - **Build:** Gradle (wrapper included), Android plugin `8.9.3`
 - **Extra libGDX deps declared** (mostly unused so far): ashley `1.7.4` (ECS), gdx-ai `1.8.2`, gdx-box2d, gdx-freetype
 - **Packaging:** construo `2.1.0` (native bundles + jlink per-OS); optional GraalVM native image (`enableGraalNative=false`)

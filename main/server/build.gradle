@@ -1,10 +1,10 @@
 apply plugin: 'application'
 
 
-java.sourceCompatibility = 23
-java.targetCompatibility = 23
+java.sourceCompatibility = 21
+java.targetCompatibility = 21
 if (JavaVersion.current().isJava9Compatible()) {
-        compileJava.options.release.set(23)
+        compileJava.options.release.set(21)
 }
 
 application.mainClass = 'io.jababa.lost_batalion.server.ServerLauncher'
