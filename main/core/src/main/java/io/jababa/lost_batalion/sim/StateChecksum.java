@@ -45,11 +45,12 @@ public final class StateChecksum {
     public static final int C_RNG        = 5;
     public static final int C_POINTS     = 6;
     public static final int C_ECONOMY    = 7;
-    public static final int COMPONENTS   = 8;
+    public static final int C_VICTORY    = 8;
+    public static final int COMPONENTS   = 9;
 
     private static final String[] NAMES = {
         "позиції", "здоров'я", "таймери", "накази", "видимість", "RNG",
-        "точки", "економіка"
+        "точки", "економіка", "перемога"
     };
 
     public static String componentName(int index) {
@@ -153,6 +154,13 @@ public final class StateChecksum {
         // не можуть, бо кожне замовлення це і списання, і рядок у черзі.
         long money = sim.getEconomy().stateDigest(FNV_OFFSET);
         out[C_ECONOMY]    = sim.getSpawnQueue().stateDigest(money);
+
+        // Окремим компонентом, а не всередині економіки: якщо сторони розійшлись
+        // саме в переможці, це треба назвати прямо — розбіжність тут означає, що
+        // одному гравцю вже показали результат, а іншому ще ні.
+        out[C_VICTORY]    = sim.getVictory() == null
+                          ? FNV_OFFSET
+                          : sim.getVictory().stateDigest(FNV_OFFSET);
 
         long total = mix(FNV_OFFSET, sim.getTickNumber());
         for (int i = 0; i < COMPONENTS; i++) total = mix(total, out[i]);

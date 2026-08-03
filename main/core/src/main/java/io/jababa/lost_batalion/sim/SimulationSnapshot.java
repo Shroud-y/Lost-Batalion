@@ -53,6 +53,7 @@ public final class SimulationSnapshot {
             sim.getCapturePoints().writeSnapshot(out);
             sim.getEconomy().writeSnapshot(out);
             sim.getSpawnQueue().writeSnapshot(out);
+            sim.getVictory().writeSnapshot(out);
         } catch (IOException e) {
             // ByteArrayOutputStream не кидає IOException; якщо це сталось —
             // ламати матч мовчки не можна.
@@ -92,6 +93,7 @@ public final class SimulationSnapshot {
             sim.getCapturePoints().readSnapshot(in);
             sim.getEconomy().readSnapshot(in);
             sim.getSpawnQueue().readSnapshot(in);
+            sim.getVictory().readSnapshot(in);
 
             // RNG і номер тіку ставляться ОСТАННІМИ: якщо читання юнітів
             // впаде на середині, симуляція лишиться хоч і зіпсованою, але з

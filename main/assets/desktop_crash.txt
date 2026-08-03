@@ -1,0 +1,1 @@
+com.badlogic.gdx.utils.GdxRuntimeException: java.lang.NoClassDefFoundError: io/jababa/lost_batalion/screens/game/PauseOverlay

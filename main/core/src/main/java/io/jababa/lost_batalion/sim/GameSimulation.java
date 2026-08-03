@@ -46,6 +46,7 @@ public class GameSimulation implements CommandContext {
     private final CaptureManager    captureManager;
     private final Economy           economy;
     private final SpawnQueue        spawnQueue;
+    private final VictoryTracker    victory = new VictoryTracker();
 
     /**
      * Єдиний генератор випадкових чисел матчу. Seed приходить від хоста,
@@ -168,6 +169,13 @@ public class GameSimulation implements CommandContext {
         captureManager.tick(unitManager.getAllUnits());
         economy.tick(captureManager);
         releaseReadySpawns();
+
+        // Останнім: очки рахуються за власників точок ЦЬОГО тіку, а умова
+        // «нема армії й нема за що купити» — після того, як вийшло підкріплення
+        // й нарахувався прибуток. Інакше сторона програвала б у той самий тік,
+        // коли її рота вже вийшла з кута.
+        victory.tick(captureManager, unitManager.getAllUnits(),
+                     economy, spawnQueue, tickNumber);
     }
 
     // ── Поповнення ────────────────────────────────────────────────────────
@@ -422,6 +430,7 @@ public class GameSimulation implements CommandContext {
     public CaptureManager getCapturePoints()  { return captureManager; }
     public Economy getEconomy()               { return economy; }
     public SpawnQueue getSpawnQueue()         { return spawnQueue; }
+    public VictoryTracker getVictory()        { return victory; }
     public TerrainQuery getTerrain()          { return terrain; }
     public DeterministicRandom getRandom()    { return random; }
     public float getMapWidth()                { return mapWidth; }

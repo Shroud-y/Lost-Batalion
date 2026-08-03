@@ -50,6 +50,7 @@ import io.jababa.lost_batalion.screens.ui.Minimap;
 import io.jababa.lost_batalion.screens.ui.SelectionPanel;
 import io.jababa.lost_batalion.sim.GameSimulation;
 import io.jababa.lost_batalion.sim.MatchRunner;
+import io.jababa.lost_batalion.sim.VictoryTracker;
 import io.jababa.lost_batalion.terrain.TerrainMaskManager;
 import io.jababa.lost_batalion.terrain.TerrainQuery;
 import io.jababa.lost_batalion.terrain.TerrainType;
@@ -121,6 +122,8 @@ public class GameScreen implements Screen {
     private Stage pauseStage;
     private Stage hudStage;
     private Label waitLabel;
+    /** Рахунок матчу вгорі по центру: свої очки : чужі. */
+    private Label scoreLabel;
 
     /** Модальні вікна матчу. Живуть на власній сцені поверх усього. */
     private Stage modalStage;
@@ -402,13 +405,36 @@ public class GameScreen implements Screen {
             @Override public void onSpawnSelected(UnitType type) { beginPlacing(type); }
         });
 
+        // Рахунок матчу — верх по центру: це головне число партії, і місце для
+        // нього те саме, де його шукають у будь-якій грі з рахунком.
+        //
+        // На плашці, а не просто текстом: цифри висять над картою, а вона в
+        // цій грі світла й строката — золоте на зеленому з деревами ледь
+        // читалось. Заливка й рамка — стандартні панельні (DESIGN §Панелі),
+        // через createPanelBackground, щоб HUD не заводив власних чисел.
+        scoreLabel = new Label("", UIFactory.createGoldStyle());
+        Table scoreBox = new Table();
+        scoreBox.setBackground(UIFactory.createPanelBackground());
+        scoreBox.pad(5f, 16f, 5f, 16f);
+        scoreBox.add(scoreLabel);
+
+        Table scoreRow = new Table();
+        scoreRow.setFillParent(true);
+        scoreRow.top().padTop(8f);
+        scoreRow.add(scoreBox);
+        hudStage.addActor(scoreRow);
+
         // Підказка про очікування чужих наказів. У lockstep гра просто стоїть,
         // і без пояснення це виглядає як зависання.
+        //
+        // Нижче рахунку, а не поряд: обидва тягнуться до центру верху, і без
+        // рознесення підказка лягала б просто на цифри. Відступ рахує ВИСОТУ
+        // плашки (8 зверху + 5 + рядок + 5), а не саму лише мітку.
         waitLabel = new Label("", UIFactory.createHintStyle());
         waitLabel.setVisible(false);
         Table waitRow = new Table();
         waitRow.setFillParent(true);
-        waitRow.top().padTop(18f);
+        waitRow.top().padTop(48f);
         waitRow.add(waitLabel);
         hudStage.addActor(waitRow);
 
@@ -477,10 +503,15 @@ public class GameScreen implements Screen {
             combatManager.updateVisuals(delta);
             combatManager.updatePopups(delta);
             selectionPanel.update(delta, unitManager.getSelectedUnits());
+            int me  = runner.getLocalPlayerId();
+            int foe = me == 0 ? 1 : 0;
             commandPanel.update(
-                sim.getEconomy().gold(runner.getLocalPlayerId()),
-                sim.getEconomy().incomePerPeriod(runner.getLocalPlayerId(),
-                                                 sim.getCapturePoints()));
+                sim.getEconomy().gold(me),
+                sim.getEconomy().incomePerPeriod(me, sim.getCapturePoints()));
+            // Свої очки завжди перші: рахунок читають про себе, а не про сторону
+            // з меншим номером гравця.
+            scoreLabel.setText(sim.getVictory().score(me)
+                             + " : " + sim.getVictory().score(foe));
 
             if (formationBtn != null) {
                 formationBtn.setVisible(unitManager.hasSelection());
@@ -626,6 +657,14 @@ public class GameScreen implements Screen {
      * окремим прапорцем — він завжди виводиться з цикла.
      */
     private void updateModals() {
+        // Дограний матч важливіший за все інше: далі вже нічого не станеться,
+        // і пропонувати синхронізацію чи повідомляти про вихід суперника після
+        // оголошеного результату — значить сперечатись із власним же вікном.
+        if (sim.getVictory().isFinished()) {
+            showResultIfNeeded();
+            return;
+        }
+
         // Втрачений власний канал важливіший за все: із нього виходу немає,
         // і показувати поверх нього кнопку синхронізації було б знущанням.
         if (runner.isDisconnected() || runner.isAlone()) {
@@ -657,6 +696,48 @@ public class GameScreen implements Screen {
      * крутитись і далі, але грати вже нема з ким, тож чесніше сказати це прямо,
      * ніж лишити гравця ганяти війська по порожній карті.
      */
+    /**
+     * Вікно результату матчу.
+     *
+     * <p>Свідомо те саме {@link MatchNoticeOverlay}, що й для обірваного зв'язку:
+     * стан однаковий — матч скінчився, лишився один вихід у меню. Окремий клас
+     * відрізнявся б від нього лише рядками.
+     */
+    private void showResultIfNeeded() {
+        if (noticeOverlay != null) return;
+
+        VictoryTracker v = sim.getVictory();
+        Team mine = Team.forPlayer(runner.getLocalPlayerId());
+
+        String title;
+        if (v.isDraw())                 title = "НІЧИЯ";
+        else if (v.getWinner() == mine) title = "ПЕРЕМОГА";
+        else                            title = "ПОРАЗКА";
+
+        String cause;
+        switch (v.getReason()) {
+            case ANNIHILATION:
+                cause = v.isDraw()
+                      ? "Обидві армії знищено, і відновити їх нема за що."
+                      : (v.getWinner() == mine
+                         ? "Супротивник втратив армію й не має золота на нову."
+                         : "Армію втрачено, і золота на нову не лишилось.");
+                break;
+            case POINTS:
+            default:
+                cause = "Рахунок за утримання сіл добіг " + VictoryTracker.TARGET + ".";
+                break;
+        }
+
+        int me  = runner.getLocalPlayerId();
+        int foe = me == 0 ? 1 : 0;
+        String text = cause + "\n\nОчки: " + v.score(me) + " : " + v.score(foe);
+
+        modalStage.clear();
+        desyncOverlay = null;
+        noticeOverlay = new MatchNoticeOverlay(modalStage, title, text, this::leaveToMenu);
+    }
+
     private void showNoticeIfNeeded() {
         if (noticeOverlay != null) return;
 
@@ -667,9 +748,13 @@ public class GameScreen implements Screen {
             text  = (reason == null ? "З'єднання обірвалось." : reason)
                   + " Матч продовжити не можна.";
         } else {
-            title = "Суперник вийшов";
+            // Вихід суперника — це виграний матч, і сказати так чесніше, ніж
+            // «грати нема з ким». Формально те саме оголосить і VictoryTracker
+            // (армія вибулого гине, спрацьовує анігіляція), але він перевіряє
+            // умову раз на секунду й до цього вікна не встигає.
+            title = "ПЕРЕМОГА";
             text  = String.join(", ", runner.getDroppedNicks())
-                  + " більше не в матчі. Грати нема з ким.";
+                  + " вийшов з матчу. Поле лишилось за вами.";
         }
 
         modalStage.clear();

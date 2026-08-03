@@ -149,6 +149,31 @@ Two grayscale/colour PNG masks per scenario, sampled by pixel colour
 - Кнопки «МЕНЮ» в лівому верхньому куті БІЛЬШЕ НЕМАЄ — там економіка. Паузу
   відкриває ESC; на мобільному вона зараз недоступна.
 
+### Умова перемоги (`sim/VictoryTracker`)
+- Дві умови. **Очки**: раз на секунду (`SCORE_PERIOD_TICKS`) кожна сторона
+  отримує +1 за кожну утримувану точку; хто перший набрав `TARGET` (900) —
+  виграв. На 3 точках це 5 хв при повному контролі, 15 хв при одній точці.
+  **Анігіляція**: сторона програє, коли в неї НЕМАЄ ні живих юнітів, ні
+  замовлень у черзі, ні золота на найдешевшого юніта (ціна береться з
+  `UnitType`, не константою). Усі три умови разом — по одній кожна дає хибну
+  поразку, поки рота ще виходить із кута.
+- Обидві перевірки — раз на період, не щотіку: анігіляція проходить по всіх
+  юнітах. Викликається ОСТАННІМ у `GameSimulation.tick()`, після точок і
+  економіки.
+- **Симуляція після перемоги НЕ зупиняється.** У lockstep розбіжність у тому,
+  чи виконався тік, — миттєвий десинк. Результат лише фіксується, показує
+  його і глушить ввід виключно `GameScreen`.
+- Нічия можлива: обидва перетнули `TARGET` на одному нарахуванні з рівним
+  рахунком, або обидва анігільовані. `isDraw()` = `finished && winner == null`.
+- Стан симуляції: checksum-компонент `C_VICTORY` і блок у `SimulationSnapshot`.
+- UI: рахунок — `scoreLabel` у `GameScreen`, ВЕРХ ПО ЦЕНТРУ `hudStage`, формат
+  «120 : 45», свої очки перші. Там же тягнеться `waitLabel`, тому вони рознесені
+  по `padTop` (10 проти 38) — інакше підказка лягає на цифри. У `CommandPanel`
+  рахунку НЕМАЄ навмисно: та панель про золото й замовлення.
+- Результат показує `MatchNoticeOverlay` (те саме вікно, що й для обірваного
+  зв'язку — стан однаковий, лишився один вихід у меню). Вихід суперника
+  оголошується перемогою одразу, бо `isAlone()` спрацьовує швидше за анігіляцію.
+
 ### Масштабування інтерфейсу (`ui/UIScale`, `ui/ScreenResolution`)
 - `UIScale.forHeight(h)` = `clamp(snap(h/720, 0.25), 0.75, 2.0)` — ОДИН множник на
   весь HUD. Стеля 2.0× — це запас різкості шрифту: `UIFactory.generateTintableFont`
@@ -231,9 +256,13 @@ Not yet implemented (despite the design brief mentioning them):
   військ), але видобутку ресурсів і будівництва немає.
 - **No enemy AI** — enemy units are static spawns; they only auto-fire when a
   player unit is in range. No strategic opponent.
-- **No win/lose conditions**, no objectives, no HUD beyond selection panel.
-- **No pathfinding** — units move in straight lines, no obstacle avoidance.
-- **No tests.**
+- **Win/lose conditions Є** (`sim/VictoryTracker`, див. вище) — очки за точки
+  плюс анігіляція. Інших цілей і сценарних завдань немає.
+- **Pathfinding Є** (`path/NavGrid` + `path/PathFinder`, A* цілочисельний і
+  детермінований), але ТІЛЬКИ по статичній місцевості: юніти в сітці не
+  враховані, локального уникнення зіткнень і рознесення груп немає.
+- **No tests** у репозиторії (`src/test` відсутній у всіх модулях). Прогонні
+  харнеси пишуться в scratchpad сесії й не зберігаються.
 - Only one scenario/map. `server` module is an unused stub.
 - Some debug `Gdx.app.log` calls in the combat/unit hot path (`Unit.update`,
   `CombatManager.tryAttack`) at LOG_DEBUG.

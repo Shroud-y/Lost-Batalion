@@ -91,6 +91,9 @@ public class CommandPanel {
     /** Останній показаний прибуток — щоб перебудова меню не стирала напис. */
     private int income;
 
+    // Рахунок матчу тут НЕ живе: він угорі по центру екрана (GameScreen), бо це
+    // стан партії, а не постачання. Ця панель — про золото й замовлення.
+
     public CommandPanel(Stage stage, Listener listener) {
         this.listener = listener;
 
@@ -129,8 +132,19 @@ public class CommandPanel {
     public void update(int gold, int incomePerPeriod) {
         this.gold   = gold;
         this.income = incomePerPeriod;
+        refresh();
+    }
+
+    /**
+     * Перемалювати з уже збережених чисел.
+     *
+     * <p>Окремо від {@link #update} заради внутрішніх викликів: висадка міняє
+     * доступність кнопок, не отримуючи при цьому нового стану симуляції, і
+     * передавати їй числа лише щоб вернути їх назад — марно.
+     */
+    private void refresh() {
         goldLabel.setText(gold + " золота");
-        incomeLabel.setText("+" + incomePerPeriod + " кожні 5 с");
+        incomeLabel.setText("+" + income + " кожні 5 с");
 
         // Уже замовлене золото рахується витраченим: інакше гравець накликав би
         // п'ять рот за ціною однієї, а симуляція мовчки виконала б лише першу.
@@ -155,7 +169,7 @@ public class CommandPanel {
         placingType  = type;
         placingCount = type == null ? 0 : count;
         refreshCounts();
-        update(gold, income);
+        refresh();
     }
 
     /** Закрити меню. Лишається для явних дій — висадка його не чіпає. */
@@ -229,7 +243,7 @@ public class CommandPanel {
                     .colspan(2).padTop(3f).padBottom(3f).row();
             }
         }
-        update(gold, income);
+        refresh();
     }
 
     private void addUnitsOf(UnitType.Category category) {
