@@ -16,8 +16,9 @@ import java.io.IOException;
  * Умова перемоги: очки за утримання сіл плюс поразка за втрату армії.
  *
  * <h3>Очки</h3>
- * Раз на {@link #SCORE_PERIOD_TICKS} кожна сторона отримує стільки очок,
- * скільки тримає точок. Хто перший набрав {@link #TARGET} — виграв.
+ * Раз на {@link #SCORE_PERIOD_TICKS} кожна сторона отримує
+ * {@link #POINTS_PER_CAPTURE} очок за кожну утримувану точку. Хто перший
+ * набрав {@link #TARGET} — виграв.
  *
  * <p>Модель саме накопичувальна, а не «захопи всі три й тримай»: на карті з
  * трьома селами друге перетворює матч на один вирішальний ривок, тоді як очки
@@ -47,14 +48,26 @@ public class VictoryTracker {
     /** Скільки очок треба набрати для перемоги. */
     public static final int TARGET = 900;
 
+    /** Скільки секунд між нарахуваннями. */
+    public static final int SCORE_PERIOD_SECONDS = 5;
+
     /**
-     * Період нарахування очок — одна секунда.
+     * Період нарахування очок — п'ять секунд.
      *
-     * <p>Дрібніше не має сенсу: очко за точку за секунду вже дає число, що
-     * помітно росте, а щотіковий лічильник довелося б ділити на 40 у кожному
-     * місці, де його показують.
+     * <p>Не секунда: з кроком +1 щосекунди рахунок читався як секундомір, а не
+     * як рахунок матчу. Рідший, але крупніший крок дає ту саму швидкість
+     * набору й ту саму тривалість матчу, зате видно подію — точка принесла
+     * очки, — а не рівномірне цокання.
      */
-    public static final int SCORE_PERIOD_TICKS = TickRate.TICKS_PER_SECOND;
+    public static final int SCORE_PERIOD_TICKS = TickRate.TICKS_PER_SECOND * SCORE_PERIOD_SECONDS;
+
+    /**
+     * Скільки очок дає одна утримувана точка за нарахування.
+     *
+     * <p>Рівно період у секундах: сумарна швидкість лишається «очко за точку
+     * за секунду», тож {@link #TARGET} не треба переставляти разом із періодом.
+     */
+    public static final int POINTS_PER_CAPTURE = SCORE_PERIOD_SECONDS;
 
     /** Чим скінчився матч. */
     public enum Reason {
@@ -123,7 +136,7 @@ public class VictoryTracker {
         for (int playerId = 0; playerId < score.length; playerId++) {
             score[playerId] += points == null
                              ? 0
-                             : points.countOwned(Team.forPlayer(playerId));
+                             : points.countOwned(Team.forPlayer(playerId)) * POINTS_PER_CAPTURE;
         }
         if (checkPoints(tickNumber)) return;
 
@@ -157,8 +170,10 @@ public class VictoryTracker {
      * Поразка за втратою армії.
      *
      * <p>Перевіряється в тому самому періоді, що й очки: прохід по всіх юнітах
-     * щотіку заради події, яка стається раз на матч, — марна робота, а
-     * запізнення до секунди на екрані непомітне.
+     * щотіку заради події, яка стається раз на матч, — марна робота. Ціна —
+     * поразку видно із запізненням до {@link #SCORE_PERIOD_SECONDS} секунд;
+     * окремий лічильник на секунду того не вартий, бо це ще одне поле в
+     * checksum і в знімку.
      */
     private void checkAnnihilation(Array<Unit> units, Economy economy,
                                    SpawnQueue queue, int tickNumber) {

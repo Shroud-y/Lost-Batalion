@@ -511,7 +511,7 @@ public class GameScreen implements Screen {
             // Свої очки завжди перші: рахунок читають про себе, а не про сторону
             // з меншим номером гравця.
             scoreLabel.setText(sim.getVictory().score(me)
-                             + " : " + sim.getVictory().score(foe));
+                             + " | " + sim.getVictory().score(foe));
 
             if (formationBtn != null) {
                 formationBtn.setVisible(unitManager.hasSelection());
