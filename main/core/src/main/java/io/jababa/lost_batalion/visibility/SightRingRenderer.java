@@ -42,6 +42,27 @@ public class SightRingRenderer {
     private static final float RING_R = 1f, RING_G = 1f, RING_B = 1f;
     private static final float RING_ALPHA = 0.85f;
     /**
+     * Прозорість суцільного кола-підкладки, що йде під дугами по всьому радіусу.
+     *
+     * <p>Потрібне, бо на Жовтих Водах дуги майже завжди займають меншість
+     * напрямків, і то тим меншу, чим КРАЩА позиція: заміряно, при базовій
+     * дальності 520 до повного радіуса дістає 29% напрямків із перед-низини
+     * (R=338) і лише 3.5% з височини (R=676) — кращий множник огляду дає більший
+     * радіус, а довший промінь важче добігає. Без підкладки височина малює
+     * порожнечу, і це читається як «оверлей зламався», а не як «звідси далеко не
+     * видно». З нею радіус видно завжди, а розриви читаються саме як розриви.
+     *
+     * <p>Значення підібране так, щоб підкладка не сперечалася з дугою: різниця
+     * майже в п'ять разів, тобто яскраве лишається однозначно яскравим.
+     */
+    private static final float GUIDE_ALPHA = 0.18f;
+    /**
+     * Сегментів у підкладці. Менше, ніж променів: це декоративна лінія, її
+     * ніхто не міряє, а на найбільшому радіусі 180 сегментів дають хорду ~24
+     * одиниці — на око вже коло, не многокутник.
+     */
+    private static final int   GUIDE_SEGMENTS = 180;
+    /**
      * Товщина в ЕКРАННИХ пікселях; у світові одиниці переводиться за поточним
      * зумом, як і межа віяла — інакше кільце товщало б, коли камеру віддаляють.
      */
@@ -137,8 +158,18 @@ public class SightRingRenderer {
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
 
         shapes.begin(ShapeRenderer.ShapeType.Filled);
+
+        // Два проходи, а не кільце за кільцем: підкладка одного кільця, лягаючи
+        // поверх дуги іншого, підмивала б її — при двох радіусах вони таки
+        // перетинаються.
+        shapes.setColor(RING_R, RING_G, RING_B, GUIDE_ALPHA);
+        for (int i = 0; i < rings.size; i++)
+            drawGuide(shapes, rings.get(i), cacheX, cacheY, width);
+
         shapes.setColor(RING_R, RING_G, RING_B, RING_ALPHA);
-        for (int i = 0; i < rings.size; i++) drawRing(shapes, rings.get(i), cacheX, cacheY, width);
+        for (int i = 0; i < rings.size; i++)
+            drawArcs(shapes, rings.get(i), cacheX, cacheY, width);
+
         shapes.end();
 
         Gdx.gl.glDisable(GL20.GL_BLEND);
@@ -292,13 +323,32 @@ public class SightRingRenderer {
     // ── Draw ──────────────────────────────────────────────────────────────────
 
     /**
+     * Тьмяне суцільне коло по всьому радіусу — підкладка під дуги, див.
+     * {@link #GUIDE_ALPHA}. Стиків не заокруглює: на такій прозорості зрізи між
+     * сегментами не видно, а 180 крапок на кільце коштували б дорожче за саму лінію.
+     */
+    private void drawGuide(ShapeRenderer shapes, Ring ring, float cx, float cy, float width) {
+        final float r = ring.radius;
+        final float step = (float) (2.0 * Math.PI / GUIDE_SEGMENTS);
+        float prevX = cx + r, prevY = cy;
+        for (int s = 1; s <= GUIDE_SEGMENTS; s++) {
+            float a = s * step;
+            float x = cx + (float) Math.cos(a) * r;
+            float y = cy + (float) Math.sin(a) * r;
+            shapes.rectLine(prevX, prevY, x, y, width);
+            prevX = x;
+            prevY = y;
+        }
+    }
+
+    /**
      * Малює чисті дуги одного кільця.
      *
      * <p>Центр береться з КЕШУ, а не з живого курсора: поки курсор не вийшов за
      * {@link #CURSOR_CACHE_EPS}, дуги належать саме кешованій точці, і мішати
      * одне з одним означало б перекосити всі дуги. Так само робить віяло.
      */
-    private void drawRing(ShapeRenderer shapes, Ring ring, float cx, float cy, float width) {
+    private void drawArcs(ShapeRenderer shapes, Ring ring, float cx, float cy, float width) {
         final float step = (float) (2.0 * Math.PI / RING_RAYS);
         final float half = width * 0.5f;
         final float radius = ring.radius;
