@@ -7,7 +7,6 @@ import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.FloatArray;
 import io.jababa.lost_batalion.Team;
-import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.terrain.TerrainQuery;
 import io.jababa.lost_batalion.units.Unit;
 
@@ -30,11 +29,6 @@ public class FogOfWarRenderer {
     private static final int   SOFT_STEPS      = 8;
     private static final float SOFT_ZONE        = 40f;
     private static final int   CIRCLE_SEGMENTS  = 48;
-
-    /** @see VisibilitySystem#SIGHT_MOD_FOREST — single source of truth. */
-    private static final float FOREST_SIGHT_PENALTY   = VisibilitySystem.SIGHT_MOD_FOREST;
-    /** @see TerrainQuery#ELEVATION_BLOCK_MARGIN_TIERS — single source of truth. */
-    private static final float ELEVATION_BLOCK_MARGIN = TerrainQuery.ELEVATION_BLOCK_MARGIN_TIERS;
 
     // ── ALT sight overlay colours ─────────────────────────────────────────────
     /** Opaque light brown, drawn along the fan boundary. */
@@ -97,30 +91,17 @@ public class FogOfWarRenderer {
      */
     /** Hard ceiling on fan vertices, so pathological terrain cannot stall a frame. */
     private static final int   MAX_FAN_POINTS     = 4096;
-    /**
-     * How long a rise must persist along the ray before it counts as a crest that
-     * blocks sight. Shared with VisibilitySystem via TerrainQuery, so the overlay
-     * shows exactly what detection computes.
-     * @see TerrainQuery#LOS_CREST_MIN_RUN
-     */
-    private static final float CREST_MIN_RUN      = TerrainQuery.LOS_CREST_MIN_RUN;
-    /**
-     * Nudge used to decide which pixel a boundary-landing distance belongs to.
-     * Far below one mask pixel, far above float noise at map scale.
-     */
-    private static final float PIXEL_EPS          = 1e-3f;
-    /**
-     * Forest within this distance of the cursor does not stop a ray. Without it,
-     * placing the cursor in a forest tile would collapse the whole fan to a point.
-     * Same constant VisibilitySystem uses to exclude the observer's own tile.
-     */
-    private static final float ORIGIN_FOREST_SKIP = TerrainQuery.LOS_ORIGIN_FOREST_SKIP;
     /** Cursor movement (world units) that invalidates the cached fan. */
     private static final float OVERLAY_CACHE_EPS  = 2f;
 
     private final float mapWidth;
     private final float mapHeight;
-    private final TerrainQuery terrain;
+    /**
+     * Ray marching lives in {@link SightCaster}, shared with
+     * {@link SightRingRenderer} so both overlays agree with each other and with
+     * {@link VisibilitySystem}.
+     */
+    private final SightCaster caster;
 
     /**
      * Чиїми очима малюється туман. Раніше було жорстко Team.PLAYER — в одиночній
@@ -143,28 +124,10 @@ public class FogOfWarRenderer {
     // observer through every call.
     private float buildCx, buildCy, buildHCursor;
 
-    /*
-     * Scratch state for one ray's pixel walk, so it survives across the blocks the
-     * ray crosses (castRay drives the blocks, walkPixels the pixels inside them).
-     *
-     * The ray tracks a SLOPE, not a height. VisibilitySystem occludes when ground
-     * rises a tier above the straight sight line between two known endpoints; a
-     * ray has no endpoint, so the same rule is carried in the equivalent form:
-     *
-     *   crest at distance s, height h  →  slope (h − hCursor − MARGIN) / s
-     *   point at distance d, height g  →  hidden when (g − hCursor) / d ≤ raySlope
-     *
-     * The two are the same inequality rearranged, so the overlay keeps showing
-     * exactly what detection computes.
-     */
-    private float raySlope;     // steepest CONFIRMED crest slope so far
-    private float rayCand;      // height of the rise currently being measured
-    private float rayCandLen;   // how far that rise has persisted, world units
-
     public FogOfWarRenderer(float mapWidth, float mapHeight, TerrainQuery terrain) {
         this.mapWidth  = mapWidth;
         this.mapHeight = mapHeight;
-        this.terrain   = terrain;
+        this.caster    = new SightCaster(mapWidth, mapHeight, terrain);
     }
 
     /** Сторона, з чиєї позиції малюється туман. */
@@ -330,7 +293,7 @@ public class FogOfWarRenderer {
      * draw. {@code viewportWidth} is already in world units, so this is just how
      * many of them each pixel of the backbuffer is showing.
      */
-    private float worldPerPixel(OrthographicCamera camera) {
+    static float worldPerPixel(OrthographicCamera camera) {
         int screenW = Gdx.graphics.getWidth();
         if (camera == null || screenW <= 0) return 1f;
         return camera.viewportWidth * camera.zoom / screenW;
@@ -404,10 +367,19 @@ public class FogOfWarRenderer {
         subdivide(am, dm, a1, d1, depth - 1);
     }
 
-    /** Casts one ray at the given angle from the cursor; returns its free distance. */
+    /**
+     * Casts one ray at the given angle from the cursor; returns its free distance.
+     *
+     * <p>Дальність не обмежується ({@link Float#MAX_VALUE}) — свідомо. Оверлей
+     * відповідає на питання «куди звідси взагалі можна дивитись», а не «що бачить
+     * конкретний юніт»; радіус огляду показують коло туману й білі кільця
+     * {@link SightRingRenderer}, і зводити два різні запитання в одну картинку
+     * тут уже пробували й відкинули.
+     */
     private float castAt(double angle) {
-        return castRay(buildCx, buildCy, buildHCursor,
-                       (float) Math.cos(angle), (float) Math.sin(angle));
+        return caster.castRay(buildCx, buildCy, buildHCursor,
+                              (float) Math.cos(angle), (float) Math.sin(angle),
+                              Float.MAX_VALUE);
     }
 
     /** Appends the fan boundary point at (angle, distance). */
@@ -416,235 +388,14 @@ public class FogOfWarRenderer {
         fanY.add(buildCy + (float) Math.sin(angle) * d);
     }
 
-    /**
-     * Marches one ray and returns how far it travels before something stops it:
-     * forest, an occluding crest, or the map edge. Rays are never range-limited —
-     * the overlay analyses TERRAIN, it does not model a unit's sight radius.
-     *
-     * <p>Це свідомий вибір, а не недогляд: оверлей відповідає на питання «куди
-     * звідси взагалі можна дивитись», а не «що бачить конкретний юніт». Радіус
-     * огляду вже показаний колом туману навколо самого юніта, і дублювати його
-     * тут означало б змішати два різні запитання в одній картинці.
-     *
-     * <h3>Two-level march</h3>
-     * Stepping every pixel across a 1440-px map would cost ~2800 samples per ray.
-     * Instead the ray walks BLOCK_SIZE-sized blocks (a DDA traversal, so every
-     * block on the line is visited exactly once, in order) and consults each
-     * block's precomputed summary. A block is skipped whole when it provably
-     * cannot stop the ray; only blocks that might are re-walked pixel by pixel
-     * (see {@link #walkPixels}).
-     *
-     * <h3>Why the skip test is exact</h3>
-     * A block is skipped only when walking it could change nothing:
-     * <ol>
-     *   <li>no forest in it — nothing to stop the ray;</li>
-     *   <li>the steepest slope the block could contribute, {@code (blockMax −
-     *       hCursor − margin) / s}, does not beat the confirmed slope anywhere
-     *       inside it. The slope therefore stays exact and is left untouched;</li>
-     *   <li>the shallowest slope the block could OFFER as a target,
-     *       {@code (blockMin − hCursor) / s}, still clears the confirmed slope,
-     *       so no pixel here can be occluded.</li>
-     * </ol>
-     * Both bounds vary with distance, so each is evaluated at the two ends of the
-     * block's span along the ray and taken at its worst — the numerator is
-     * constant, so a monotone quotient cannot hide an extremum in between.
-     *
-     * <p>Note the slope is deliberately NOT raised to {@code blockMax} on a skip:
-     * {@code blockMax} covers the whole block, including pixels this ray never
-     * touches, and adopting it would over-estimate the crest and occlude later
-     * ground that is really visible. Condition 2 is what makes leaving it alone
-     * correct. (An earlier version did raise it, and diverged from a brute-force
-     * march on 0.74% of rays.)
-     *
-     * <p>Consequence: only blocks that RISE above everything seen so far get
-     * walked finely — typically ~10% of them — and hit points land on the exact
-     * blocking pixel instead of up to a step short of it.
+    /*
+     * castRay / walkPixels / maxSlope / minSlope / distanceToMapExit жили тут і
+     * переїхали в SightCaster — без жодної зміни логіки. Причина: кільця огляду
+     * (SightRingRenderer) крокують променем так само, і другий примірник того
+     * самого коду розійшовся б із цим при першій же правці. Уся історія вимірів
+     * (чому пропуск блоків саме такий, чому гребінь мусить триматись) — у
+     * javadoc там.
      */
-    private float castRay(float cx, float cy, float hCursor, float dx, float dy) {
-        final int B = terrain != null ? terrain.blockSize() : 8;
-
-        // Exact distance at which the ray leaves the map rectangle. Clipping here
-        // (rather than breaking on an out-of-bounds sample) also puts the map-edge
-        // endpoint exactly on the border.
-        float maxDist = distanceToMapExit(cx, cy, dx, dy);
-        if (terrain == null || maxDist <= 0f) return Math.max(maxDist, 0f);
-
-        final int blocksX = terrain.blocksX();
-        final int blocksY = terrain.blocksY();
-
-        int bx = (int) Math.floor(cx / B);
-        int by = (int) Math.floor(cy / B);
-
-        int stepX = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
-        int stepY = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
-
-        // Distance along the ray to cross one whole block, and to reach the first
-        // block boundary in each axis.
-        float tDeltaX = dx != 0f ? Math.abs(B / dx) : Float.MAX_VALUE;
-        float tDeltaY = dy != 0f ? Math.abs(B / dy) : Float.MAX_VALUE;
-        float tMaxX = dx > 0 ? ((bx + 1) * B - cx) / dx
-                    : dx < 0 ? (bx * B - cx) / dx
-                    : Float.MAX_VALUE;
-        float tMaxY = dy > 0 ? ((by + 1) * B - cy) / dy
-                    : dy < 0 ? (by * B - cy) / dy
-                    : Float.MAX_VALUE;
-
-        raySlope   = -Float.MAX_VALUE;   // steepest slope confirmed as a crest
-        rayCand    = -Float.MAX_VALUE;
-        rayCandLen = 0f;
-        float dEnter = 0f;
-
-        while (dEnter < maxDist) {
-            if (bx < 0 || by < 0 || bx >= blocksX || by >= blocksY) return dEnter;
-
-            float dExit = Math.min(Math.min(tMaxX, tMaxY), maxDist);
-
-            int blockMin = terrain.blockMinHeight(bx, by);
-            int blockMax = terrain.blockMaxHeight(bx, by);
-
-            // The block starts at the origin: every slope through it is unbounded,
-            // so there is nothing to compare against — walk it.
-            boolean canSkip = dEnter > 0f
-                && !terrain.blockHasForest(bx, by)
-                && maxSlope(blockMax - hCursor - ELEVATION_BLOCK_MARGIN, dEnter, dExit) <= raySlope
-                && minSlope(blockMin - hCursor, dEnter, dExit) > raySlope;
-
-            if (canSkip) {
-                // Nothing here reaches above the confirmed crest, so any rise that
-                // was being measured provably breaks off inside this block.
-                rayCand    = -Float.MAX_VALUE;
-                rayCandLen = 0f;
-            } else {
-                float hit = walkPixels(cx, cy, dx, dy, dEnter, dExit, hCursor);
-                if (hit >= 0f) return hit;
-            }
-
-            // Advance to the next block along the ray.
-            if (tMaxX < tMaxY) { dEnter = tMaxX; tMaxX += tDeltaX; bx += stepX; }
-            else               { dEnter = tMaxY; tMaxY += tDeltaY; by += stepY; }
-        }
-
-        return maxDist;
-    }
-
-    /**
-     * Walks the ray pixel by pixel between two distances, returning the exact
-     * distance at which something stops it, or -1 when nothing does.
-     *
-     * <h3>Why a DDA rather than fixed-step sampling</h3>
-     * This used to sample every FINE_STEP (= 1 world unit) along the ray. Two
-     * costs: the reported hit distance was quantised to that lattice, which shows
-     * up as stair-stepping along the fan boundary once the camera is zoomed in;
-     * and a diagonal ray advances only 0.71 units per axis per step, so it could
-     * step straight over pixels it actually passes through. Crossing pixel
-     * boundaries analytically fixes both — every pixel the ray touches is visited
-     * exactly once, and the returned distance is the true edge of the blocking
-     * pixel. It is not more expensive: the same pixels, visited once each.
-     *
-     * <h3>Why a crest must persist</h3>
-     * Height tiers are pixel data with jagged, staircase boundaries. A ray running
-     * nearly tangent to one clips a single corner pixel while its neighbour misses
-     * it, and under the old rule that one pixel raised the crest permanently and
-     * cut the rest of the ray — a one-ray-wide stripe of shadow reaching across the
-     * map. Requiring the rise to hold for CREST_MIN_RUN removes those without
-     * touching real ridges, which persist far longer. Measured on the Zhovti Vody
-     * masks: ~80% fewer such stripes, mean ray length within 1%.
-     *
-     * <p>Run length is accumulated as traversed distance, not as a sample count,
-     * so it means the same thing at every ray angle — a corner clipped at a shallow
-     * angle contributes the sliver it really covers.
-     */
-    private float walkPixels(float cx, float cy, float dx, float dy,
-                             float dStart, float dEnd, float hCursor) {
-        if (dEnd <= dStart) return -1f;
-
-        // Probe just inside the interval, so a dStart sitting exactly on a pixel
-        // boundary resolves to the pixel being entered, not the one being left.
-        float probe = dStart + PIXEL_EPS;
-        int px = (int) Math.floor(cx + dx * probe);
-        int py = (int) Math.floor(cy + dy * probe);
-
-        int stepX = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
-        int stepY = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
-
-        // Distances measured from the ray ORIGIN, not from dStart: recomputing them
-        // per block would let rounding drift the lattice between blocks.
-        float tDeltaX = dx != 0f ? Math.abs(1f / dx) : Float.MAX_VALUE;
-        float tDeltaY = dy != 0f ? Math.abs(1f / dy) : Float.MAX_VALUE;
-        float tMaxX = dx > 0 ? (px + 1 - cx) / dx : dx < 0 ? (px - cx) / dx : Float.MAX_VALUE;
-        float tMaxY = dy > 0 ? (py + 1 - cy) / dy : dy < 0 ? (py - cy) / dy : Float.MAX_VALUE;
-
-        float d = dStart;
-        while (d < dEnd) {
-            float dNext = Math.min(Math.min(tMaxX, tMaxY), dEnd);
-
-            // Pixel centre: exact, and independent of where inside the pixel the
-            // ray happens to run.
-            float sx = px + 0.5f;
-            float sy = py + 0.5f;
-
-            // Forest right under the cursor must not blind it: mirrors
-            // VisibilitySystem, where the observer's own tile is excluded from the
-            // LOS forest check and handled by sightMod instead.
-            if (dNext > ORIGIN_FOREST_SKIP && terrain.isForest(sx, sy))
-                return Math.max(d, ORIGIN_FOREST_SKIP);
-
-            float hGround = terrain.height(sx, sy);
-
-            // Occlusion first: a pixel never occludes itself. The sight line to
-            // THIS point is shallower than a crest already passed → it is hidden.
-            float dMid = 0.5f * (d + dNext);
-            if (dMid > 0f && (hGround - hCursor) / dMid <= raySlope) return d;
-
-            // The rise is still tracked by HEIGHT, not slope: the crest-run rule
-            // exists to reject single stray pixels of a staircase boundary, and
-            // that is a question about the ground, not about the angle. The slope
-            // is taken at the far end of the run — the conservative end, since
-            // the same height yields a shallower slope the further out it sits.
-            float cand = (hGround - hCursor - ELEVATION_BLOCK_MARGIN) / dMid;
-            if (dMid > 0f && cand > raySlope) {
-                if (hGround == rayCand) rayCandLen += dNext - d;
-                else { rayCand = hGround; rayCandLen = dNext - d; }
-                if (rayCandLen >= CREST_MIN_RUN) raySlope = cand;
-            } else {
-                rayCand    = -Float.MAX_VALUE;
-                rayCandLen = 0f;
-            }
-
-            if (tMaxX < tMaxY) { tMaxX += tDeltaX; px += stepX; }
-            else               { tMaxY += tDeltaY; py += stepY; }
-            d = dNext;
-        }
-        return -1f;
-    }
-
-    /**
-     * Largest value of {@code rise / d} over {@code d ∈ [dNear, dFar]}.
-     *
-     * <p>The numerator is fixed and the interval starts above zero, so the
-     * quotient is monotone: the extremum is always at one end. Which end flips
-     * with the sign of the rise, hence both are evaluated rather than reasoned
-     * about at the call site.
-     */
-    private static float maxSlope(float rise, float dNear, float dFar) {
-        return Math.max(rise / dNear, rise / dFar);
-    }
-
-    /** Smallest value of {@code rise / d} over the same interval. */
-    private static float minSlope(float rise, float dNear, float dFar) {
-        return Math.min(rise / dNear, rise / dFar);
-    }
-
-    /**
-     * Distance from (cx,cy) along (dx,dy) to where the ray leaves the map
-     * rectangle. Standard slab test; the direction is a unit vector, so the
-     * parameter is already a distance.
-     */
-    private float distanceToMapExit(float cx, float cy, float dx, float dy) {
-        float tx = dx > 0 ? (mapWidth  - cx) / dx : dx < 0 ? -cx / dx : Float.MAX_VALUE;
-        float ty = dy > 0 ? (mapHeight - cy) / dy : dy < 0 ? -cy / dy : Float.MAX_VALUE;
-        return Math.min(tx, ty);
-    }
 
     /**
      * Fading rings from the inner clear zone up to the sight boundary,
@@ -690,34 +441,11 @@ public class FogOfWarRenderer {
      * Mirrors VisibilitySystem.sightMod so the visual circle matches detection.
      */
     private float computeEffectiveSight(Unit observer) {
-        // sightRange живе у fixed-point (це стан гри) — на межі рендеру
-        // переводимо його у float рівно один раз, тут.
-        return Fixed.toFloat(observer.sightRange)
-             * sightModAt(observer.worldX(), observer.worldY());
-    }
-
-    /** Множник дальності від місцевості. Дзеркало {@code VisibilitySystem.sightMod}. */
-    private float sightModAt(float x, float y) {
-        float mod = isForestAt(x, y) ? FOREST_SIGHT_PENALTY : 1f;
-
-        if (terrain != null) {
-            switch (terrain.elevation(x, y)) {
-                case HIGHLANDS:     mod *= VisibilitySystem.SIGHT_MOD_HIGHLANDS;     break;
-                case PRE_HIGHLANDS: mod *= VisibilitySystem.SIGHT_MOD_PRE_HIGHLANDS; break;
-                case PRE_LOWLANDS:  mod *= VisibilitySystem.SIGHT_MOD_PRE_LOWLANDS;  break;
-                case LOWLANDS:      mod *= VisibilitySystem.SIGHT_MOD_LOWLANDS;      break;
-                default: break;
-            }
-        }
-        return mod;
-    }
-
-    private boolean isForestAt(float x, float y) {
-        return terrain != null && terrain.isForest(x, y);
+        return caster.effectiveSight(observer);
     }
 
     /** Numeric terrain height, plains baseline when there is no terrain data. */
     private float elevationHeightAt(float x, float y) {
-        return terrain != null ? terrain.height(x, y) : TerrainQuery.PLAINS_BASELINE_HEIGHT;
+        return caster.heightAt(x, y);
     }
 }

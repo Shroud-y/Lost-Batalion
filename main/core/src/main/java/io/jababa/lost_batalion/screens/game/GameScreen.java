@@ -59,6 +59,7 @@ import io.jababa.lost_batalion.ui.UIFactory;
 import io.jababa.lost_batalion.ui.UIScale;
 import io.jababa.lost_batalion.units.*;
 import io.jababa.lost_batalion.visibility.FogOfWarRenderer;
+import io.jababa.lost_batalion.visibility.SightRingRenderer;
 import io.jababa.lost_batalion.visibility.VisibilitySystem;
 
 public class GameScreen implements Screen {
@@ -217,6 +218,7 @@ public class GameScreen implements Screen {
     private CurvedFormationCommand curvedFormation;
 
     private FogOfWarRenderer fogRenderer;
+    private SightRingRenderer sightRings;
 
     private PlateButton formationBtn;
     private boolean formationModeActive = false;
@@ -315,6 +317,8 @@ public class GameScreen implements Screen {
         minimap          = new Minimap(mapTexture, mapWidth, mapHeight);
         fogRenderer      = new FogOfWarRenderer(mapWidth, mapHeight, terrain);
         fogRenderer.setViewer(localTeam);
+        sightRings       = new SightRingRenderer(mapWidth, mapHeight, terrain);
+        sightRings.setViewer(localTeam);
         forestTooltip    = new ForestTooltip("ui/forest_tooltip.png");
 
         selectionPanel.setListener(new SelectionPanel.CommandListener() {
@@ -595,8 +599,15 @@ public class GameScreen implements Screen {
             fogRenderer.render(shapes, camera, unitManager.getAllUnits());
             boolean altHeld = Gdx.input.isKeyPressed(Input.Keys.ALT_LEFT)
                 || Gdx.input.isKeyPressed(Input.Keys.ALT_RIGHT);
-            if (altHeld) fogRenderer.renderCursorSightOverlay(shapes, camera,
-                                                              cursorWorldX, cursorWorldY);
+            if (altHeld) {
+                // Один центр, дві різні відповіді: віяло — «куди звідси взагалі
+                // можна дивитись» (лише рельєф, без дальності), кільця — «і
+                // докуди», з радіусом вибраних юнітів для тайла під курсором.
+                fogRenderer.renderCursorSightOverlay(shapes, camera,
+                                                     cursorWorldX, cursorWorldY);
+                sightRings.render(shapes, camera, unitManager.getSelectedUnits(),
+                                  cursorWorldX, cursorWorldY);
+            }
         }
 
         // Далі йде HUD — він живе в ЛОГІЧНИХ одиницях (піксель / UIScale), а не
