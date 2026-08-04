@@ -3,6 +3,7 @@ package io.jababa.lost_batalion.screens.game;
 import com.badlogic.gdx.*;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.OrthographicCamera;
+import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
@@ -22,6 +23,8 @@ import com.badlogic.gdx.utils.viewport.ScreenViewport;
 import com.badlogic.gdx.utils.viewport.Viewport;
 import io.jababa.lost_batalion.LostBatalion;
 import io.jababa.lost_batalion.Team;
+import io.jababa.lost_batalion.capture.CaptureManager;
+import io.jababa.lost_batalion.capture.CapturePoint;
 import io.jababa.lost_batalion.audio.MusicManager;
 import io.jababa.lost_batalion.commands.CurvedFormationCommand;
 import io.jababa.lost_batalion.math.Fixed;
@@ -43,6 +46,7 @@ import io.jababa.lost_batalion.screens.effects.MoveMarker;
 import io.jababa.lost_batalion.screens.renderer.CapturePointRenderer;
 import io.jababa.lost_batalion.screens.renderer.SpawnGhostRenderer;
 import io.jababa.lost_batalion.screens.renderer.TerrainIndicatorRenderer;
+import io.jababa.lost_batalion.screens.renderer.TopographyOverlay;
 import io.jababa.lost_batalion.screens.renderer.UnitRenderer;
 import io.jababa.lost_batalion.screens.scenario.ScenarioCard;
 import io.jababa.lost_batalion.screens.ui.CommandPanel;
@@ -124,7 +128,17 @@ public class GameScreen implements Screen {
     private Stage hudStage;
     private Label waitLabel;
     /** Рахунок матчу вгорі по центру: свої очки : чужі. */
-    private Label scoreLabel;
+    /** Очки: свої зліва (сині), ворожі справа (червоні). */
+    private Label scoreSelfLabel, scoreFoeLabel;
+
+    /**
+     * Літери точок під рахунком, у порядку списку сценарію. Порядок сталий —
+     * міняється лише колір, тож індекс тут відповідає індексу точки.
+     */
+    private Array<Label> pointTags;
+
+    /** Годинник мигання літер. Візуал, до симуляції не належить. */
+    private float pointTagClock;
 
     /** Модальні вікна матчу. Живуть на власній сцені поверх усього. */
     private Stage modalStage;
@@ -177,7 +191,10 @@ public class GameScreen implements Screen {
     private UnitRenderer unitRenderer;
     private TerrainIndicatorRenderer terrainIndicators;
     private MoveMarker moveMarker;
-    /** Кола стратегічних точок. Малюються під юнітами, зі своїм проходом bloom. */
+    /** Оверлей ярусів висот на всю карту. Перемикається клавішею T. */
+    private TopographyOverlay topography;
+
+    /** Зони стратегічних точок. Малюються під юнітами, звичайним блендингом. */
     private CapturePointRenderer capturePoints;
     /** Пост-обробка світіння для позначки наказу і кіл точок. */
     private BloomEffect bloom;
@@ -286,7 +303,7 @@ public class GameScreen implements Screen {
         terrainCombatMask= new TerrainMaskManager(scenario.terrainMaskPath);    // яруси висот
         terrain          = new TerrainQuery(terrainMask, terrainCombatMask);
 
-        sim = new GameSimulation(terrain, mapWidth, mapHeight, rngSeed);
+        sim = new GameSimulation(terrain, mapWidth, mapHeight, rngSeed, scenario.captureZones);
         sim.spawnInitialForces();
 
         MatchTransport channel = transport != null ? transport : new LocalMatchTransport();
@@ -306,6 +323,7 @@ public class GameScreen implements Screen {
 
         unitRenderer      = new UnitRenderer();
         terrainIndicators = new TerrainIndicatorRenderer();
+        topography        = new TopographyOverlay(terrain, mapWidth, mapHeight);
         moveMarker      = new MoveMarker();
         capturePoints   = new CapturePointRenderer();
         spawnGhosts     = new SpawnGhostRenderer();
@@ -409,36 +427,65 @@ public class GameScreen implements Screen {
             @Override public void onSpawnSelected(UnitType type) { beginPlacing(type); }
         });
 
-        // Рахунок матчу — верх по центру: це головне число партії, і місце для
-        // нього те саме, де його шукають у будь-якій грі з рахунком.
+        // Рахунок матчу і стан точок — верх по центру, впритул до межі екрана:
+        // це головне число партії, і місце для нього те саме, де його шукають
+        // у будь-якій грі з рахунком.
         //
         // На плашці, а не просто текстом: цифри висять над картою, а вона в
         // цій грі світла й строката — золоте на зеленому з деревами ледь
         // читалось. Заливка й рамка — стандартні панельні (DESIGN §Панелі),
         // через createPanelBackground, щоб HUD не заводив власних чисел.
-        scoreLabel = new Label("", UIFactory.createGoldStyle());
+        //
+        // Обидва числа ЗОЛОТІ — акцентний колір HUD. Сторони тут розрізняються
+        // порядком («свої перші»), а не тоном: розфарбовування пробували, і
+        // синьо-червоні цифри вибивались зі спокійної золотої гами решти HUD.
+        // Кольори сторін лишаються там, де вони справді щось розрізняють, —
+        // на літерах точок нижче й на зонах на землі.
+        scoreSelfLabel = new Label("0", UIFactory.createScoreStyle(UIFactory.COLOR_ACCENT));
+        scoreFoeLabel  = new Label("0", UIFactory.createScoreStyle(UIFactory.COLOR_ACCENT));
+
+        Table scoreLine = new Table();
+        scoreLine.add(scoreSelfLabel).padRight(10f);
+        scoreLine.add(new Label(":", UIFactory.createScoreSeparatorStyle())).padRight(10f);
+        scoreLine.add(scoreFoeLabel);
+
+        // Літери точок під рахунком. Кожна стоїть на СВОЄМУ місці назавжди —
+        // міняється лише колір. Групувати їх по власниках (свої ліворуч, чужі
+        // праворуч) було б наочніше для співвідношення сил, але тоді літера
+        // стрибала б через пів плашки рівно в мить захоплення, тобто в
+        // найгірший момент: саме тоді на неї й дивляться.
+        Table pointsLine = new Table();
+        pointTags = new Array<>();
+        Array<CapturePoint> pts = sim.getCapturePoints().getPoints();
+        for (int i = 0; i < pts.size; i++) {
+            Label tag = new Label(pts.get(i).name, UIFactory.createPointTagStyle());
+            pointTags.add(tag);
+            pointsLine.add(tag).padLeft(i == 0 ? 0f : 12f);
+        }
+
         Table scoreBox = new Table();
         scoreBox.setBackground(UIFactory.createPanelBackground());
-        scoreBox.pad(5f, 16f, 5f, 16f);
-        scoreBox.add(scoreLabel);
+        scoreBox.pad(3f, 18f, 5f, 18f);
+        scoreBox.add(scoreLine).row();
+        if (pts.size > 0) scoreBox.add(pointsLine).padTop(1f);
 
         Table scoreRow = new Table();
         scoreRow.setFillParent(true);
-        scoreRow.top().padTop(8f);
+        scoreRow.top().padTop(2f);
         scoreRow.add(scoreBox);
         hudStage.addActor(scoreRow);
 
         // Підказка про очікування чужих наказів. У lockstep гра просто стоїть,
         // і без пояснення це виглядає як зависання.
         //
-        // Нижче рахунку, а не поряд: обидва тягнуться до центру верху, і без
-        // рознесення підказка лягала б просто на цифри. Відступ рахує ВИСОТУ
-        // плашки (8 зверху + 5 + рядок + 5), а не саму лише мітку.
+        // Нижче плашки рахунку, а не поряд: обидва тягнуться до центру верху, і
+        // без рознесення підказка лягала б просто на цифри. Плашка підросла —
+        // до рахунку додався рядок літер, — тому відступ більший за колишні 48.
         waitLabel = new Label("", UIFactory.createHintStyle());
         waitLabel.setVisible(false);
         Table waitRow = new Table();
         waitRow.setFillParent(true);
-        waitRow.top().padTop(48f);
+        waitRow.top().padTop(66f);
         waitRow.add(waitLabel);
         hudStage.addActor(waitRow);
 
@@ -514,8 +561,9 @@ public class GameScreen implements Screen {
                 sim.getEconomy().incomePerPeriod(me, sim.getCapturePoints()));
             // Свої очки завжди перші: рахунок читають про себе, а не про сторону
             // з меншим номером гравця.
-            scoreLabel.setText(sim.getVictory().score(me)
-                             + " | " + sim.getVictory().score(foe));
+            scoreSelfLabel.setText(Integer.toString(sim.getVictory().score(me)));
+            scoreFoeLabel .setText(Integer.toString(sim.getVictory().score(foe)));
+            updatePointTags(delta);
 
             if (formationBtn != null) {
                 formationBtn.setVisible(unitManager.hasSelection());
@@ -537,15 +585,18 @@ public class GameScreen implements Screen {
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
         if (mapTexture != null) batch.draw(mapTexture, 0, 0);
+        // Топографія — одразу на карту й під усе інше: це забарвлення землі,
+        // а не шар над боєм. Юніти, зони й ефекти лишаються поверх неї.
+        if (topography != null) topography.draw(batch);
         batch.end();
 
-        // Кола стратегічних точок — окремим проходом bloom і ДО юнітів: це
-        // мітка на землі, а не над військами. Позначка наказу світиться своїм
-        // проходом нижче, бо вона, навпаки, має лежати поверх усього.
-        bloom.begin(gameViewport);
+        // Зони стратегічних точок — ДО юнітів: це мітка на землі, а не над
+        // військами. Проходу bloom тут БІЛЬШЕ НЕМАЄ: світіння робило зону
+        // найяскравішим об'єктом кадру, у рази більшим за юніта, і читалось
+        // як дефект рендера. Позначка наказу свій прохід зберігає — вона,
+        // навпаки, має бити в очі й лежати поверх усього.
         shapes.setProjectionMatrix(camera.combined);
         capturePoints.draw(shapes, sim.getCapturePoints());
-        bloom.end();
 
         batch.setProjectionMatrix(camera.combined);
         batch.begin();
@@ -1157,6 +1208,7 @@ public class GameScreen implements Screen {
         if (unitRenderer    != null) unitRenderer.dispose();
         if (terrainIndicators != null) terrainIndicators.dispose();
         if (bloom           != null) bloom.dispose();
+        if (topography      != null) topography.dispose();
         if (moveMarker      != null) moveMarker.dispose();
         if (spawnGhosts     != null) spawnGhosts.dispose();
         if (combatManager   != null) combatManager.dispose();
@@ -1192,6 +1244,53 @@ public class GameScreen implements Screen {
         camera.update();
     }
 
+    /**
+     * Період мигання літери, секунди. Той самий, що й у зони на землі
+     * ({@code CapturePointRenderer.BLINK_PERIOD}) — інакше підпис і пляма
+     * блимали б урозбій і читались як дві різні події.
+     */
+    private static final float TAG_BLINK_PERIOD = 0.7f;
+
+    /** Наскільки гасне літера в нижній точці мигання. */
+    private static final float TAG_BLINK_DEPTH  = 0.6f;
+
+    /**
+     * Пофарбувати літери точок за власником і поблимати тими, що зараз міняють
+     * руки.
+     *
+     * <p>Колір відносний, а не абсолютний: синє — МОЄ, червоне — чуже, і для
+     * гостя це протилежні сторони порівняно з хостом. Абсолютні кольори команд
+     * означали б, що половина гравців бачить свою армію червоною.
+     */
+    private void updatePointTags(float delta) {
+        if (pointTags == null || pointTags.size == 0) return;
+
+        pointTagClock += delta;
+        float blink = 1f - TAG_BLINK_DEPTH
+            * (0.5f - 0.5f * MathUtils.cos(pointTagClock * MathUtils.PI2 / TAG_BLINK_PERIOD));
+
+        Array<CapturePoint> pts = sim.getCapturePoints().getPoints();
+        for (int i = 0; i < pointTags.size && i < pts.size; i++) {
+            CapturePoint p = pts.get(i);
+
+            // Колір показує, ЧИЙ прогрес зараз накопичений, — те саме правило,
+            // що й у зони на землі (CapturePointRenderer). Фарбувати літеру за
+            // власником, а пляму за тим, хто тягне, означало б, що дві позначки
+            // однієї точки суперечать одна одній у найважливіший момент.
+            Team side = p.holder != null ? p.holder : p.owner;
+
+            Color c = side == null      ? UIFactory.COLOR_TEAM_NEUTRAL
+                    : side == localTeam ? UIFactory.COLOR_TEAM_SELF
+                                        : UIFactory.COLOR_TEAM_FOE;
+
+            // Мигає лише те, що ЗАРАЗ міняється: точка, яку ніхто не чіпає,
+            // мусить стояти спокійно, інакше блимає весь рядок і мигання
+            // перестає щось означати.
+            boolean changing = p.progress > 0 && p.progress < CaptureManager.FULL;
+            pointTags.get(i).setColor(c.r, c.g, c.b, changing ? blink : 1f);
+        }
+    }
+
     private void updateTerrainUnderCursor() {
         cursorScreenX = Gdx.input.getX();
         cursorScreenY = Gdx.input.getY();
@@ -1217,6 +1316,10 @@ public class GameScreen implements Screen {
         if (Gdx.input.isKeyPressed(Input.Keys.S)||Gdx.input.isKeyPressed(Input.Keys.DOWN))  camera.position.y-=speed*delta;
         if (Gdx.input.isKeyPressed(Input.Keys.A)||Gdx.input.isKeyPressed(Input.Keys.LEFT))  camera.position.x-=speed*delta;
         if (Gdx.input.isKeyPressed(Input.Keys.D)||Gdx.input.isKeyPressed(Input.Keys.RIGHT)) camera.position.x+=speed*delta;
+        // Обмежується ЦЕНТР камери, а не її край: камері свідомо дозволено
+        // визирати за межі карти. Клемп по краю пробували — він не пускає
+        // погляд за периметр узагалі, і керування від цього стає тісним,
+        // особливо при роботі біля власного кута.
         camera.position.x = MathUtils.clamp(camera.position.x, 0, mapWidth);
         camera.position.y = MathUtils.clamp(camera.position.y, 0, mapHeight);
     }
@@ -1329,6 +1432,15 @@ public class GameScreen implements Screen {
                     if (placingType != null) { cancelPlacing(); return true; }
                     if (curvedFormation.isDrawing()) { curvedFormation.cancel(); selectionPanel.setFormationActive(false); awaitingDrawStart=false; return true; }
                     togglePause(); return true;
+                }
+                // Топографія. Перемикач, а не утримання (як ALT): рельєф
+                // читають, поки планують хід, тобто довго, і тримати клавішу
+                // весь цей час, ще й водячи мишею, незручно.
+                //
+                // Саме T: WASD зайняті камерою, ALT — оверлеєм огляду.
+                if (k == Input.Keys.T) {
+                    if (topography != null) topography.toggle();
+                    return true;
                 }
                 // Окремої клавіші «стій» тут навмисно немає: S уже зайнята рухом
                 // камери. issueStop() лишається для UI, який її викличе.

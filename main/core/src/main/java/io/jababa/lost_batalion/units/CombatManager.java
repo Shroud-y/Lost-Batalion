@@ -5,6 +5,7 @@ import com.badlogic.gdx.audio.Sound;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.utils.Array;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.audio.AudioManager;
@@ -589,8 +590,26 @@ public class CombatManager {
         if (attacker instanceof Artillery) return;
 
         if (!attacker.canAttack()) return;
-        if (Fixed.dstSq(attacker.x, attacker.y, target.x, target.y)
-                > Fixed.mul(attacker.attackRange, attacker.attackRange)) return;
+        long distSq = Fixed.dstSq(attacker.x, attacker.y, target.x, target.y);
+        if (distSq > Fixed.mul(attacker.attackRange, attacker.attackRange)) return;
+
+        // Розкид пострілу. Кидок стоїть саме тут — після кулдауну й дальності,
+        // тобто рівно на тих тіках, коли постріл СТАВСЯ. Зсунути його вище
+        // означало б смикати RNG і на тіках, коли зброя ще не готова, а
+        // кількість смикань мусить збігатися на всіх клієнтах до одного.
+        //
+        // Хто б'є напевно (усе, крім піхоти), RNG не чіпає взагалі: гілка
+        // залежить від класу юніта, а не від даних, тож вона однакова скрізь.
+        long chance = attacker.hitChanceAt(Fixed.sqrt(distSq));
+        if (chance < Fixed.ONE && random.nextFixedUnit() >= chance) {
+            // Промах. Порох витрачено — кулдаун іде, як і після влучання.
+            attacker.consumeAttackCooldown();
+            if (attacker.usesRangedFx()) {
+                spawnMissedShot(attacker, target);
+                playShot();
+            }
+            return;
+        }
 
         boolean hit;
         if (terrain != null) {
@@ -918,12 +937,50 @@ public class CombatManager {
         return false;
     }
 
+    /**
+     * Наскільки вбік і за ціль іде трасер промаху, у частках відстані пострілу.
+     *
+     * <p>Куля мусить ПРОЛЕТІТИ повз, а не спинитись поруч: трасер, що
+     * обривається біля цілі, читається як влучання, від якого чомусь не впало
+     * здоров'я. Тому вона і зміщується вбік, і проскакує далі.
+     */
+    private static final float MISS_SIDE_SPREAD = 0.10f;
+    private static final float MISS_OVERSHOOT   = 0.18f;
+
+    /**
+     * Трасер, що йде повз ціль.
+     *
+     * <p>Розкид тут береться з {@code MathUtils.random}, а НЕ з ігрового
+     * генератора: це чистий візуал, і смикати ним детермінований RNG означало б
+     * зсунути послідовність, від якої залежить розкид артилерії. Куди саме
+     * пішла куля, що вже нікого не зачепить, на стан гри не впливає.
+     */
+    private void spawnMissedShot(Unit from, Unit to) {
+        float fx = from.worldX(), fy = from.worldY();
+        float dx = to.worldX() - fx, dy = to.worldY() - fy;
+
+        float len = (float) Math.sqrt(dx * dx + dy * dy);
+        if (len <= 0.0001f) { spawnShot(from, to); return; }
+
+        float nx = dx / len, ny = dy / len;
+        float px = -ny,      py = nx;
+
+        float side = MathUtils.random(-MISS_SIDE_SPREAD, MISS_SIDE_SPREAD) * len;
+        float past = (1f + MathUtils.random(0f, MISS_OVERSHOOT)) * len;
+
+        spawnShotAt(fx, fy, fx + nx * past + px * side, fy + ny * past + py * side);
+    }
+
     private void spawnShot(Unit from, Unit to) {
+        spawnShotAt(from.worldX(), from.worldY(), to.worldX(), to.worldY());
+    }
+
+    private void spawnShotAt(float fromX, float fromY, float toX, float toY) {
         for (int i = 0; i < shots.size; i++) {
             ShotEffect s = shots.get(i);
-            if (!s.active) { s.show(from.worldX(), from.worldY(), to.worldX(), to.worldY()); return; }
+            if (!s.active) { s.show(fromX, fromY, toX, toY); return; }
         }
-        shots.get(0).show(from.worldX(), from.worldY(), to.worldX(), to.worldY());
+        shots.get(0).show(fromX, fromY, toX, toY);
     }
 
     private void playShot() { AudioManager.playSfx(shotSound, SHOT_GAIN); }

@@ -109,11 +109,25 @@ are sampled with Y flipped (`height-1-y`).
   position/target, `moving`, `selected`, `alive`. Linear `moveTo` movement (no
   pathfinding). `takeDamage` / `takeDamageWithTerrain` (armor then terrain
   multiplier). `attack` / `attackWithTerrain`.
-- `Infantry` — hp100, dmg15, range40, defense3, stealth0.20, size10.
+- `Infantry` — hp100, dmg15, **range90**, defense3, stealth0.20, size10.
+  Єдиний тип із РОЗКИДОМ: `hitChanceAt` дає 100% до 30 одиниць і лінійно падає
+  до 35% на межі 90 (мушкет, а не гвинтівка). Промах їсть кулдаун
+  (`consumeAttackCooldown`) і малює трасер повз ціль, але не завдає урону.
+  Кидок робить `CombatManager.tryAttack` через `DeterministicRandom` — рівно
+  один на постріл. Хто повертає `hitChanceAt == ONE` (усі інші), RNG **не
+  смикає взагалі**: гілка залежить від класу юніта, тож однакова на всіх
+  клієнтах. Було range40 — при огляді 520 це 13:1, і позиція не важила нічого.
+- `Cavalry` — hp80, dmg26, range20 (впритул), defense2, speed40, cooldown 0.7 с,
+  stealth0.10. Штовхає ціль (`knockbackForce`), не стріляє (`usesRangedFx=false`),
+  єдина тремтить у бою (`combatShakeScale`).
 - `Artillery` — hp180, defense5, size32. `damage=0`/`attackRange=0` on purpose:
   it does **not** use the normal attack path. Instead `CombatManager` drives it:
   aim (3s) → AoE strike (splash 45, dmg120, spread 18) → reload (8s), range 220.
   `manualTarget` (RMB on enemy) overrides auto-target while alive & in range.
+  **splash 45 мусить лишатись більшим за 16** — це мінімальна відстань між
+  юнітами (`UnitSeparation`, hitRadius 8+8). Колись тут стояло 15, і AoE-зброя
+  за побудовою не діставала більш ніж одну ціль: разом із damage 50 і spread 24
+  це давало 1.25 dps за 150 золота, тобто 80 секунд на одного піхотинця.
 - `UnitManager` — owns `allUnits` + `selectedUnits`. Selection (click / shift /
   rect), formation moves (`moveSelectedTo` grid, `moveSelectedToLine`), dead-unit
   cleanup, per-frame update applying terrain speed multiplier.
@@ -142,6 +156,23 @@ Two grayscale/colour PNG masks per scenario, sampled by pixel colour
 - `TerrainCombatModifier`: defender defense multiplier by attacker-vs-defender
   elevation (high ground bonus, valley penalty). See table in that file.
 
+### Топографія (`screens/renderer/TopographyOverlay`)
+Оверлей ярусів висот на всю карту, перемикається клавішею **T** (WASD зайняті
+камерою, ALT — оверлеєм огляду). Потрібен тому, що рельєф дає ±30% захисту і
+змінює огляд у 3.25 раза, а на самій карті яруси майже не розрізняються —
+вся математика працювала внаслі́пу.
+
+Одна текстура розміром з карту, побудована ЛІНИВО при першому вмиканні
+(1440×1440 ≈ 58 мс), далі просто малюється поверх карти з `ALPHA 0.45`.
+Гіпсометрична шкала: низини зелені, височини руді, річки сині.
+**Перевертень застосований при побудові** (рядок 0 пікмапи = найбільший
+світовий Y), тому малюється БЕЗ від'ємної висоти — інакше оверлей ліг би
+дзеркально до місцевості, яку описує. Фільтр `Nearest`: межі ярусів це східці
+в масці, і згладжування домалювало б кольори неіснуючих ярусів.
+
+Не плутати з `TerrainIndicatorRenderer` — той показує ярус під ВИДІЛЕНИМ
+юнітом («де я стою»), а це «куди мені йти».
+
 ### Visibility / fog (`visibility/`)
 - `VisibilitySystem` — recomputes `visibleToPlayer` for every enemy each frame.
   `effectiveSight = sightRange × sightMod(observer terrain)`; stealth from forest
@@ -151,17 +182,25 @@ Two grayscale/colour PNG masks per scenario, sampled by pixel colour
 - Combat & rendering both respect `visibleToPlayer` (can't attack/see hidden enemies).
 
 ### Точки захоплення (`capture/`)
-- `CaptureManager` будує точки з плям VILLAGE у масці лісу
-  (`TerrainMaskManager.findClusterCenters` → заливка по 4 сусідах), зливаючи
-  плями, ближчі за 135 px, в одне село. На Жовтих Водах виходить 3 точки.
-- Радіус кола 70 px. Захоплює той, хто зайшов у КОЛО, а не на пікселі села.
-  Одна сторона в колі → +2/тік (12 с на захоплення), обидві → прогрес завмирає,
+- Зони — **авторські дані сценарію** (`CaptureZone` у `ScenarioCard`), а НЕ
+  похідні від маски. Кожна — опуклий чотирикутник (4 вершини у світових
+  пікселях) плюс назва («A», «B», «C»), яку показує HUD. `CaptureManager`
+  просто перекладає список у `CapturePoint`.
+- Раніше точки виводились із плям VILLAGE (`findClusterCenters` + злиття <135),
+  а зоною було коло r=70. Форма села ні на що не впливала: межа могла лежати
+  посеред річки, а хутір із двох купок доводилось зливати порогом відстані.
+- `CapturePoint.contains` — знак векторного добутку по 4 ребрах, цілочисельно.
+  Обхід вершин будь-який; точка рівно на ребрі зараховується всередину.
+  Чотирикутник МУСИТЬ бути опуклим, інакше перевірка бреше.
+- Одна сторона в зоні → +2/тік (12 с на захоплення), обидві → прогрес завмирає,
   порожньо → −1/тік назад. Чужу точку спершу треба обнулити, потім набрати свою.
 - Це стан симуляції: цілі числа, окремий компонент checksum (`C_POINTS`) і блок
-  у `SimulationSnapshot`.
-- `screens/renderer/CapturePointRenderer` малює коло — біле, поки нейтральне,
-  і сектором кольору сторони в міру захоплення. Йде окремим проходом
-  `BloomEffect` ДО юнітів; колір premultiplied, бо буфер bloom саме такий.
+  у `SimulationSnapshot`. Самі вершини в знімок не їдуть — вони константи.
+- `screens/renderer/CapturePointRenderer` малює чотирикутник кольором того, хто
+  ТЯГНЕ (`holder ?: owner`), і **мигає**, поки `0 < progress < FULL`.
+  Проходу `BloomEffect` тут БІЛЬШЕ НЕМАЄ: світіння робило зону найяскравішим
+  об'єктом кадру, у рази більшим за юніта. Звичайний альфа-блендинг, колір НЕ
+  premultiplied. Той самий колір і той самий період мигання, що в літер у HUD.
 
 ### Економіка й поповнення (`economy/`)
 - `Economy` — золото на сторону. Старт 100, +5 за кожну утримувану точку раз на
@@ -200,9 +239,16 @@ Two grayscale/colour PNG masks per scenario, sampled by pixel colour
 - Нічия можлива: обидва перетнули `TARGET` на одному нарахуванні з рівним
   рахунком, або обидва анігільовані. `isDraw()` = `finished && winner == null`.
 - Стан симуляції: checksum-компонент `C_VICTORY` і блок у `SimulationSnapshot`.
-- UI: рахунок — `scoreLabel` у `GameScreen`, ВЕРХ ПО ЦЕНТРУ `hudStage`, формат
-  «120 : 45», свої очки перші. Там же тягнеться `waitLabel`, тому вони рознесені
-  по `padTop` (10 проти 38) — інакше підказка лягає на цифри. У `CommandPanel`
+- UI: рахунок — `scoreSelfLabel`/`scoreFoeLabel` у `GameScreen`, ВЕРХ ПО ЦЕНТРУ
+  `hudStage` впритул до межі екрана (`padTop 2`). Обидва числа ЗОЛОТІ
+  (`COLOR_ACCENT`); свої перші. Синьо-червоні цифри пробували 2026-08-04 і
+  відкинули — вибивались зі спокійної золотої гами HUD. Кольори сторін
+  (`UIFactory.COLOR_TEAM_SELF/FOE`) лишились там, де справді розрізняють:
+  на літерах точок і на зонах. Під числами ряд літер (`pointTags`): колір = хто тягне,
+  сіра = нічия, мигання = зараз захоплюють. Літера НЕ рухається ніколи —
+  групування «свої ліворуч, чужі праворуч» відкинуте саме тому, що змусило б
+  її стрибати в мить захоплення. Там же тягнеться `waitLabel`, тому рознесені
+  по `padTop` (2 проти 66) — інакше підказка лягає на цифри. У `CommandPanel`
   рахунку НЕМАЄ навмисно: та панель про золото й замовлення.
 - Результат показує `MatchNoticeOverlay` (те саме вікно, що й для обірваного
   зв'язку — стан однаковий, лишився один вихід у меню). Вихід суперника
@@ -225,6 +271,13 @@ Two grayscale/colour PNG masks per scenario, sampled by pixel colour
   `aspectFit = sqrt(900×580 / (worldW×worldH))`. У `camera.zoom` НЕ пишуть напряму —
   тільки `setZoom` (ефективний масштаб) або `setUserZoom`. Без цього гравець на
   21:9 бачив на 34% більше карти, ніж гравець у вікні.
+- **Камера обмежується по ЦЕНТРУ** (`clamp(position, 0, mapWidth/Height)` у
+  `handleCameraMovement`), тобто їй свідомо дозволено визирати за межі карти —
+  збоку видно чорноту. Клемп по КРАЮ (`clamp(x, halfW, mapWidth − halfW)`)
+  пробували 2026-08-04 і **відкинули**: він прибирає чорноту, але не пускає
+  погляд за периметр узагалі, і керування стає тісним. Не повертати без
+  прямого прохання. Саме тому `CommandPanel` має власну чорну плашку — вона
+  лежить на межі кадру й не може розраховувати на карту під собою.
 - Вікно нерозтяжне (`setResizable(false)`); розмір міняє лише список пресетів у
   налаштуваннях. Роздільність і повний екран лежать у `LostBatalion.Settings`,
   відновлює їх `LostBatalion.create()` — у лаунчері `Preferences` ще не існує.

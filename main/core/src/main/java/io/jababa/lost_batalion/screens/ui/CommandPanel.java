@@ -116,10 +116,26 @@ public class CommandPanel {
         root.setFillParent(true);
         root.top().left().pad(12f);
 
+        // Плашка під числами. З'явилась разом із виправленням камери: доти
+        // ліворуч від карти лежала чорна смуга (камера показувала повз межі
+        // карти), і панель випадково читалась на ній. Щойно смуга зникла,
+        // золоте на світло-зеленій траві з деревами стало нерозбірливим.
+        //
+        // Заливка й рамка ті самі, що в плашки рахунку: обидві — HUD над
+        // картою, і двох різних підкладок у ньому бути не має (DESIGN §8).
+        //
+        // Саме МЕНЮ лишається без тла навмисно: під ним поле бою, на яке
+        // гравець дивиться, обираючи місце висадки.
+        Table header = new Table();
+        header.setBackground(UIFactory.createPanelBackground());
+        header.pad(8f, 12f, 10f, 12f);
+
         // Прибуток НАД лічильником: спершу «скільки капає», потім «скільки є».
-        root.add(incomeLabel).left().row();
-        root.add(goldLabel).left().padTop(2f).row();
-        root.add(armyBtn).left().size(112f, 32f).padTop(8f).row();
+        header.add(incomeLabel).left().row();
+        header.add(goldLabel).left().padTop(2f).row();
+        header.add(armyBtn).left().size(112f, 32f).padTop(8f);
+
+        root.add(header).left().row();
         // Колонка ширша за сам пункт рівно на смугу лічильника — інакше Table
         // стиснув би квадратики назад під текст.
         root.add(menu).left().width(MENU_WIDTH + COUNT_ZONE + COUNT_PAD).padTop(6f).row();

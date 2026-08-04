@@ -3,6 +3,7 @@ package io.jababa.lost_batalion.sim;
 import com.badlogic.gdx.utils.Array;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.capture.CaptureManager;
+import io.jababa.lost_batalion.capture.CaptureZone;
 import io.jababa.lost_batalion.economy.Economy;
 import io.jababa.lost_batalion.economy.PendingSpawn;
 import io.jababa.lost_batalion.economy.SpawnQueue;
@@ -82,7 +83,12 @@ public class GameSimulation implements CommandContext {
     private NavGrid    navGrid;
     private PathFinder pathFinder;
 
-    public GameSimulation(TerrainQuery terrain, float mapWidth, float mapHeight, long rngSeed) {
+    /**
+     * @param zones зони захоплення сценарію — авторські дані, однакові на всіх
+     *              клієнтах; {@code null} означає карту без точок
+     */
+    public GameSimulation(TerrainQuery terrain, float mapWidth, float mapHeight,
+                          long rngSeed, CaptureZone[] zones) {
         this.terrain   = terrain;
         this.mapWidth  = mapWidth;
         this.mapHeight = mapHeight;
@@ -93,7 +99,7 @@ public class GameSimulation implements CommandContext {
         this.unitManager      = new UnitManager();
         this.combatManager    = new CombatManager(unitManager, terrain, random);
         this.visibilitySystem = new VisibilitySystem(terrain);
-        this.captureManager   = new CaptureManager(terrain);
+        this.captureManager   = new CaptureManager(zones);
         this.economy          = new Economy();
         this.spawnQueue       = new SpawnQueue();
 

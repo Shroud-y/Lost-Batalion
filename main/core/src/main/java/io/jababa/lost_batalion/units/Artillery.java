@@ -48,12 +48,21 @@ public class Artillery extends Unit {
     public static final long STRIKE_RANGE         = Fixed.fromInt(220);
     /** Час прицілювання до пострілу — 3 с при 40 Гц. */
     public static final int  STRIKE_AIM_TICKS     = 3 * TickRate.TICKS_PER_SECOND;
-    /** Радіус вибуху (AoE), Q47.16. */
-    public static final long STRIKE_SPLASH_RADIUS = Fixed.fromInt(15);
-    /** Базовий урон у центрі вибуху, Q47.16. */
-    public static final long STRIKE_DAMAGE        = Fixed.fromInt(50);
+    /**
+     * Радіус вибуху (AoE), Q47.16.
+     *
+     * <p>Мусить бути помітно БІЛЬШИМ за мінімальну відстань між юнітами, інакше
+     * AoE-зброя за побудовою не дістає більш ніж одну ціль. Розштовхування
+     * тримає сусідів на {@code hitRadius + hitRadius} = 16 одиниць
+     * ({@code UnitSeparation}), і колись тут стояло 15 — тобто вибух гарантовано
+     * не діставав нікого, крім того, в кого влучив. При 45 накривається
+     * приблизно три ряди строю, і гармата робить те, заради чого існує.
+     */
+    public static final long STRIKE_SPLASH_RADIUS = Fixed.fromInt(45);
+    /** Базовий урон у центрі вибуху, Q47.16. Пряме влучання знімає піхоту (100 hp). */
+    public static final long STRIKE_DAMAGE        = Fixed.fromInt(120);
     /** Максимальний розкид снаряду від точки прицілу, Q47.16. */
-    public static final long STRIKE_SPREAD        = Fixed.fromInt(24);
+    public static final long STRIKE_SPREAD        = Fixed.fromInt(18);
     /** Час перезарядки між пострілами — 8 с при 40 Гц. */
     public static final int  STRIKE_RELOAD_TICKS  = 8 * TickRate.TICKS_PER_SECOND;
 

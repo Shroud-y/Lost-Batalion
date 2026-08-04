@@ -2,10 +2,8 @@ package io.jababa.lost_batalion.capture;
 
 import com.badlogic.gdx.utils.Array;
 import io.jababa.lost_batalion.Team;
-import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.sim.StateChecksum;
 import io.jababa.lost_batalion.sim.TickRate;
-import io.jababa.lost_batalion.terrain.TerrainQuery;
 import io.jababa.lost_batalion.units.Unit;
 
 import java.io.DataInputStream;
@@ -13,20 +11,20 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 
 /**
- * Точки захоплення матчу: пошук, стан і крок симуляції.
+ * Точки захоплення матчу: стан і крок симуляції.
  *
  * <h3>Правила</h3>
  * <ul>
- *   <li>У колі стоять юніти лише однієї сторони → прогрес цієї сторони росте.</li>
- *   <li>У колі обидві сторони → нічия, прогрес завмирає. Спершу треба вибити.</li>
- *   <li>Коло порожнє → прогрес осідає назад, удвічі повільніше, ніж набирався.
+ *   <li>У зоні стоять юніти лише однієї сторони → прогрес цієї сторони росте.</li>
+ *   <li>У зоні обидві сторони → нічия, прогрес завмирає. Спершу треба вибити.</li>
+ *   <li>Зона порожня → прогрес осідає назад, удвічі повільніше, ніж набирався.
  *       Захоплена точка при цьому осідає до СВОГО повного значення, а не до
  *       нуля: втратити село, просто пішовши з нього, було б дивно.</li>
  *   <li>Чужа сторона спершу зриває чуже володіння (прогрес до нуля), і лише
  *       тоді починає набирати своє.</li>
  * </ul>
  *
- * <p>Кількість юнітів у колі на швидкість не впливає: інакше захоплення
+ * <p>Кількість юнітів у зоні на швидкість не впливає: інакше захоплення
  * зводилося б до того, хто пригнав більший натовп, а не хто втримав місце.
  *
  * <h3>Чому це симуляція, а не візуал</h3>
@@ -36,92 +34,37 @@ import java.io.IOException;
  */
 public class CaptureManager {
 
-    /**
-     * Радіус кола точки у світових пікселях.
-     *
-     * <p>Найширше село Жовтих Вод (після злиття сусідніх плям) має 114 пікселів
-     * у поперечнику, тобто 57 від центру. 70 накриває його цілком і лишає обід,
-     * у якому видно, що юніт зайшов, — але не розповзається на півдолини.
-     */
-    public static final long RADIUS = Fixed.fromInt(70);
-
-    /** Квадрат радіуса — перевірка «юніт у колі» обходиться без кореня. */
-    private static final long RADIUS_SQ = Fixed.mul(RADIUS, RADIUS);
-
     /** Повний прогрес. Набирається за {@code FULL / GAIN} тіків. */
     public static final int FULL = TickRate.TICKS_PER_SECOND * 12 * 2;   // 960
 
-    /** Приріст за тік, коли в колі стоїть рівно одна сторона → 12 секунд на захоплення. */
+    /** Приріст за тік, коли в зоні стоїть рівно одна сторона → 12 секунд на захоплення. */
     private static final int GAIN = 2;
 
-    /** Осідання за тік, коли коло порожнє — удвічі повільніше за набір. */
+    /** Осідання за тік, коли зона порожня — удвічі повільніше за набір. */
     private static final int DECAY = 1;
 
     private final Array<CapturePoint> points = new Array<>();
 
     /**
-     * Побудувати точки з маски сценарію.
+     * Побудувати точки зі сценарію.
      *
-     * <p>Маска — ассет, однаковий у всіх, а обхід детермінований, тож список
-     * точок і їхній порядок збігаються на всіх клієнтах. Саме тому точки не
-     * входять у знімок стану цілком — тільки їхній прогрес і власник.
+     * <p>Зони — константи в коді сценарію, тобто однакові на всіх клієнтах за
+     * побудовою; порядок теж заданий списком. Саме тому в знімок стану точки не
+     * їдуть цілком — тільки прогрес і власник.
+     *
+     * <p>Раніше точки виводились із плям VILLAGE у масці лісу, а зоною було
+     * коло сталого радіуса 70. Форма села при цьому ні на що не впливала:
+     * межа захоплення могла лежати посеред річки або зрізати половину хат,
+     * а два хутори, розділені дорогою, доводилось зливати порогом відстані.
+     * Тепер межу задає той, хто малює карту.
+     *
+     * @param zones список зон сценарію; {@code null} або порожній — точок немає
      */
-    public CaptureManager(TerrainQuery terrain) {
-        if (terrain == null) return;
-        int[] centers = merge(terrain.villageCenters());
-        for (int i = 0; i + 1 < centers.length; i += 2) {
-            points.add(new CapturePoint(Fixed.fromInt(centers[i]),
-                                        Fixed.fromInt(centers[i + 1])));
+    public CaptureManager(CaptureZone[] zones) {
+        if (zones == null) return;
+        for (int i = 0; i < zones.length; i++) {
+            if (zones[i] != null) points.add(new CapturePoint(zones[i]));
         }
-    }
-
-    /**
-     * Наскільки близькі плями вважаються одним селом (світові пікселі).
-     *
-     * <p>Село в масці не завжди одна пляма: на Жовтих Водах хутір із двома
-     * купками хат розділений дорогою і дає дві плями за 81 піксель одна від
-     * одної. Дві точки на такій відстані — це два кола, що накривають одне
-     * одного більшою частиною площі, і юніт стоїть одразу в обох.
-     *
-     * <p>Поріг заданий незалежно від {@link #RADIUS}: він про те, де закінчується
-     * одне село, а не про те, як його намальовано.
-     */
-    private static final int MERGE_DISTANCE = 135;
-
-    /**
-     * Злити плями, що лежать ближче за {@link #MERGE_DISTANCE}, в одну точку.
-     *
-     * <p>Центр групи — середнє її плям, і воно перераховується на кожному
-     * додаванні, тож результат залежить лише від порядку плям — а він
-     * детермінований, бо задається обходом маски.
-     */
-    private static int[] merge(int[] centers) {
-        int n = centers.length / 2;
-        int[] sumX = new int[n], sumY = new int[n], count = new int[n];
-        int groups = 0;
-
-        for (int i = 0; i < n; i++) {
-            int x = centers[i * 2], y = centers[i * 2 + 1];
-
-            int hit = -1;
-            for (int g = 0; g < groups && hit < 0; g++) {
-                int dx = sumX[g] / count[g] - x;
-                int dy = sumY[g] / count[g] - y;
-                if (dx * dx + dy * dy <= MERGE_DISTANCE * MERGE_DISTANCE) hit = g;
-            }
-            if (hit < 0) hit = groups++;
-
-            sumX[hit] += x;
-            sumY[hit] += y;
-            count[hit]++;
-        }
-
-        int[] out = new int[groups * 2];
-        for (int g = 0; g < groups; g++) {
-            out[g * 2]     = sumX[g] / count[g];
-            out[g * 2 + 1] = sumY[g] / count[g];
-        }
-        return out;
     }
 
     public Array<CapturePoint> getPoints() { return points; }
@@ -147,7 +90,7 @@ public class CaptureManager {
             // Видимість тут ні до чого: захоплення — фізична присутність, а не
             // те, що хтось бачить. Інакше точку можна було б утримувати,
             // ховаючись у лісі від власного ж прапора.
-            if (Fixed.dstSq(u.x, u.y, p.x, p.y) > RADIUS_SQ) continue;
+            if (!p.contains(u.x, u.y)) continue;
             if (u.team == Team.PLAYER) player = true; else enemy = true;
             if (player && enemy) break;
         }
@@ -170,7 +113,7 @@ public class CaptureManager {
                 p.owner    = present;
             }
         } else {
-            // Спершу зірвати чуже: коло гасне до нуля і аж потім набирається
+            // Спершу зірвати чуже: зона гасне до нуля і аж потім набирається
             // кольором того, хто прийшов.
             p.progress -= GAIN;
             if (p.progress <= 0) {
@@ -181,7 +124,7 @@ public class CaptureManager {
         }
     }
 
-    /** Порожнє коло: прогрес повзе назад до стану, у якому точка лишалась. */
+    /** Порожня зона: прогрес повзе назад до стану, у якому точка лишалась. */
     private void decay(CapturePoint p) {
         if (p.owner != null && p.holder == p.owner) {
             // Своя ж точка — тримається повною.

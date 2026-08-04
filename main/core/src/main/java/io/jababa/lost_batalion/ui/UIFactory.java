@@ -254,6 +254,50 @@ public final class UIFactory {
         return label(SIZE_ITEM, 1.5f, COLOR_ACCENT);
     }
 
+    // ── Кольори сторін ────────────────────────────────────────────────────
+    //
+    // Одне джерело на весь матч: рахунок, підписи точок і зони на землі мусять
+    // бути ОДНОГО кольору, інакше гравець не зв'яже цифру вгорі з плямою на
+    // карті. Тони збігаються з CapturePointRenderer.
+
+    /** Свій колір — синій. */
+    public static final Color COLOR_TEAM_SELF    = new Color(0.35f, 0.60f, 1.00f, 1f);
+    /** Ворожий колір — червоний. */
+    public static final Color COLOR_TEAM_FOE     = new Color(1.00f, 0.35f, 0.30f, 1f);
+    /** Нічия точка. */
+    public static final Color COLOR_TEAM_NEUTRAL = new Color(0.62f, 0.60f, 0.55f, 1f);
+
+    /**
+     * Число рахунку. Крупніше за золото: це головне число партії, і читати його
+     * мусить бути можливо, не відриваючись від поля.
+     */
+    public static Label.LabelStyle createScoreStyle(Color color) {
+        return label(SIZE_SCREEN_TITLE - 4, 1.5f, color);
+    }
+
+    /**
+     * Роздільник рахунку. Приглушений навмисно: двокрапка не несе інформації, і
+     * рівна з цифрами вона перетягує погляд на себе.
+     */
+    public static Label.LabelStyle createScoreSeparatorStyle() {
+        return label(SIZE_SCREEN_TITLE - 8, 1f, NOTE);
+    }
+
+    /**
+     * Літера точки захоплення.
+     *
+     * <p>{@code fontColor} тут {@code null} навмисно: колір означає власника і
+     * міняється щокадрово через {@code setColor}, а мигання їздить по альфі.
+     * Якби тон сидів у стилі, підсвітити літеру було б неможливо — так само,
+     * як у пунктах меню.
+     */
+    public static Label.LabelStyle createPointTagStyle() {
+        Label.LabelStyle s = new Label.LabelStyle();
+        s.font = generateTintableFont(SIZE_BODY, 2f);
+        s.fontColor = null;
+        return s;
+    }
+
     /** Приглушений тон для недоступного пункту — те саме, що другорядний підпис. */
     public static Color itemMutedColor() { return new Color(NOTE); }
 
