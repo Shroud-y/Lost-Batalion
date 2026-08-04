@@ -53,7 +53,14 @@ public final class Screenshot {
     public static FileHandle capture(String dir, String name) {
         int w = Gdx.graphics.getBackBufferWidth();
         int h = Gdx.graphics.getBackBufferHeight();
-        if (w <= 0 || h <= 0) return null;
+        // Згорнуте вікно дає буфер 0×0. Мовчазний null тут коштував двох
+        // прогонів, у яких «усе пройшло», а файлів не було, — тому причина
+        // йде в лог, а не здогадується.
+        if (w <= 0 || h <= 0) {
+            Gdx.app.log("SCREENSHOT", "кадровий буфер " + w + "×" + h
+                      + " — вікно згорнуте або ще не готове, знімок пропущено");
+            return null;
+        }
 
         Pixmap pixmap = null;
         try {

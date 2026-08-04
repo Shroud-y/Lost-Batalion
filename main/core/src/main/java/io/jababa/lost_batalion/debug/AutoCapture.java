@@ -77,14 +77,45 @@ public final class AutoCapture {
      * щільніший за частоту кадрів: два PNG з одного й того самого буфера — це
      * два однакові файли.
      */
+    /**
+     * Скільки секунд чекати на вдалий знімок, перш ніж пропустити слот.
+     *
+     * <p>Потрібно, бо чекання не може бути вічним: якщо вікно згорнули й пішли,
+     * прогін мусить колись завершитись сам, інакше він висітиме до кінця світу.
+     */
+    private static final float CAPTURE_DEADLINE = 30f;
+
+    /** Скільки вже чекаємо на поточний слот. */
+    private float waiting;
+    /** Чи писали вже попередження про невдачу — щоб не засмічувати лог щокадру. */
+    private boolean warned;
+
     public void update(float delta) {
         if (next >= times.length) return;
 
         elapsed += delta;
         if (elapsed < times[next]) return;
 
-        Screenshot.capture(dir, String.format("lb-%05.1fs", times[next]).replace(',', '.'));
+        // Слот просувається ЛИШЕ після вдалого знімка. Раніше {@code next++}
+        // стояв безумовно, і слот згорав навіть тоді, коли знімка не вийшло:
+        // варто було збити фокус вікна (воно згортається, кадровий буфер стає
+        // 0×0, і Screenshot.capture повертає null) — і прогін чесно доходив до
+        // кінця розкладу, не записавши жодного файлу. Тепер невдача означає
+        // «спробуємо наступного кадру», тобто достатньо повернути вікно.
+        if (Screenshot.capture(dir, String.format("lb-%05.1fs", times[next]).replace(',', '.')) == null) {
+            waiting += delta;
+            if (!warned) {
+                Gdx.app.log("SCREENSHOT", "кадр недоступний (вікно згорнуте?) — чекаю до "
+                          + (int) CAPTURE_DEADLINE + " с");
+                warned = true;
+            }
+            if (waiting < CAPTURE_DEADLINE) return;
+            Gdx.app.log("SCREENSHOT", "не дочекався кадру на " + times[next] + " с — пропускаю");
+        }
+
         next++;
+        waiting = 0f;
+        warned  = false;
 
         if (next >= times.length && exitWhenDone) {
             Gdx.app.log("SCREENSHOT", "розклад вичерпано — вихід");

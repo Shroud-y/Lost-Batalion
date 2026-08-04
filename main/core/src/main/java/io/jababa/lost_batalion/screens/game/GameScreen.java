@@ -14,9 +14,11 @@ import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.Stage;
+import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
+import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
@@ -441,13 +443,44 @@ public class GameScreen implements Screen {
         // синьо-червоні цифри вибивались зі спокійної золотої гами решти HUD.
         // Кольори сторін лишаються там, де вони справді щось розрізняють, —
         // на літерах точок нижче й на зонах на землі.
-        scoreSelfLabel = new Label("0", UIFactory.createScoreStyle(UIFactory.COLOR_ACCENT));
-        scoreFoeLabel  = new Label("0", UIFactory.createScoreStyle(UIFactory.COLOR_ACCENT));
+        // ОДИН стиль на обидві мітки: кожен виклик фабрики пече власний шрифт
+        // із власною текстурою (DESIGN §6), а тут потрібен той самий.
+        Label.LabelStyle scoreStyle = UIFactory.createScoreStyle(UIFactory.COLOR_ACCENT);
+        scoreSelfLabel = new Label("0", scoreStyle);
+        scoreFoeLabel  = new Label("0", scoreStyle);
+
+        Array<CapturePoint> pts = sim.getCapturePoints().getPoints();
+
+        // Ширина під НАЙБІЛЬШИЙ можливий рахунок, а не під поточний. Без цього
+        // плашка розширювалась, коли рахунок переходив у три цифри: вона
+        // тягнеться до центру верху, тож росла в обидва боки, і рядок літер
+        // під нею разом із двокрапкою щоразу з'їжджав.
+        //
+        // Максимум перевищує TARGET: обидві сторони отримують очки ДО перевірки
+        // на перемогу, тож останнє нарахування може перескочити межу на цілий
+        // період утримання всіх точок.
+        int maxScore = VictoryTracker.TARGET
+                     + VictoryTracker.POINTS_PER_CAPTURE * Math.max(1, pts.size);
+        GlyphLayout widest = new GlyphLayout(scoreStyle.font,
+            String.valueOf(maxScore).replaceAll("\\d", "0"));
+        float digitsWidth = widest.width;
+
+        // Цифри ростуть від роздільника НАЗОВНІ — свої вліво, ворожі вправо, —
+        // тому обидва числа завжди на однаковій відстані від нього, а сам він
+        // стоїть рівно посередині плашки незалежно від рахунку.
+        //
+        // Вирівнювання задане САМІЙ мітці, а комірка розтягує її на всю свою
+        // ширину (`fillX`). Одного лише `Cell.right()/left()` замало: без
+        // розтягування мітка лишається завширшки з текст і лягає по центру
+        // комірки, через що «5» відпливало від роздільника на пів комірки, а
+        // «905» стояло впритул — відстані виходили різні.
+        scoreSelfLabel.setAlignment(Align.right);
+        scoreFoeLabel .setAlignment(Align.left);
 
         Table scoreLine = new Table();
-        scoreLine.add(scoreSelfLabel).padRight(10f);
-        scoreLine.add(new Label(":", UIFactory.createScoreSeparatorStyle())).padRight(10f);
-        scoreLine.add(scoreFoeLabel);
+        scoreLine.add(scoreSelfLabel).width(digitsWidth).fillX().padRight(10f);
+        scoreLine.add(new Label("|", UIFactory.createScoreSeparatorStyle())).padRight(10f);
+        scoreLine.add(scoreFoeLabel).width(digitsWidth).fillX();
 
         // Літери точок під рахунком. Кожна стоїть на СВОЄМУ місці назавжди —
         // міняється лише колір. Групувати їх по власниках (свої ліворуч, чужі
@@ -456,7 +489,6 @@ public class GameScreen implements Screen {
         // найгірший момент: саме тоді на неї й дивляться.
         Table pointsLine = new Table();
         pointTags = new Array<>();
-        Array<CapturePoint> pts = sim.getCapturePoints().getPoints();
         for (int i = 0; i < pts.size; i++) {
             Label tag = new Label(pts.get(i).name, UIFactory.createPointTagStyle());
             pointTags.add(tag);

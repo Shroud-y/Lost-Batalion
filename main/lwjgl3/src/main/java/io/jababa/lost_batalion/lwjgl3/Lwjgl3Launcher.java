@@ -52,6 +52,17 @@ public class Lwjgl3Launcher {
         //// They can also be loaded from the root of assets/ .
         configuration.setWindowIcon("libgdx128.png", "libgdx64.png", "libgdx32.png", "libgdx16.png");
 
+        //// Режим автознімків (-Dlb.shotAt=...) мусить пережити те, що людина за
+        //// комп'ютером у цей час працює. Типово libGDX ЗУПИНЯЄ цикл рендеру,
+        //// коли вікно згорнуте, — а знімається саме кадровий буфер, тож досить
+        //// було збити фокус, щоб прогін завершився без жодного файлу.
+        //// Поза цим режимом усе лишається як було: звичайній грі спинятись
+        //// у згорнутому стані правильно, вона не має гріти процесор у фоні.
+        if (System.getProperty("lb.shotAt") != null) {
+            configuration.setPauseWhenMinimized(false);
+            configuration.setPauseWhenLostFocus(false);
+        }
+
         //// This could improve compatibility with Windows machines with buggy OpenGL drivers, Macs
         //// with Apple Silicon that have to emulate compatibility with OpenGL anyway, and more.
         //// This uses the dependency `com.badlogicgames.gdx:gdx-lwjgl3-angle` to function.
