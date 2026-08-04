@@ -112,6 +112,15 @@ public class Minimap implements Disposable {
      */
     public float frameWidth() { return w + PAD * 2f; }
 
+    // Рамка карти в логічних одиницях. Потрібна тому, хто малює поверх
+    // мінікарти власні позначки — зараз це {@code CaptureMarkerRenderer}:
+    // позначки точок мусять збігатися кольором і миганням із тими, що на полі,
+    // тож малює їх один клас, а мінікарта лише каже, де вона лежить.
+    public float mapX() { return x; }
+    public float mapY() { return y; }
+    public float mapW() { return w; }
+    public float mapH() { return h; }
+
     /** Чи потрапляє екранна точка (нуль унизу) в мінікарту. */
     public boolean containsScreenPoint(float sx, float syFromBottom) {
         return sx >= x - PAD && sx <= x + w + PAD

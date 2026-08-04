@@ -38,6 +38,9 @@ public final class Screenshot {
 
     private static final SimpleDateFormat STAMP = new SimpleDateFormat("yyyyMMdd-HHmmss-SSS");
 
+    /** Чи була попередня спроба невдалою — щоб не писати той самий рядок щокадру. */
+    private static boolean bufferWasUnavailable;
+
     /** Знімок із типовою назвою за часом. */
     public static FileHandle capture() {
         return capture(DEFAULT_DIR, null);
@@ -56,11 +59,19 @@ public final class Screenshot {
         // Згорнуте вікно дає буфер 0×0. Мовчазний null тут коштував двох
         // прогонів, у яких «усе пройшло», а файлів не було, — тому причина
         // йде в лог, а не здогадується.
+        //
+        // Але рівно ОДИН раз на смугу невдач: автознімки перепитують щокадру,
+        // поки чекають на вікно, і безумовний лог видавав тисячі однакових
+        // рядків за кілька секунд, у яких тонуло все інше.
         if (w <= 0 || h <= 0) {
-            Gdx.app.log("SCREENSHOT", "кадровий буфер " + w + "×" + h
-                      + " — вікно згорнуте або ще не готове, знімок пропущено");
+            if (!bufferWasUnavailable) {
+                bufferWasUnavailable = true;
+                Gdx.app.log("SCREENSHOT", "кадровий буфер " + w + "×" + h
+                          + " — вікно згорнуте або ще не готове, чекаю");
+            }
             return null;
         }
+        bufferWasUnavailable = false;
 
         Pixmap pixmap = null;
         try {

@@ -291,6 +291,23 @@ public final class UIFactory {
      * Якби тон сидів у стилі, підсвітити літеру було б неможливо — так само,
      * як у пунктах меню.
      */
+    /**
+     * Шрифт підписів ПОВЕРХ карти — позначки точок захоплення на полі й на
+     * мінікарті.
+     *
+     * <p>Віддається сирим {@link BitmapFont}, а не стилем scene2d, бо ці підписи
+     * малюються вручну в екранних координатах: вони прив'язані до світової
+     * точки, а не до комірки таблиці, і жодна сцена їх не розкладає.
+     *
+     * <p>Звільняти його НЕ треба — як і всі шрифти звідси, він потрапляє в
+     * {@link #disposeAll()}. Але після {@code disposeAll} посилання стає
+     * недійсним, тож той, хто його тримає, мусить перезапитати шрифт разом із
+     * перескладанням HUD.
+     */
+    public static BitmapFont createMapLabelFont() {
+        return generateTintableFont(SIZE_NOTE + 2, 1f);
+    }
+
     public static Label.LabelStyle createPointTagStyle() {
         Label.LabelStyle s = new Label.LabelStyle();
         s.font = generateTintableFont(SIZE_BODY, 2f);

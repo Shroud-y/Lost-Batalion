@@ -45,6 +45,7 @@ import io.jababa.lost_batalion.net.commands.StopCommand;
 import io.jababa.lost_batalion.net.kryo.LocalMatchTransport;
 import io.jababa.lost_batalion.screens.effects.BloomEffect;
 import io.jababa.lost_batalion.screens.effects.MoveMarker;
+import io.jababa.lost_batalion.screens.renderer.CaptureMarkerRenderer;
 import io.jababa.lost_batalion.screens.renderer.CapturePointRenderer;
 import io.jababa.lost_batalion.screens.renderer.SpawnGhostRenderer;
 import io.jababa.lost_batalion.screens.renderer.TerrainIndicatorRenderer;
@@ -196,6 +197,9 @@ public class GameScreen implements Screen {
     /** Оверлей ярусів висот на всю карту. Перемикається клавішею T. */
     private TopographyOverlay topography;
 
+    /** Плашки з літерами точок — на полі й на мінікарті, в екранних координатах. */
+    private CaptureMarkerRenderer captureMarkers;
+
     /** Зони стратегічних точок. Малюються під юнітами, звичайним блендингом. */
     private CapturePointRenderer capturePoints;
     /** Пост-обробка світіння для позначки наказу і кіл точок. */
@@ -328,6 +332,7 @@ public class GameScreen implements Screen {
         topography        = new TopographyOverlay(terrain, mapWidth, mapHeight);
         moveMarker      = new MoveMarker();
         capturePoints   = new CapturePointRenderer();
+        captureMarkers  = new CaptureMarkerRenderer();
         spawnGhosts     = new SpawnGhostRenderer();
         bloom           = new BloomEffect(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         formationDrag   = new FormationDragHandler();
@@ -370,6 +375,10 @@ public class GameScreen implements Screen {
      */
     private void buildUiAndInput() {
         UIFactory.disposeAll();
+        // Позначки точок тримають шрифт звідти ж, тож після disposeAll їхнє
+        // посилання вказує на звільнений об'єкт. Малюються вони не сценою, а
+        // вручну, тому перескладання сцен їх не зачіпає — треба сказати прямо.
+        if (captureMarkers != null) captureMarkers.invalidateFont();
         // В'юпорти HUD прив'язані до UIScale: одиниця сцени більша за піксель,
         // тому панелі ростуть разом із вікном, а кути лишаються кутами при
         // будь-якому співвідношенні сторін.
@@ -583,6 +592,7 @@ public class GameScreen implements Screen {
             // ── Візуал: за часом кадру, на стан гри не впливає ─────────────
             moveMarker.update(delta);
             capturePoints.update(delta);
+            captureMarkers.update(delta);
             combatManager.updateVisuals(delta);
             combatManager.updatePopups(delta);
             selectionPanel.update(delta, unitManager.getSelectedUnits());
@@ -716,9 +726,31 @@ public class GameScreen implements Screen {
         }
 
         if (!paused) {
+            // Плашки точок — ПОВЕРХ світу, але ПІД панелями: це підпис до
+            // місцевості, і закривати ним мінікарту чи панель виділення не
+            // можна. Малюється в екранних координатах, тому розмір сталий при
+            // будь-якому зумі — саме тоді, коли камера відведена, підпис і
+            // потрібен найбільше.
+            hudProj.setToOrtho2D(0, 0, hudW, hudH);
+            uiBatch.setProjectionMatrix(hudProj);
+            shapes.setProjectionMatrix(hudProj);
+            Gdx.gl.glEnable(GL20.GL_BLEND);
+            Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+            captureMarkers.draw(uiBatch, shapes, camera,
+                                sim.getCapturePoints(), localTeam, hudW, hudH);
+
             selectionPanel.draw(panelBatch, shapes, hudW, hudH);
             minimap.draw(uiBatch, shapes, camera,
                          unitManager.getAllUnits(), localTeam, hudW, hudH);
+
+            // Ті самі позначки на мінікарті. Після неї, бо лягають поверх карти;
+            // рамку мінікарта повідомляє сама — щоб два класи не рахували те
+            // саме місце незалежно й не розійшлися.
+            captureMarkers.drawOnMinimap(uiBatch, shapes,
+                                         sim.getCapturePoints(), localTeam,
+                                         minimap.mapX(), minimap.mapY(),
+                                         minimap.mapW(), minimap.mapH(),
+                                         mapWidth, mapHeight);
         }
 
         updateHudViewport(hudStage);
