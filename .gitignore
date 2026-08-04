@@ -27,3 +27,9 @@
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+
+# Звіти про падіння. Лежать у домашній теці (~/LostBatalion/crash-*.txt), але
+# стара версія лаунчера писала їх відносним шляхом, тобто в main/assets/ —
+# звідти вони потрапляли в assets.txt, у зібраний jar і в репозиторій.
+desktop_crash.txt
+crash-*.txt

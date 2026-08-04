@@ -1,0 +1,154 @@
+name: Збірка гри
+
+# Кожен коміт має давати завантажуваний файл. Тому:
+#   push у будь-яку гілку → артефакти в Actions (їх видно вкладці Actions);
+#   push у main           → ще й оновлення релізу "latest" з постійними
+#                           публічними посиланнями, для яких не треба логінитись.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:      # кнопка "Run workflow" у вкладці Actions
+
+# Потрібно рівно для кроку релізу; решта job-ів читає репозиторій.
+permissions:
+  contents: write
+
+# Нова збірка того самого ref скасовує попередню — інакше кілька комітів підряд
+# змагаються за раннери й за той самий реліз "latest".
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Корінь Gradle-проєкту — main/, а НЕ корінь репозиторію (див. CLAUDE.md).
+  BUILD_DIR: main
+
+jobs:
+
+  # ── 1. Runnable jar ───────────────────────────────────────────────────────
+  # Швидкий і найнадійніший результат: потребує встановленої Java, але
+  # збирається за хвилину й ловить помилки компіляції раніше за бандли.
+  jar:
+    name: Runnable jar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Java 21
+        uses: actions/setup-java@v4
+        with:
+          # 21, а не новіша: код компілюється з release 21, і construo-бандли
+          # несуть JRE 21. Розбіжність версій уже одного разу ламала збірку.
+          java-version: '21'
+          distribution: temurin
+          cache: gradle
+
+      # gradlew лежить у git із режимом 100644, тобто на Linux не виконуваний.
+      - name: Дозволити запуск gradlew
+        run: chmod +x gradlew
+        working-directory: ${{ env.BUILD_DIR }}
+
+      # Саме :lwjgl3:jar, а не build: модуль :android потребує Android SDK,
+      # якого на раннері немає. Конфігурація без SDK проходить, збірка — ні.
+      - name: Зібрати jar
+        run: ./gradlew :lwjgl3:jar --no-daemon --stacktrace
+        working-directory: ${{ env.BUILD_DIR }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lost-batalion-jar
+          path: ${{ env.BUILD_DIR }}/lwjgl3/build/libs/*.jar
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── 2. Нативні бандли ─────────────────────────────────────────────────────
+  # construo сам качає JDK потрібної платформи, тому всі чотири таргети
+  # збираються з одного Linux-раннера. Кожен — окремий job: якщо якийсь таргет
+  # зламається, решта все одно дадуть завантажувані файли (fail-fast: false).
+  bundles:
+    name: Бандл ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [WinX64, LinuxX64, MacX64, MacM1]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: gradle
+
+      # JDK цільової платформи важить ~180 МБ і не змінюється, поки не змінили
+      # jdkUrl у lwjgl3/build.gradle — тому ключ кешу саме по цьому файлу.
+      - name: Кеш JDK для construo
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BUILD_DIR }}/lwjgl3/build/construo/jdk
+          key: construo-jdk-${{ matrix.target }}-${{ hashFiles('main/lwjgl3/build.gradle') }}
+
+      - name: Дозволити запуск gradlew
+        run: chmod +x gradlew
+        working-directory: ${{ env.BUILD_DIR }}
+
+      - name: Зібрати бандл
+        run: ./gradlew :lwjgl3:package${{ matrix.target }} --no-daemon --stacktrace
+        working-directory: ${{ env.BUILD_DIR }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lost-batalion-${{ matrix.target }}
+          path: ${{ env.BUILD_DIR }}/lwjgl3/build/construo/dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── 3. Реліз "latest" ─────────────────────────────────────────────────────
+  # Артефакти з кроків вище живуть 30 днів і вимагають входу в GitHub. Реліз
+  # дає постійне публічне посилання, яке можна просто комусь кинути.
+  #
+  # Тільки для main і тільки для звичайного push: у pull_request з форку немає
+  # прав на запис, і крок усе одно впав би.
+  release:
+    name: Оновити реліз latest
+    needs: [jar, bundles]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Скачуємо ВСЕ, що зібрали попередні job-и, в одну теку.
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Перекласти реліз latest на цей коміт
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          ls -la dist
+
+          # Видалити й створити наново, а не дописувати: інакше тег "latest"
+          # лишався б на старому коміті, а серед файлів висіли б бандли з
+          # попередніх збірок.
+          gh release delete latest --yes --cleanup-tag || true
+
+          gh release create latest dist/* \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Остання збірка (${GITHUB_SHA:0:7})" \
+            --notes "Автоматична збірка з гілки main, коміт \`${GITHUB_SHA:0:7}\`.
+
+          | файл | для чого |
+          |---|---|
+          | \`Lost Batalion-winX64.zip\`  | Windows — розпакувати, запустити \`Lost Batalion.exe\` |
+          | \`Lost Batalion-linuxX64.zip\`| Linux |
+          | \`Lost Batalion-macX64.zip\`  | macOS на Intel |
+          | \`Lost Batalion-macM1.zip\`   | macOS на Apple Silicon |
+          | \`Lost Batalion-1.0.0.jar\`   | будь-яка ОС, потрібна встановлена Java 21 |
+
+          Бандли несуть власну Java — встановлювати нічого не треба."

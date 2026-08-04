@@ -11,12 +11,48 @@ public class Lwjgl3Launcher {
             createApplication();
         } catch (Throwable t) {
             t.printStackTrace(); // Це виведе помилку червоним у консоль
-            try {
-                // Додатково запишемо у файл в корінь проекту
-                java.nio.file.Files.write(java.nio.file.Paths.get("desktop_crash.txt"),
-                    t.toString().getBytes());
-            } catch (Exception ignored) {}
+            writeCrashReport(t);
             System.exit(1);
+        }
+    }
+
+    /**
+     * Записати звіт про падіння у ДОМАШНЮ теку користувача.
+     *
+     * <p>Раніше тут стояв відносний шлях {@code "desktop_crash.txt"}, і це була
+     * та сама пастка, що колись зі знімками екрана: робоча тека при запуску
+     * через Gradle — це {@code main/assets/}, тож звіт лягав прямо в асети.
+     * Звідти його забирав {@code generateAssetList}, вносив у {@code assets.txt}
+     * і пакував у jar — тобто стектрейс із машини розробника роз'їжджався
+     * гравцям у кожній збірці, ще й потрапляв у git.
+     *
+     * <p>{@code Gdx.files} тут використати не можна: падіння могло статись до
+     * того, як libGDX узагалі піднявся, тож шлях будується через
+     * {@code user.home} звичайним java.nio.
+     *
+     * <p>Файл із міткою часу, а не один на всі рази: друге падіння не повинно
+     * стирати сліди першого.
+     */
+    private static void writeCrashReport(Throwable t) {
+        try {
+            java.io.StringWriter sw = new java.io.StringWriter();
+            // Повний стек, а не t.toString(): раніше писався лише рядок із
+            // назвою винятку, з якого неможливо сказати, ДЕ саме впало.
+            t.printStackTrace(new java.io.PrintWriter(sw));
+
+            String stamp = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss")
+                .format(new java.util.Date());
+
+            java.nio.file.Path dir = java.nio.file.Paths
+                .get(System.getProperty("user.home"), "LostBatalion");
+            java.nio.file.Files.createDirectories(dir);
+
+            java.nio.file.Path out = dir.resolve("crash-" + stamp + ".txt");
+            java.nio.file.Files.write(out, sw.toString().getBytes("UTF-8"));
+
+            System.err.println("Звіт про падіння: " + out.toAbsolutePath());
+        } catch (Exception ignored) {
+            // Не вдалося записати — не привід падати ще раз поверх падіння.
         }
     }
 
