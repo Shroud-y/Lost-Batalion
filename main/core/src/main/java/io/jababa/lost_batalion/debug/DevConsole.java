@@ -48,6 +48,8 @@ public class DevConsole {
         void killArmy(int playerId);
         /** Оголосити переможця негайно. */
         void forceWin(int playerId);
+        /** Тактична пауза — те саме, що пробіл. */
+        void setFrozen(boolean frozen);
         /** Рядок стану матчу. */
         String describeState();
     }
@@ -63,6 +65,8 @@ public class DevConsole {
     private int historyIndex = -1;
 
     private boolean open;
+    /** Останнє відоме положення паузи — щоб `pause` без аргументу перемикав. */
+    private boolean frozenHint;
 
     public DevConsole(Stage stage, Host host) {
         this.host  = host;
@@ -184,6 +188,7 @@ public class DevConsole {
                 print("kill <0|1>         — знищити армію сторони");
                 print("win <0|1>          — оголосити переможця");
                 print("state              — стан матчу");
+                print("pause on|off       — тактична пауза (те саме, що пробіл)");
                 print("console on|off     — сама панель (для -Dlb.devCmd)");
                 break;
 
@@ -247,6 +252,14 @@ public class DevConsole {
                 host.forceWin(Integer.parseInt(a[1]));
                 print("переможця оголошено");
                 break;
+
+            case "pause": {
+                boolean want = onOff(a, frozenHint);
+                frozenHint = want;
+                host.setFrozen(want);
+                print("пауза " + (want ? "on" : "off"));
+                break;
+            }
 
             case "console":
                 // Потрібне сценарію з lb.devCmd: інакше панель неможливо ні

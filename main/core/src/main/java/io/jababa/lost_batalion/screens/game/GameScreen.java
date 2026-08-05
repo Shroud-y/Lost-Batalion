@@ -127,6 +127,21 @@ public class GameScreen implements Screen {
     private PauseOverlay pauseOverlay;
 
     /**
+     * Тактична пауза (пробіл) — симуляція завмерла, все інше живе.
+     *
+     * <p>Окремо від {@link #paused} навмисно: та пауза відкриває меню й забирає
+     * керування, а ця лишає гравцеві камеру, виділення й накази — вона потрібна
+     * саме щоб РОЗДИВИТИСЬ поле, а не щоб вийти з гри. Тримати обидва стани в
+     * одному прапорці означало б або показувати меню на пробіл, або втратити
+     * меню на ESC.
+     *
+     * <p>Тільки одиночна гра: зупинити симуляцію в lockstep можна лише для
+     * себе, а розбіжність у тому, скільки тіків виконано, — це негайний
+     * розсинхрон.
+     */
+    private boolean frozen = false;
+
+    /**
      * Чи показано зараз сторінку налаштувань замість меню паузи.
      *
      * <p>Потрібно на зміні розміру вікна: рядок роздільності показує ФАКТИЧНИЙ
@@ -138,6 +153,8 @@ public class GameScreen implements Screen {
     private Stage pauseStage;
     private Stage hudStage;
     private Label waitLabel;
+    /** Напис тактичної паузи. Показується лише коли {@link #frozen}. */
+    private Label freezeLabel;
     /** Рахунок матчу вгорі по центру: свої очки : чужі. */
     /** Очки: свої зліва (сині), ворожі справа (червоні). */
     private Label scoreSelfLabel, scoreFoeLabel;
@@ -655,6 +672,18 @@ public class GameScreen implements Screen {
         waitRow.add(waitLabel);
         hudStage.addActor(waitRow);
 
+        // Стан тактичної паузи мусить бути видно: завмерле поле без напису
+        // читається як зависання гри, а не як пауза. Той самий рядок, що й у
+        // підказки очікування — у одиночній грі вона не з'являється ніколи,
+        // тож накластись їм нема на чому.
+        freezeLabel = new Label("ПАУЗА · ПРОБІЛ — ПРОДОВЖИТИ", UIFactory.createAccentStyle());
+        freezeLabel.setVisible(frozen);
+        Table freezeRow = new Table();
+        freezeRow.setFillParent(true);
+        freezeRow.top().padTop(66f);
+        freezeRow.add(freezeLabel);
+        hudStage.addActor(freezeRow);
+
         if (isMobile) {
             formationBtn = PlateButton.action(FORMATION_OFF);
             formationBtn.setVisible(false);
@@ -706,7 +735,7 @@ public class GameScreen implements Screen {
         // У матчі вона не зупиняється навіть на паузі: суперник не зобов'язаний
         // чекати, поки хтось читає меню. Пауза лишається паузою тільки в
         // одиночній грі — там зупиняти нікого.
-        if (!paused || multiplayer) {
+        if ((!paused && !frozen) || multiplayer) {
             updateAutopilot();
             // Темп множить лише delta годинника: сам крок тіку лишається 25 мс,
             // тобто симуляція від прискорення не міняється — просто тіків за
@@ -1167,6 +1196,11 @@ public class GameScreen implements Screen {
             // нею — підсумкові числа. Прямий запис показав би екран результату,
             // якого гра насправді не вміє виробляти.
             killArmy(playerId == 0 ? 1 : 0);
+        }
+
+        @Override
+        public void setFrozen(boolean want) {
+            if (want != frozen) toggleFreeze();
         }
 
         @Override
@@ -1760,6 +1794,20 @@ public class GameScreen implements Screen {
         Gdx.gl.glDisable(GL20.GL_BLEND);
     }
 
+    /**
+     * Увімкнути або зняти тактичну паузу.
+     *
+     * <p>При знятті годинник скидається — рівно з тієї ж причини, що й у
+     * {@link #togglePause()}: час, що минув, поки поле стояло, інакше
+     * перетворився б на пачку тіків наздоганяння в перший же кадр, і матч
+     * стрибнув би вперед замість продовжитись.
+     */
+    private void toggleFreeze() {
+        frozen = !frozen;
+        if (!frozen) runner.resetClock();
+        if (freezeLabel != null) freezeLabel.setVisible(frozen);
+    }
+
     private void togglePause() {
         paused = !paused;
         pauseStage.clear();
@@ -1858,6 +1906,16 @@ public class GameScreen implements Screen {
                 // Саме T: WASD зайняті камерою, ALT — оверлеєм огляду.
                 if (k == Input.Keys.T) {
                     if (topography != null) topography.toggle();
+                    return true;
+                }
+                // Тактична пауза — тільки одиночна гра. Не те саме, що ESC:
+                // там меню, тут просто завмирає поле, а камера, виділення й
+                // накази лишаються живими. У матчі клавіша мовчить, бо
+                // зупинити симуляцію в lockstep можна тільки для себе, а це
+                // негайний розсинхрон.
+                if (k == Input.Keys.SPACE) {
+                    if (multiplayer) return false;
+                    toggleFreeze();
                     return true;
                 }
                 // Окремої клавіші «стій» тут навмисно немає: S уже зайнята рухом
