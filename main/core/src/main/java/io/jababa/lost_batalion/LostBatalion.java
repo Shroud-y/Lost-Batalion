@@ -86,7 +86,27 @@ public class LostBatalion extends Game {
             setScreen(new GameScreen(this, ScenarioCatalog.byId(
                 System.getProperty("lb.scenario"))));
         } else {
-            setScreen(new MainMenuScreen(this));
+            setScreen(openingScreen());
+        }
+    }
+
+    /**
+     * З якого екрана починати.
+     *
+     * <p>{@code -Dlb.screen=scenario} відкриває потрібний екран одразу — те саме
+     * призначення, що й у {@code lb.autoMatch}, тільки для меню: автознімок
+     * інакше бачить лише головний екран, а натиснути «Сценарії» за нього нікому.
+     * На звичайний запуск не впливає: без властивості все як було.
+     */
+    private Screen openingScreen() {
+        String want = System.getProperty("lb.screen");
+        if (want == null) return new MainMenuScreen(this);
+
+        Gdx.app.log("SCREENSHOT", "lb.screen=" + want);
+        switch (want) {
+            case "scenario": return new io.jababa.lost_batalion.screens.scenario.ScenarioScreen(this);
+            case "settings": return new io.jababa.lost_batalion.screens.SettingsScreen(this);
+            default:         return new MainMenuScreen(this);
         }
     }
 
@@ -269,6 +289,18 @@ public class LostBatalion extends Game {
         /** Нік для мультиплеєра. Запам'ятовується, щоб не вводити його щоразу. */
         public static String getNick() { return getPrefs().getString("nick", ""); }
         public static void setNick(String val) { getPrefs().putString("nick", val == null ? "" : val).flush(); }
+
+        /**
+         * Рівень супротивника в одиночній грі.
+         *
+         * <p>Зберігається ІМЕНЕМ константи, а не порядковим номером: додати між
+         * наявними рівнями ще один — річ нормальна, а ordinal після цього тихо
+         * перемкнув би всім збережений вибір на сусідній.
+         */
+        public static String getBotDifficulty() { return getPrefs().getString("botDifficulty", "NORMAL"); }
+        public static void setBotDifficulty(String val) {
+            getPrefs().putString("botDifficulty", val == null ? "NORMAL" : val).flush();
+        }
     }
 
     @Override

@@ -1,5 +1,6 @@
 package io.jababa.lost_batalion.net.kryo;
 
+import io.jababa.lost_batalion.ai.BotPlayer;
 import io.jababa.lost_batalion.net.api.MatchTransport;
 import io.jababa.lost_batalion.net.messages.DesyncAlert;
 import io.jababa.lost_batalion.net.messages.PlayerDropped;
@@ -16,21 +17,47 @@ import io.jababa.lost_batalion.net.messages.TickCommands;
  * з тим самим input delay і тим самим порядком виконання. Це не формальність:
  * гілка «а в одиночці зробимо простіше» означала б, що більшість годин гри
  * проходить по коду, який у матчі не працює, і баги вилазять лише вдвох.
+ *
+ * <p>Якщо каналу дали {@link BotPlayer}, у матчі стає ДВА учасники, і другий —
+ * бот. Для {@code MatchRunner} він неоднорідний із мережевим гравцем: ті самі
+ * {@link TickCommands}, той самий input delay, та сама черга. Саме тому бот і
+ * живе тут, а не всередині симуляції.
  */
 public class LocalMatchTransport implements MatchTransport {
 
-    private static final int[] SOLO = { 0 };
+    private static final int[] SOLO     = { 0 };
+    private static final int[] WITH_BOT = { 0, BotPlayer.PLAYER_ID };
 
     private final MatchEventQueue events = new MatchEventQueue();
+    private final BotPlayer bot;
     private boolean open = true;
 
+    /** Канал без супротивника: ворожа армія стоїть як мішені. */
+    public LocalMatchTransport() { this(null); }
+
+    /** @param bot супротивник-бот або {@code null} */
+    public LocalMatchTransport(BotPlayer bot) { this.bot = bot; }
+
     @Override public int getLocalPlayerId() { return 0; }
-    @Override public int[] getPlayerIds()   { return SOLO; }
+    @Override public int[] getPlayerIds()   { return bot == null ? SOLO : WITH_BOT; }
     @Override public boolean isHost()       { return true; }
 
+    /**
+     * Власні накази — назад собі, і РАЗОМ із ними накази бота на той самий тік.
+     *
+     * <p>Прив'язка до чужого флешу навмисна: {@code MatchRunner} чекає наказів
+     * від кожного учасника, і тік без повідомлення від бота зупинив би матч
+     * намертво. Локальний гравець шле рівно одне повідомлення на тік — отже й
+     * бот шле рівно одне, без власного лічильника, який міг би розійтись.
+     * Покоління теж береться звідси: своє воно б не встигало за ресинком.
+     */
     @Override
     public void sendCommands(TickCommands commands) {
-        if (open) events.postCommands(commands);
+        if (!open) return;
+        events.postCommands(commands);
+        if (bot != null) {
+            events.postCommands(bot.commandsFor(commands.tick, commands.generation));
+        }
     }
 
     /**

@@ -15,6 +15,7 @@ import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Scaling;
 import io.jababa.lost_batalion.LostBatalion;
+import io.jababa.lost_batalion.ai.Difficulty;
 import io.jababa.lost_batalion.screens.BaseScreen;
 import io.jababa.lost_batalion.screens.MainMenuScreen;
 import io.jababa.lost_batalion.ui.PlateButton;
@@ -73,9 +74,45 @@ public class ScenarioScreen extends BaseScreen {
         root.add(new ScreenHeader("СЦЕНАРІЇ",
                                   () -> game.setScreen(new MainMenuScreen(game))))
             .growX().row();
-        root.add(scroll).grow().padTop(26f).row();
+        root.add(buildOpponentRow()).left().padTop(18f).row();
+        root.add(scroll).grow().padTop(20f).row();
 
         stage.addActor(root);
+    }
+
+    // ── Супротивник ───────────────────────────────────────────────────────
+
+    /**
+     * Вибір рівня бота.
+     *
+     * <p>Один перемикач на екран, а не по одному в кожній картці: рівень — це
+     * властивість матчу, а не сценарію, і повторений у трьох картках він читався
+     * б як три різні налаштування.
+     *
+     * <p>Кнопка ЦИКЛІЧНА, без стрілок: у {@code main.ttf} немає ні {@code ←},
+     * ні {@code →} (DESIGN §3), а гільмети тут означали б два різні напрямки
+     * там, де дія одна. Тому напрямок не позначається взагалі — клік просто
+     * веде до наступного рівня.
+     */
+    private Actor buildOpponentRow() {
+        final PlateButton cycle = PlateButton.action(opponentLabel());
+        cycle.addListener(new ChangeListener() {
+            @Override public void changed(ChangeEvent event, Actor actor) {
+                Difficulty[] all = Difficulty.values();
+                Difficulty current = Difficulty.byName(LostBatalion.Settings.getBotDifficulty());
+                Difficulty next = all[(current.ordinal() + 1) % all.length];
+                LostBatalion.Settings.setBotDifficulty(next.name());
+                cycle.setText(opponentLabel());
+            }
+        });
+
+        Table row = new Table();
+        row.add(cycle).size(300f, 40f);
+        return row;
+    }
+
+    private static String opponentLabel() {
+        return "СУПРОТИВНИК: " + Difficulty.byName(LostBatalion.Settings.getBotDifficulty()).title;
     }
 
     // ── Картка ────────────────────────────────────────────────────────────

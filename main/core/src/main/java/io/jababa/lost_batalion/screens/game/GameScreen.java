@@ -42,6 +42,9 @@ import io.jababa.lost_batalion.net.commands.MoveLineCommand;
 import io.jababa.lost_batalion.net.commands.PathMoveCommand;
 import io.jababa.lost_batalion.net.commands.SpawnCommand;
 import io.jababa.lost_batalion.net.commands.StopCommand;
+import io.jababa.lost_batalion.ai.BotPlayer;
+import io.jababa.lost_batalion.ai.Difficulty;
+import io.jababa.lost_batalion.ai.TacticalBrain;
 import io.jababa.lost_batalion.net.kryo.LocalMatchTransport;
 import io.jababa.lost_batalion.screens.effects.BloomEffect;
 import io.jababa.lost_batalion.screens.effects.MoveMarker;
@@ -328,10 +331,21 @@ public class GameScreen implements Screen {
         sim = new GameSimulation(terrain, mapWidth, mapHeight, rngSeed, scenario.captureZones);
         sim.spawnInitialForces();
 
-        MatchTransport channel = transport != null ? transport : new LocalMatchTransport();
+        // Одиночна гра — це матч проти бота. Він підключається як другий
+        // учасник того самого lockstep-каналу (див. BotPlayer), тому нижче
+        // нічого про нього знати не треба.
+        MatchTransport channel = transport != null
+                               ? transport
+                               : new LocalMatchTransport(new BotPlayer(new TacticalBrain(
+                                     sim, Difficulty.byName(LostBatalion.Settings.getBotDifficulty()))));
         runner      = new MatchRunner(sim, channel);
         localTeam   = Team.forPlayer(runner.getLocalPlayerId());
-        multiplayer = channel.getPlayerIds().length > 1;
+
+        // Саме «є віддалена людина», а НЕ «учасників більше одного»: з ботом
+        // учасників теж двоє, але матч лишається локальним. Від цього залежить
+        // пауза — з ботом її можна й треба спиняти по-справжньому, чекати на
+        // тому боці нікому.
+        multiplayer = transport != null;
 
         unitManager      = sim.getUnitManager();
         combatManager    = sim.getCombatManager();
