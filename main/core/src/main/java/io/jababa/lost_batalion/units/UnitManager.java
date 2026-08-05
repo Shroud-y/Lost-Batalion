@@ -330,6 +330,9 @@ public class UnitManager {
             a.manualTarget = a.pendingManualTargetId < 0 ? null
                                                          : byId.get(a.pendingManualTargetId);
             a.pendingManualTargetId = -1;
+            a.aimTarget = a.pendingAimTargetId < 0 ? null
+                                                   : byId.get(a.pendingAimTargetId);
+            a.pendingAimTargetId = -1;
         }
     }
 

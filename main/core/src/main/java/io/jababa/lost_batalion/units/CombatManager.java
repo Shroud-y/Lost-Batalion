@@ -49,6 +49,17 @@ public class CombatManager {
     /** Множник захисту цілі, що стоїть у лісі. */
     private static final long FOREST_DEFENSE_BONUS = Fixed.fromFloat(1.5f);
 
+    /**
+     * Похибка наведення, яку артилерія ще вважає супроводом, а не розворотом
+     * (радіани, Q47.16). Приблизно 5.7°.
+     *
+     * <p>Помітно більша за {@code Unit.FACING_EPSILON}: та відповідає на
+     * питання «стволом рівно туди?», а тут питання інше — «чи це та сама
+     * наводка, чи я почав наводитись заново». Ціль, яка йде, зсуває пеленг
+     * щотіку; з тісним допуском гармата обнуляла б приціл вічно.
+     */
+    private static final long AIM_TRACK_TOLERANCE = Fixed.fromFloat(0.10f);
+
     private final UnitManager  unitManager;
     private final TerrainQuery terrain;
 
@@ -334,7 +345,8 @@ public class CombatManager {
             h = StateChecksum.fold(h, o.target.id);
             h = StateChecksum.fold(h, o.spreadX);
             h = StateChecksum.fold(h, o.spreadY);
-            h = StateChecksum.fold(h, o.perpOffset);
+            h = StateChecksum.fold(h, o.offX);
+            h = StateChecksum.fold(h, o.offY);
         }
 
         h = StateChecksum.fold(h, groups.size);
@@ -386,7 +398,8 @@ public class CombatManager {
             out.writeLong(o.spreadY);
             out.writeLong(o.finalX);
             out.writeLong(o.finalY);
-            out.writeLong(o.perpOffset);
+            out.writeLong(o.offX);
+            out.writeLong(o.offY);
             out.writeInt(groups.indexOf(o.group, true));
         }
 
@@ -436,7 +449,7 @@ public class CombatManager {
             Unit target = unitManager.findById(in.readInt());
             long sx = in.readLong(), sy = in.readLong();
             long fx = in.readLong(), fy = in.readLong();
-            long perp = in.readLong();
+            long ox = in.readLong(), oy = in.readLong();
             int  gi   = in.readInt();
 
             AttackGroup g = gi >= 0 && gi < groupCount ? restored[gi] : null;
@@ -444,7 +457,7 @@ public class CombatManager {
             // тоді наказ просто не відновлюється, а не валить весь ресинк.
             if (att == null || target == null || g == null) continue;
 
-            AttackOrder o = new AttackOrder(att, target, sx, sy, fx, fy, perp, g);
+            AttackOrder o = new AttackOrder(att, target, sx, sy, fx, fy, ox, oy, g);
             orders.add(o);
             g.addOrder(o);
         }
@@ -475,11 +488,37 @@ public class CombatManager {
     // ── Приватне ─────────────────────────────────────────────────────────
 
     /**
-     * Наказ атаки без шикування: усі йдуть просто на ціль.
+     * Інтервал між сусідами в шерензі наступу (Q47.16).
      *
-     * <p>Групу лишаємо, бо від неї залежать знімок і checksum, але одразу в
-     * фазі {@code ADVANCE} — етап SPREAD пропускається повністю. perpOffset
-     * нульовий, тож кожен юніт цілиться в саму ціль, а не в своє місце в лінії.
+     * <p>Мусить бути БІЛЬШИМ за суму хітбоксів (8+8=16), інакше розштовхування
+     * почне працювати проти наказу: юніт іде на своє місце, його відпихають,
+     * він іде знову. Те саме число, що й {@code UnitManager.GRID_SPACING}, і з
+     * тієї самої причини.
+     */
+    private static final long CHARGE_LANE_SPACING = Fixed.fromInt(22);
+
+    /**
+     * Наказ атаки: шеренга лицем до цілі.
+     *
+     * <p>Етап SPREAD пропускається — група одразу в фазі {@code ADVANCE}, тобто
+     * йде вперед, а не шикується на місці. Але йде вона РОЗГОРНУТО: кожен наказ
+     * несе свій {@code perpOffset}, зсув упоперек осі наступу.
+     *
+     * <p><b>Раніше {@code perpOffset} був нульовим для всіх, і це і була та
+     * «купа, що стоїть на місці».</b> {@code processOrder} у фазі ADVANCE
+     * щотіку веде юніта в {@code ціль − напрямок×дистанція + перпендикуляр×зсув};
+     * при нульовому зсуві це ОДНА точка на десятьох. Вони налазили один на
+     * одного, {@link UnitSeparation} розпихував їх, наказ гнав назад — і група
+     * товклася на місці, замість того щоб стріляти. Ненульові зсуви розводять
+     * її по дузі навколо цілі, і кожен стоїть там, звідки бачить і б'є.
+     *
+     * <p>Вісь наступу береться від ЦЕНТРУ групи, а не від кожного окремо:
+     * інакше двоє, що підходять з різних боків, порахували б перпендикуляр у
+     * протилежні боки й помінялись би місцями посеред атаки.
+     *
+     * <p>Місця роздаються за поточним положенням уздовж шеренги — хто лівіший,
+     * той і стає лівіше. Без цього наказ змушував би половину групи
+     * перетинати іншу половину, щоб зайняти призначене місце.
      */
     private void orderDirectCharge(Array<Unit> units, Unit enemy) {
         int count = units.size;
@@ -488,20 +527,67 @@ public class CombatManager {
         AttackGroup group = new AttackGroup(enemy);
         group.phase = AttackGroup.Phase.ADVANCE;
 
-        for (int i = 0; i < count; i++) {
-            Unit u = units.get(i);
+        // Центр групи — цілочисельне середнє, тобто однакове в усіх клієнтах.
+        long cx = 0, cy = 0;
+        for (int i = 0; i < count; i++) { cx += units.get(i).x; cy += units.get(i).y; }
+        cx /= count; cy /= count;
+
+        long len = Fixed.normalize(enemy.x - cx, enemy.y - cy, dir);
+        long nx = len == 0 ? Fixed.ONE : dir[0];
+        long ny = len == 0 ? 0         : dir[1];
+        long px = -ny, py = nx;
+
+        int[] slots = laneOrder(units, cx, cy, px, py);
+
+        for (int slot = 0; slot < count; slot++) {
+            Unit u = units.get(slots[slot]);
+            // (slot − (count−1)/2) у Fixed: шеренга центрується на осі.
+            long lane = Fixed.mul(Fixed.fromInt(slot * 2 - (count - 1)) >> 1,
+                                  CHARGE_LANE_SPACING);
             long stopDist = standoff(u, enemy);
-            long len = Fixed.normalize(enemy.x - u.x, enemy.y - u.y, dir);
-            long nx = len == 0 ? Fixed.ONE : dir[0];
-            long ny = len == 0 ? 0         : dir[1];
-            long fx = enemy.x - Fixed.mul(nx, stopDist);
-            long fy = enemy.y - Fixed.mul(ny, stopDist);
+            long fx = enemy.x - Fixed.mul(nx, stopDist) + Fixed.mul(px, lane);
+            long fy = enemy.y - Fixed.mul(ny, stopDist) + Fixed.mul(py, lane);
             u.moveTo(fx, fy);
-            AttackOrder order = new AttackOrder(u, enemy, fx, fy, fx, fy, 0L, group);
+            AttackOrder order = new AttackOrder(u, enemy, fx, fy, fx, fy,
+                                                fx - enemy.x, fy - enemy.y, group);
             orders.add(order);
             group.addOrder(order);
         }
         groups.add(group);
+    }
+
+    /**
+     * Порядок юнітів уздовж шеренги: за проєкцією на її вісь, id як розв'язувач
+     * нічиїх.
+     *
+     * <p>Сортування вставками — не з міркувань швидкості (груп більших за
+     * десяток не буває), а тому що воно стабільне й написане тут же: результат
+     * не залежить ні від реалізації {@code Arrays.sort} у конкретній JVM, ні від
+     * порядку, в якому юніти потрапили в масив.
+     */
+    private int[] laneOrder(Array<Unit> units, long cx, long cy, long px, long py) {
+        int n = units.size;
+        int[] idx = new int[n];
+        long[] key = new long[n];
+        for (int i = 0; i < n; i++) {
+            Unit u = units.get(i);
+            idx[i] = i;
+            key[i] = Fixed.mul(u.x - cx, px) + Fixed.mul(u.y - cy, py);
+        }
+        for (int i = 1; i < n; i++) {
+            int  ji = idx[i];
+            long jk = key[i];
+            int  k  = i - 1;
+            while (k >= 0 && (key[k] > jk
+                              || (key[k] == jk && units.get(idx[k]).id > units.get(ji).id))) {
+                idx[k + 1] = idx[k];
+                key[k + 1] = key[k];
+                k--;
+            }
+            idx[k + 1] = ji;
+            key[k + 1] = jk;
+        }
+        return idx;
     }
 
     private void processOrder(AttackOrder order) {
@@ -530,15 +616,10 @@ public class CombatManager {
                 break;
             }
             case ADVANCE: {
-                long len = Fixed.normalize(target.x - attacker.x, target.y - attacker.y, dir);
-                if (len != 0) {
-                    long fnx = dir[0], fny = dir[1];
-                    long fpx = -fny, fpy = fnx;
-                    long reach = standoff(attacker, target);
-                    attacker.moveTo(
-                        target.x - Fixed.mul(fnx, reach) + Fixed.mul(fpx, order.perpOffset),
-                        target.y - Fixed.mul(fny, reach) + Fixed.mul(fpy, order.perpOffset));
-                }
+                // Своє місце в строю, зсунуте разом із ціллю. Осі тут уже не
+                // рахуються: вони пораховані один раз у orderDirectCharge, і
+                // перерахунок щотіку крутив би шеренгу навколо цілі.
+                attacker.moveTo(target.x + order.offX, target.y + order.offY);
                 break;
             }
         }
@@ -727,15 +808,23 @@ public class CombatManager {
                 target = manual;
             } else {
                 approachTarget(art, manual);
-                art.aimTicks = 0;
+                aimAt(art, null);
                 return;
             }
         } else {
             art.manualTarget = null; // ціль мертва — наказ вичерпано
-            target = findNearestArtilleryTarget(art, all);
+            // Спершу ТА САМА ціль, що й минулого тіку, якщо вона ще ціль.
+            // Пошук найближчого — лише коли триматись більше нема за кого.
+            target = stillValidTarget(art, art.aimTarget);
+            if (target == null) target = findNearestArtilleryTarget(art, all);
         }
 
-        if (target == null) { art.aimTicks = 0; return; }
+        // Зміна цілі скидає приціл: 3 с наведення належать конкретному ворогу,
+        // і доводити чужий приціл до пострілу означало б стріляти по тому, в
+        // кого не цілились.
+        aimAt(art, target);
+
+        if (target == null) return;
 
         // Поки їде — розворотом керує рух, прицілитись у цей момент не можна.
         if (art.isMoving()) { art.aimTicks = 0; return; }
@@ -744,7 +833,15 @@ public class CombatManager {
         // готовності вже стояти лицем. Прицілювання ж починається лише з
         // тіку, коли гармата довернулась: інакше 3 с прицілу спливали б під
         // час самого розвороту, і постріл ішов би боком.
-        if (!art.turnToward(target.x, target.y)) { art.aimTicks = 0; return; }
+        //
+        // Але «довернулась» тут ширше, ніж isFacingPoint: та відповідає з
+        // допуском 0.02 рад, а ціль, яка просто ЙДЕ, зсуває пеленг щотіку —
+        // близька мішень на 60 од/с дає 0.03 рад за тік. За старим правилом
+        // приціл обнулявся щотіку супроводу, і гармата не стріляла по нікому,
+        // хто рухається. Тому скидає лише СПРАВЖНІЙ розворот.
+        long error = art.facingErrorTo(target.x, target.y);
+        art.turnToward(target.x, target.y);
+        if (error > AIM_TRACK_TOLERANCE) { art.aimTicks = 0; return; }
 
         if (!art.isReady()) { art.aimTicks = 0; return; }
 
@@ -753,6 +850,32 @@ public class CombatManager {
             fireArtillery(art, target);
             art.aimTicks = 0;
         }
+    }
+
+    /**
+     * Поставити гармату на ціль. Зміна цілі обнуляє приціл.
+     *
+     * <p>Єдине місце, де {@code aimTarget} присвоюється, — щоб не з'явилось
+     * другого шляху, який міняє ціль і забуває скинути таймер.
+     */
+    private static void aimAt(Artillery art, Unit target) {
+        if (art.aimTarget == target) return;
+        art.aimTarget = target;
+        art.aimTicks  = 0;
+    }
+
+    /**
+     * Чи можна далі працювати по цій самій цілі: жива, в дальності, видима
+     * самій гарматі.
+     *
+     * @return та сама ціль або {@code null}, якщо вона вибула
+     */
+    private Unit stillValidTarget(Artillery art, Unit target) {
+        if (target == null || !target.alive) return null;
+        long rangeSq = Fixed.mul(Artillery.STRIKE_RANGE, Artillery.STRIKE_RANGE);
+        if (Fixed.dstSq(art.x, art.y, target.x, target.y) > rangeSq) return null;
+        if (!canSee(art, target)) return null;
+        return target;
     }
 
     /**
@@ -819,7 +942,12 @@ public class CombatManager {
     private void fireArtillery(Artillery art, Unit target) {
         // Остання перевірка напрямку перед пострілом: сюди можна дійти лише
         // через прицілювання, але ціль за ці 3 с могла обійти гармату збоку.
-        if (!art.isFacingPoint(target.x, target.y)) { art.turnToward(target.x, target.y); return; }
+        // Допуск той самий, що й у супроводі — інакше постріл зривався б від
+        // піврадуса розбіжності, а приціл усе одно обнулявся б викликачем.
+        if (art.facingErrorTo(target.x, target.y) > AIM_TRACK_TOLERANCE) {
+            art.turnToward(target.x, target.y);
+            return;
+        }
 
         // І перевірка очей: за час прицілювання ціль могла зайти в ліс або за
         // пагорб. Стріляти по тому, чого гармата вже не бачить, вона не має.
@@ -1012,24 +1140,27 @@ public class CombatManager {
 
     private static class AttackOrder {
         final Unit att, target;
-        final long spreadX, spreadY, finalX, finalY, perpOffset;
+        final long spreadX, spreadY, finalX, finalY;
+        /**
+         * Місце цього юніта ВІДНОСНО ЦІЛІ, у світових одиницях.
+         *
+         * <p>Раніше тут лежав скаляр {@code perpOffset}, а {@code processOrder}
+         * щотіку заново виводив вісь наступу з напрямку «цей юніт → ціль». При
+         * нульовому зсуві це працювало, бо всі йшли в одну точку; з ненульовим —
+         * розвалюється: юніт, який став збоку, бачить ціль під іншим кутом,
+         * перераховує перпендикуляр у новий бік і їде далі вбік. Тобто шеренга
+         * оберталася б навколо цілі замість того, щоб стояти.
+         *
+         * <p>Готовий зсув знімає це питання цілком: місце в строю визначається
+         * один раз, у момент наказу, і далі просто їде за ціллю.
+         */
+        final long offX, offY;
         final AttackGroup group;
 
-        /** Відновлення зі знімка: perpOffset уже пораховано, рахувати його вдруге не можна. */
-        AttackOrder(Unit a, Unit t, long sx, long sy, long fx, long fy, long perp, AttackGroup g) {
+        AttackOrder(Unit a, Unit t, long sx, long sy, long fx, long fy,
+                    long ox, long oy, AttackGroup g) {
             att = a; target = t; spreadX = sx; spreadY = sy; finalX = fx; finalY = fy; group = g;
-            perpOffset = perp;
-        }
-
-        AttackOrder(Unit a, Unit t, long sx, long sy, long fx, long fy, AttackGroup g) {
-            att = a; target = t; spreadX = sx; spreadY = sy; finalX = fx; finalY = fy; group = g;
-
-            long[] d = new long[2];
-            long len = Fixed.normalize(t.x - a.x, t.y - a.y, d);
-            long nx = len == 0 ? Fixed.ONE : d[0];
-            long ny = len == 0 ? 0         : d[1];
-            long px = -ny, py = nx;
-            perpOffset = Fixed.mul(fx - t.x, px) + Fixed.mul(fy - t.y, py);
+            offX = ox; offY = oy;
         }
     }
 }

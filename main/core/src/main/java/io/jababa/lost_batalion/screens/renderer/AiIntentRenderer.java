@@ -104,8 +104,12 @@ public class AiIntentRenderer {
         Color c = team == Team.PLAYER ? UIFactory.COLOR_TEAM_SELF : UIFactory.COLOR_TEAM_FOE;
 
         String state = brain.isCommitted() ? "ІДЕ" : "ЗБИРАЄТЬСЯ";
+        // Поріг береться з БЮДЖЕТУ головного загону, а не з рівня: у бота тепер
+        // кілька напрямків, і кожен має свій — показувати спільне число рівня
+        // означало б порівнювати купу не з тим, чого вона чекає.
         String text = brain.getLevel().title + " · " + state
-                    + " · купа " + brain.getCluster() + "/" + brain.getLevel().massThreshold
+                    + " · купа " + brain.getCluster() + "/" + brain.getMassGoal()
+                    + " · напрямків " + brain.getFrontCount()
                     + (brain.getObjective() == null ? "" : " · ціль " + brain.getObjective().name);
 
         // Колір ставиться ДО setText: GlyphLayout запікає його в момент верстки,

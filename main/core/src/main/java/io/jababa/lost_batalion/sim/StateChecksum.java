@@ -126,6 +126,9 @@ public final class StateChecksum {
                 timers = mix(timers, a.reloadTicks);
                 // Ручна ціль теж стан: від неї залежить, куди полетить наступний снаряд.
                 timers = mix(timers, a.manualTarget == null ? -1 : a.manualTarget.id);
+                // Ціль наведення теж стан: вона тримається між тіками, і саме
+                // від неї залежить, куди полетить наступний снаряд.
+                timers = mix(timers, a.aimTarget == null ? -1 : a.aimTarget.id);
             }
 
             visible = mix(visible, u.id);

@@ -168,6 +168,21 @@ public abstract class Unit {
         return turnTo(Fixed.atan2(dy, dx));
     }
 
+    /**
+     * Наскільки юніт зараз не туди дивиться, у радіанах (Q47.16, завжди &ge; 0).
+     *
+     * <p>Потрібно тому, що {@link #isFacingPoint} відповідає «так/ні» з дуже
+     * тісним допуском, а є питання третього роду: чи це СПРАВЖНІЙ розворот, чи
+     * лише супровід цілі, що йде. Для артилерії різниця вирішальна — розворот
+     * скидає приціл, супровід не має.
+     */
+    public long facingErrorTo(long tx, long ty) {
+        if (!hasFacing()) return 0;
+        long dx = tx - x, dy = ty - y;
+        if (dx == 0 && dy == 0) return 0;
+        return Fixed.abs(Fixed.angleDiff(Fixed.atan2(dy, dx), facing));
+    }
+
     /** Чи дивиться юніт на точку зараз (без спроби довернутись). */
     public boolean isFacingPoint(long tx, long ty) {
         if (!hasFacing()) return true;

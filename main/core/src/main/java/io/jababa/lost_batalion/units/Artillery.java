@@ -90,6 +90,24 @@ public class Artillery extends Unit {
      */
     public Unit manualTarget = null;
 
+    /**
+     * Ціль, по якій гармата наводиться ЗАРАЗ — ручна чи знайдена самостійно.
+     *
+     * <p>Стан, а не тимчасова змінна, і саме в цьому суть. Раніше авто-ціль
+     * обиралась щотіку заново — найближчий видимий ворог. Коли перед гарматою
+     * стоїть НАТОВП, «найближчий» міняється щокроку: сусіди перетасовуються на
+     * частки одиниці, ціль перестрибує між ними, гармату щоразу доводиться
+     * доводити, а {@code turnToward} на час доводки скидає {@link #aimTicks}.
+     * Три секунди прицілу не набирались НІКОЛИ — гармата в натовпі не стріляла
+     * взагалі, тоді як по одинокій цілі працювала нормально.
+     *
+     * <p>Тепер ціль тримається, поки вона жива, видима і в дальності. Це ж поле
+     * відповідає на друге питання — «чи це та сама ціль, у яку я цілився
+     * минулого тіку»: {@code aimTicks} скидається на будь-якій ЗМІНІ, інакше
+     * гармата доводила б чужий приціл і стріляла по тому, в кого не цілилась.
+     */
+    public Unit aimTarget = null;
+
     public Artillery(Team team, long rawX, long rawY) {
         super(team);
         maxHp               = ART_HP;
@@ -116,6 +134,8 @@ public class Artillery extends Unit {
      * розв'язується другим проходом у {@code SimulationSnapshot}.
      */
     public int pendingManualTargetId = -1;
+    /** Те саме для {@link #aimTarget}: посилання розв'язується другим проходом. */
+    public int pendingAimTargetId = -1;
 
     @Override
     public void writeSnapshot(java.io.DataOutputStream out) throws java.io.IOException {
@@ -123,6 +143,7 @@ public class Artillery extends Unit {
         out.writeInt(reloadTicks);
         out.writeInt(aimTicks);
         out.writeInt(manualTarget == null ? -1 : manualTarget.id);
+        out.writeInt(aimTarget    == null ? -1 : aimTarget.id);
     }
 
     @Override
@@ -132,6 +153,8 @@ public class Artillery extends Unit {
         aimTicks    = in.readInt();
         manualTarget = null;
         pendingManualTargetId = in.readInt();
+        aimTarget = null;
+        pendingAimTargetId = in.readInt();
     }
 
     // ── Віддача (чистий візуал) ──────────────────────────────────────────
