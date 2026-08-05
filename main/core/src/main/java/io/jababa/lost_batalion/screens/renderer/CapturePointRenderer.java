@@ -32,6 +32,15 @@ public class CapturePointRenderer {
     /** Товщина межі у світових одиницях. */
     private static final float EDGE_THICKNESS = 2.5f;
 
+    /**
+     * Мінімальний косинус півкута для мітри — межа довжини «вуса».
+     *
+     * <p>Мітра росте як {@code 1/cos(півкут)}, тож на дуже гострому куті вершина
+     * обвідки полетіла б на пів карти. 0.25 обмежує виліт чотирма товщинами;
+     * на реальних зонах (кути близькі до прямих) обмеження не вмикається взагалі.
+     */
+    private static final float MITER_MIN_COS = 0.25f;
+
     /** Прозорість заливки всередині зони. */
     private static final float FILL_ALPHA         = 0.14f;
     /** Захоплена зона — трохи щільніша: це вже стан, а не заклик. */
@@ -108,33 +117,81 @@ public class CapturePointRenderer {
         shapes.triangle(c[0], c[1], c[4], c[5], c[6], c[7]);
 
         shapes.setColor(rgb[0], rgb[1], rgb[2], edgeAlpha);
-        for (int i = 0; i < 4; i++) {
-            int j = (i + 1) & 3;
-            edge(shapes, c[i * 2], c[i * 2 + 1], c[j * 2], c[j * 2 + 1]);
-        }
+        outline(shapes, c);
     }
 
     /**
-     * Відрізок межі як витягнутий чотирикутник.
+     * Замкнена обвідка чотирикутника смугою сталої ширини.
      *
      * <p>Не {@code ShapeType.Line}: та має товщину в один піксель ЕКРАНА, тобто
      * на віддаленій камері межа зникала б, а на наближеній лишалась ниткою.
      * Тут товщина у світових одиницях і масштабується разом із картою.
+     *
+     * <p><b>Кути зшиваються МІТРОЮ, і це головне.</b> Раніше кожне ребро
+     * малювалось окремим прямокутником, зміщеним по власній нормалі, тобто з
+     * тупим торцем рівно у вершині. Два такі торці не сходяться: на зовнішньому
+     * боці кута лишався клин-виїмка (його й видно як «V» на кутах зони), а на
+     * внутрішньому прямокутники налазили один на одного і давали пляму подвійної
+     * альфи. Тепер вершина обвідки зміщується по БІСЕКТРИСІ кута на
+     * {@code h / cos(півкут)} — рівно туди, де перетинаються краї обох смуг, —
+     * тож сусідні ребра мають спільне ребро без щілини й без нахлесту.
      */
-    private void edge(ShapeRenderer shapes, float x0, float y0, float x1, float y1) {
-        float dx = x1 - x0, dy = y1 - y0;
-        float len = (float) Math.sqrt(dx * dx + dy * dy);
-        if (len <= 0.0001f) return;
+    private void outline(ShapeRenderer shapes, float[] c) {
+        // Нормалі ребер i -> i+1. Напрямок узгоджений (усі повернуті в один бік
+        // відносно обходу), тому додавання сусідніх дає саме бісектрису.
+        for (int i = 0; i < 4; i++) {
+            int j = (i + 1) & 3;
+            float dx = c[j * 2] - c[i * 2], dy = c[j * 2 + 1] - c[i * 2 + 1];
+            float len = (float) Math.sqrt(dx * dx + dy * dy);
+            if (len <= 0.0001f) return;   // вироджена зона — малювати нічого
+            edgeNormal[i * 2]     = -dy / len;
+            edgeNormal[i * 2 + 1] =  dx / len;
+        }
 
         float h = EDGE_THICKNESS / 2f;
-        float px = -dy / len * h, py = dx / len * h;
+        for (int i = 0; i < 4; i++) {
+            int prev = (i + 3) & 3;
+            float ax = edgeNormal[prev * 2], ay = edgeNormal[prev * 2 + 1];
+            float bx = edgeNormal[i * 2],    by = edgeNormal[i * 2 + 1];
 
-        shapes.triangle(x0 + px, y0 + py, x0 - px, y0 - py, x1 - px, y1 - py);
-        shapes.triangle(x0 + px, y0 + py, x1 - px, y1 - py, x1 + px, y1 + py);
+            float mx = ax + bx, my = ay + by;
+            float len2 = mx * mx + my * my;
+
+            float sx, sy;
+            if (len2 < 1e-6f) {
+                // Ребра склались назад у себе: бісектриси не існує, лишаємо
+                // звичайний перпендикуляр.
+                sx = bx * h; sy = by * h;
+            } else {
+                float inv = 1f / (float) Math.sqrt(len2);
+                mx *= inv; my *= inv;
+                // Проєкція бісектриси на нормаль ребра — це cos півкута.
+                // Обмеження знизу тримає вус скінченним на гострих кутах.
+                float cos   = Math.max(mx * bx + my * by, MITER_MIN_COS);
+                float scale = h / cos;
+                sx = mx * scale; sy = my * scale;
+            }
+
+            outerBuf[i * 2] = c[i * 2] + sx; outerBuf[i * 2 + 1] = c[i * 2 + 1] + sy;
+            innerBuf[i * 2] = c[i * 2] - sx; innerBuf[i * 2 + 1] = c[i * 2 + 1] - sy;
+        }
+
+        for (int i = 0; i < 4; i++) {
+            int j = (i + 1) & 3;
+            shapes.triangle(outerBuf[i * 2], outerBuf[i * 2 + 1],
+                            innerBuf[i * 2], innerBuf[i * 2 + 1],
+                            innerBuf[j * 2], innerBuf[j * 2 + 1]);
+            shapes.triangle(outerBuf[i * 2], outerBuf[i * 2 + 1],
+                            innerBuf[j * 2], innerBuf[j * 2 + 1],
+                            outerBuf[j * 2], outerBuf[j * 2 + 1]);
+        }
     }
 
-    /** Буфер вершин у пікселях. Поле, а не локальна змінна — рендер щокадровий. */
+    /** Буфери. Поля, а не локальні змінні — рендер щокадровий. */
     private final float[] cornerBuf = new float[8];
+    private final float[] edgeNormal = new float[8];
+    private final float[] outerBuf  = new float[8];
+    private final float[] innerBuf  = new float[8];
 
     private float[] corners(CapturePoint p) {
         for (int i = 0; i < 8; i++) cornerBuf[i] = Fixed.toFloat(p.corners[i]);

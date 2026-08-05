@@ -147,6 +147,22 @@ public class GameScreen implements Screen {
     private Stage modalStage;
     private DesyncOverlay desyncOverlay;
     private MatchNoticeOverlay noticeOverlay;
+    private MatchResultOverlay resultOverlay;
+
+    /**
+     * Скільки тримати поле бою відкритим після того, як результат вирішено.
+     *
+     * <p>Останній залп і остання смерть стаються рівно на тому тіку, на якому
+     * матч закінчується. Показати підсумок тут же означає затулити затемненням
+     * єдиний кадр, заради якого гравець дограв. Ввід при цьому глушиться
+     * НЕГАЙНО — інакше ці секунди виглядали б як гра, що триває, і накази
+     * йшли б у порожнечу.
+     */
+    private static final float RESULT_DELAY = 1.2f;
+
+    /** Матч дограно: далі лише показ підсумку. Ставиться на тому ж кадрі, що й глушіння вводу. */
+    private boolean matchOver;
+    private float   resultDelay = RESULT_DELAY;
 
     /**
      * Скільки часу тримати на екрані повідомлення про вибуття суперника.
@@ -403,11 +419,11 @@ public class GameScreen implements Screen {
         // Вікно десинхрону перехоплює ввід першим: поки стан розійшовся,
         // командувати військами не можна взагалі.
         mux.addProcessor(new InputAdapter() {
-            @Override public boolean touchDown(int x, int y, int p, int b) { if (!modalActive()) return false; return modalStage.touchDown(x,y,p,b); }
-            @Override public boolean touchUp  (int x, int y, int p, int b) { if (!modalActive()) return false; return modalStage.touchUp  (x,y,p,b); }
-            @Override public boolean touchDragged(int x, int y, int p)     { if (!modalActive()) return false; return modalStage.touchDragged(x,y,p); }
-            @Override public boolean mouseMoved  (int x, int y)             { if (!modalActive()) return false; return modalStage.mouseMoved(x,y); }
-            @Override public boolean keyDown(int k)                         { return modalActive(); }
+            @Override public boolean touchDown(int x, int y, int p, int b) { if (!inputSealed()) return false; modalStage.touchDown(x,y,p,b); return true; }
+            @Override public boolean touchUp  (int x, int y, int p, int b) { if (!inputSealed()) return false; modalStage.touchUp  (x,y,p,b); return true; }
+            @Override public boolean touchDragged(int x, int y, int p)     { if (!inputSealed()) return false; modalStage.touchDragged(x,y,p); return true; }
+            @Override public boolean mouseMoved  (int x, int y)             { if (!inputSealed()) return false; modalStage.mouseMoved(x,y); return true; }
+            @Override public boolean keyDown(int k)                         { return inputSealed(); }
         });
         mux.addProcessor(new InputAdapter() {
             @Override public boolean touchDown(int x, int y, int p, int b) { if (!paused) return false; return pauseStage.touchDown(x,y,p,b); }
@@ -585,7 +601,7 @@ public class GameScreen implements Screen {
         }
         if (dropNoticeTimer > 0f) dropNoticeTimer -= delta;
         updateWaitHint();
-        updateModals();
+        updateModals(delta);
         if (disposed) return;
 
         if (!paused) {
@@ -773,7 +789,21 @@ public class GameScreen implements Screen {
         }
     }
 
-    private boolean modalActive() { return desyncOverlay != null || noticeOverlay != null; }
+    private boolean modalActive() {
+        return desyncOverlay != null || noticeOverlay != null || resultOverlay != null;
+    }
+
+    /**
+     * Чи ввід у поле бою вже закритий.
+     *
+     * <p>Ширше за {@link #modalActive()} рівно на {@link #RESULT_DELAY}: у ці
+     * секунди вікна ще немає, але матч уже вирішено, і команди приймати нема
+     * куди. Той, хто ловить ввід, мусить його ПОГЛИНУТИ, а не просто не
+     * обробити: порожня {@code modalStage} повертає {@code false}, і наказ
+     * провалився б далі по мультиплексору просто тому, що вікно ще не встигло
+     * з'явитись.
+     */
+    private boolean inputSealed() { return modalActive() || matchOver; }
 
     /**
      * Показати або сховати вікно розсинхронізації.
@@ -782,11 +812,20 @@ public class GameScreen implements Screen {
      * книгу хешів, і десинхрону більше немає. Тому стан вікна не тримається
      * окремим прапорцем — він завжди виводиться з цикла.
      */
-    private void updateModals() {
+    private void updateModals(float delta) {
         // Дограний матч важливіший за все інше: далі вже нічого не станеться,
         // і пропонувати синхронізацію чи повідомляти про вихід суперника після
         // оголошеного результату — значить сперечатись із власним же вікном.
         if (sim.getVictory().isFinished()) {
+            // Прапорець ставиться раніше за вікно: він і глушить ввід на час
+            // паузи. Пауза ж відлічується екранним часом, а не тіками — це
+            // показ, а не симуляція, і сповільнений тик мережі не мусить
+            // розтягувати її на пів хвилини.
+            matchOver = true;
+            if (resultDelay > 0f) {
+                resultDelay -= delta;
+                if (resultDelay > 0f) return;
+            }
             showResultIfNeeded();
             return;
         }
@@ -823,69 +862,92 @@ public class GameScreen implements Screen {
      * ніж лишити гравця ганяти війська по порожній карті.
      */
     /**
-     * Вікно результату матчу.
+     * Підсумок матчу.
      *
-     * <p>Свідомо те саме {@link MatchNoticeOverlay}, що й для обірваного зв'язку:
-     * стан однаковий — матч скінчився, лишився один вихід у меню. Окремий клас
-     * відрізнявся б від нього лише рядками.
+     * <p>Раніше це показувало те саме {@link MatchNoticeOverlay}, що й обірваний
+     * зв'язок, з поясненням «стан однаковий». Стан і справді однаковий, а от
+     * подія — ні: обрив це аварія, а кінець матчу те, заради чого гравець грав.
+     * Тому підсумок переїхав у {@link MatchResultOverlay}, а вікно-повідомлення
+     * лишилось аварії.
      */
     private void showResultIfNeeded() {
-        if (noticeOverlay != null) return;
+        if (noticeOverlay != null || resultOverlay != null) return;
 
         VictoryTracker v = sim.getVictory();
-        Team mine = Team.forPlayer(runner.getLocalPlayerId());
+        int  me   = runner.getLocalPlayerId();
+        int  foe  = me == 0 ? 1 : 0;
+        Team mine = Team.forPlayer(me);
 
-        String title;
-        if (v.isDraw())                 title = "НІЧИЯ";
-        else if (v.getWinner() == mine) title = "ПЕРЕМОГА";
-        else                            title = "ПОРАЗКА";
+        MatchResultOverlay.Summary s = new MatchResultOverlay.Summary();
+        if (v.isDraw())                 s.title = "НІЧИЯ";
+        else if (v.getWinner() == mine) s.title = "ПЕРЕМОГА";
+        else                            s.title = "ПОРАЗКА";
 
-        String cause;
         switch (v.getReason()) {
             case ANNIHILATION:
-                cause = v.isDraw()
-                      ? "Обидві армії знищено, і відновити їх нема за що."
-                      : (v.getWinner() == mine
-                         ? "Супротивник втратив армію й не має золота на нову."
-                         : "Армію втрачено, і золота на нову не лишилось.");
+                s.cause = v.isDraw()
+                        ? "Обидві армії знищено, і відновити їх нема за що."
+                        : (v.getWinner() == mine
+                           ? "Супротивник втратив армію й не має золота на нову."
+                           : "Армію втрачено, і золота на нову не лишилось.");
                 break;
             case POINTS:
             default:
-                cause = "Рахунок за утримання сіл добіг " + VictoryTracker.TARGET + ".";
+                s.cause = "Рахунок за утримання стратегічних точок добіг "
+                        + VictoryTracker.TARGET + ".";
                 break;
         }
 
-        int me  = runner.getLocalPlayerId();
-        int foe = me == 0 ? 1 : 0;
-        String text = cause + "\n\nОчки: " + v.score(me) + " : " + v.score(foe);
+        s.scoreSelf       = v.score(me);
+        s.scoreFoe        = v.score(foe);
+        s.durationSeconds = v.durationSeconds();
+        s.pointsHeld      = v.pointsHeldAtEnd(me);
+        s.pointsTotal     = sim.getCapturePoints() == null ? 0 : sim.getCapturePoints().getPoints().size;
+        s.unitsLost       = v.unitsLost(me);
+        s.unitsKilled     = v.unitsKilled(me);
 
         modalStage.clear();
         desyncOverlay = null;
-        noticeOverlay = new MatchNoticeOverlay(modalStage, title, text, this::leaveToMenu);
+        resultOverlay = new MatchResultOverlay(modalStage, s, this::leaveToMenu);
     }
 
     private void showNoticeIfNeeded() {
-        if (noticeOverlay != null) return;
+        if (noticeOverlay != null || resultOverlay != null) return;
 
-        String title, text;
+        // Обрив власного каналу — аварія: показуємо повідомлення.
         if (runner.isDisconnected()) {
             String reason = runner.getDisconnectReason();
-            title = "Зв'язок втрачено";
-            text  = (reason == null ? "З'єднання обірвалось." : reason)
-                  + " Матч продовжити не можна.";
-        } else {
-            // Вихід суперника — це виграний матч, і сказати так чесніше, ніж
-            // «грати нема з ким». Формально те саме оголосить і VictoryTracker
-            // (армія вибулого гине, спрацьовує анігіляція), але він перевіряє
-            // умову раз на секунду й до цього вікна не встигає.
-            title = "ПЕРЕМОГА";
-            text  = String.join(", ", runner.getDroppedNicks())
-                  + " вийшов з матчу. Поле лишилось за вами.";
+            String text = (reason == null ? "З'єднання обірвалось." : reason)
+                        + " Матч продовжити не можна.";
+            modalStage.clear();
+            desyncOverlay = null;
+            noticeOverlay = new MatchNoticeOverlay(
+                modalStage, "Зв'язок втрачено", text, this::leaveToMenu);
+            return;
         }
+
+        // Вихід суперника — це виграний матч, і показати його треба тим самим
+        // підсумком, що й дограну перемогу: інакше та сама подія має два різні
+        // обличчя залежно від того, здався суперник чи програв.
+        //
+        // Статистики тут НЕМАЄ: {@code VictoryTracker} формально оголосить те
+        // саме (армія вибулого гине, спрацьовує анігіляція), але він перевіряє
+        // умову раз на період і до цього моменту не встигає, тобто підсумкові
+        // числа ще не зняті. Показати замість них нулі означало б збрехати.
+        int me  = runner.getLocalPlayerId();
+        int foe = me == 0 ? 1 : 0;
+
+        MatchResultOverlay.Summary s = new MatchResultOverlay.Summary();
+        s.title      = "ПЕРЕМОГА";
+        s.cause      = String.join(", ", runner.getDroppedNicks())
+                     + " вийшов з матчу. Поле лишилось за вами.";
+        s.scoreSelf  = sim.getVictory().score(me);
+        s.scoreFoe   = sim.getVictory().score(foe);
+        s.statsKnown = false;
 
         modalStage.clear();
         desyncOverlay = null;
-        noticeOverlay = new MatchNoticeOverlay(modalStage, title, text, this::leaveToMenu);
+        resultOverlay = new MatchResultOverlay(modalStage, s, this::leaveToMenu);
     }
 
     private void leaveToMenu() {
@@ -897,7 +959,10 @@ public class GameScreen implements Screen {
 
         // Про десинхрон і про обрив говорять модальні вікна — дублювати їх
         // підказкою під ними немає сенсу.
-        if (modalActive() || runner.isDesynced() || runner.isDisconnected()) {
+        // Саме inputSealed, а не modalActive: у паузу перед підсумком вікна ще
+        // немає, і підказка про очікування мережі блимнула б поверх матчу, який
+        // уже скінчився.
+        if (inputSealed() || runner.isDesynced() || runner.isDisconnected()) {
             waitLabel.setVisible(false);
             return;
         }

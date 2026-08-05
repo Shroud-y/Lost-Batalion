@@ -13,7 +13,8 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 
 /**
- * Умова перемоги: очки за утримання сіл плюс поразка за втрату армії.
+ * Умова перемоги: очки за утримання стратегічних точок плюс поразка за втрату
+ * армії.
  *
  * <h3>Очки</h3>
  * Раз на {@link #SCORE_PERIOD_TICKS} кожна сторона отримує
@@ -21,7 +22,7 @@ import java.io.IOException;
  * набрав {@link #TARGET} — виграв.
  *
  * <p>Модель саме накопичувальна, а не «захопи всі три й тримай»: на карті з
- * трьома селами друге перетворює матч на один вирішальний ривок, тоді як очки
+ * трьома точками друга перетворює матч на один вирішальний ривок, тоді як очки
  * дають перевазі накопичуватись, а відставанню — лишати шанс відіграти.
  *
  * <h3>Анігіляція</h3>
@@ -93,8 +94,29 @@ public class VictoryTracker {
 
     private Reason reason = Reason.NONE;
 
-    /** Тік, на якому все вирішилось. Показувати не обов'язково, але в логах видно. */
+    /** Тік, на якому все вирішилось. Дає й тривалість матчу для екрана результату. */
     private int decidedTick;
+
+    /**
+     * Підсумок матчу: втрачено юнітів і утримувано точок на мить фіксації.
+     *
+     * <h4>Чому знімається один раз, а не накопичується</h4>
+     * Лічильник, який тікав би на кожній смерті, довелось би чіпляти до
+     * єдиного місця загибелі юніта — а таких місць три ({@code takeDamage},
+     * {@code takeDamageWithTerrain}, {@code GameSimulation.removeArmy}), і
+     * кожне нове стало б четвертим, про яке легко забути. Натомість тут
+     * рахується скан по списку в мить {@link #finish}: {@code allUnits} під час
+     * матчу НЕ чиститься (мертві лишаються з {@code alive == false}), а знімок
+     * пише всіх юнітів без фільтра по {@code alive}, тож і ресинк історію
+     * втрат не з'їдає.
+     *
+     * <h4>Чому точки треба саме зберегти</h4>
+     * Симуляція після перемоги не спиняється (див. вище), і точки далі
+     * переходять з рук у руки. Живий {@code countOwned} на екрані результату
+     * показував би, як підсумок матчу повзе вже після його кінця.
+     */
+    private final int[] lost       = { 0, 0 };
+    private final int[] ownedAtEnd = { 0, 0 };
 
     /**
      * Найдешевший юніт у каталозі.
@@ -138,9 +160,9 @@ public class VictoryTracker {
                              ? 0
                              : points.countOwned(Team.forPlayer(playerId)) * POINTS_PER_CAPTURE;
         }
-        if (checkPoints(tickNumber)) return;
+        if (checkPoints(tickNumber, units, points)) return;
 
-        checkAnnihilation(units, economy, queue, tickNumber);
+        checkAnnihilation(units, economy, queue, tickNumber, points);
     }
 
     /**
@@ -151,17 +173,17 @@ public class VictoryTracker {
      * внічию. Віддати перемогу гравцеві з меншим номером було б простіше, але
      * хост вигравав би нічиї самим фактом того, що він хост.
      */
-    private boolean checkPoints(int tickNumber) {
+    private boolean checkPoints(int tickNumber, Array<Unit> units, CaptureManager points) {
         boolean first  = score[0] >= TARGET;
         boolean second = score[1] >= TARGET;
         if (!first && !second) return false;
 
         if (first && second) {
-            if      (score[0] > score[1]) finish(Team.forPlayer(0), Reason.POINTS, tickNumber);
-            else if (score[1] > score[0]) finish(Team.forPlayer(1), Reason.POINTS, tickNumber);
-            else                          finish(null,              Reason.POINTS, tickNumber);
+            if      (score[0] > score[1]) finish(Team.forPlayer(0), Reason.POINTS, tickNumber, units, points);
+            else if (score[1] > score[0]) finish(Team.forPlayer(1), Reason.POINTS, tickNumber, units, points);
+            else                          finish(null,              Reason.POINTS, tickNumber, units, points);
         } else {
-            finish(Team.forPlayer(first ? 0 : 1), Reason.POINTS, tickNumber);
+            finish(Team.forPlayer(first ? 0 : 1), Reason.POINTS, tickNumber, units, points);
         }
         return true;
     }
@@ -176,15 +198,15 @@ public class VictoryTracker {
      * checksum і в знімку.
      */
     private void checkAnnihilation(Array<Unit> units, Economy economy,
-                                   SpawnQueue queue, int tickNumber) {
+                                   SpawnQueue queue, int tickNumber, CaptureManager points) {
         boolean[] doomed = new boolean[score.length];
         for (int playerId = 0; playerId < doomed.length; playerId++) {
             doomed[playerId] = isDoomed(Team.forPlayer(playerId), playerId, units, economy, queue);
         }
 
-        if (doomed[0] && doomed[1])      finish(null, Reason.ANNIHILATION, tickNumber);
-        else if (doomed[0])              finish(Team.forPlayer(1), Reason.ANNIHILATION, tickNumber);
-        else if (doomed[1])              finish(Team.forPlayer(0), Reason.ANNIHILATION, tickNumber);
+        if (doomed[0] && doomed[1])      finish(null, Reason.ANNIHILATION, tickNumber, units, points);
+        else if (doomed[0])              finish(Team.forPlayer(1), Reason.ANNIHILATION, tickNumber, units, points);
+        else if (doomed[1])              finish(Team.forPlayer(0), Reason.ANNIHILATION, tickNumber, units, points);
     }
 
     /** Чи в сторони не лишилось ні армії, ні замовлень, ні грошей на нові. */
@@ -205,11 +227,25 @@ public class VictoryTracker {
         return economy == null || economy.gold(playerId) < CHEAPEST_UNIT;
     }
 
-    private void finish(Team victor, Reason why, int tickNumber) {
+    private void finish(Team victor, Reason why, int tickNumber,
+                        Array<Unit> units, CaptureManager points) {
         winner      = victor;
         reason      = why;
         finished    = true;
         decidedTick = tickNumber;
+
+        for (int playerId = 0; playerId < lost.length; playerId++) {
+            Team team = Team.forPlayer(playerId);
+            int fallen = 0;
+            if (units != null) {
+                for (int i = 0; i < units.size; i++) {
+                    Unit u = units.get(i);
+                    if (u != null && !u.alive && u.team == team) fallen++;
+                }
+            }
+            lost[playerId]       = fallen;
+            ownedAtEnd[playerId] = points == null ? 0 : points.countOwned(team);
+        }
     }
 
     // ── Читання ───────────────────────────────────────────────────────────
@@ -230,6 +266,31 @@ public class VictoryTracker {
     public Reason getReason()  { return reason; }
     public int getDecidedTick() { return decidedTick; }
 
+    /** Скільки юнітів сторона втратила за матч. Осмислене лише після завершення. */
+    public int unitsLost(int playerId) {
+        return playerId >= 0 && playerId < lost.length ? lost[playerId] : 0;
+    }
+
+    /**
+     * Скільки юнітів сторона знищила.
+     *
+     * <p>Окремого поля немає навмисно: у матчі рівно дві сторони, тож знищене
+     * однією — це втрачене другою. Другий лічильник міг би розійтися з першим
+     * лише через помилку, і тоді екран результату показував би два числа, які
+     * суперечать одне одному.
+     */
+    public int unitsKilled(int playerId) {
+        return unitsLost(playerId == 0 ? 1 : 0);
+    }
+
+    /** Скільки точок сторона утримувала в мить завершення матчу. */
+    public int pointsHeldAtEnd(int playerId) {
+        return playerId >= 0 && playerId < ownedAtEnd.length ? ownedAtEnd[playerId] : 0;
+    }
+
+    /** Тривалість матчу в секундах — по тіку, а не по годиннику: тіки в усіх однакові. */
+    public int durationSeconds() { return decidedTick / TickRate.TICKS_PER_SECOND; }
+
     /** Тіків до наступного нарахування — для смужки в HUD. */
     public int ticksToScore() { return SCORE_PERIOD_TICKS - sinceScore; }
 
@@ -242,7 +303,12 @@ public class VictoryTracker {
         // Саме ordinal, а не сам об'єкт: null-переможець (нічия або матч, що
         // триває) мусить давати стале число, а не хеш посилання.
         h = StateChecksum.fold(h, winner == null ? -1 : winner.playerId());
-        return StateChecksum.fold(h, reason.ordinal());
+        h = StateChecksum.fold(h, reason.ordinal());
+        // Підсумок теж у checksum: його бачить гравець, і розійтись у числі
+        // втрат двом клієнтам не можна.
+        for (int i = 0; i < lost.length; i++)       h = StateChecksum.fold(h, lost[i]);
+        for (int i = 0; i < ownedAtEnd.length; i++) h = StateChecksum.fold(h, ownedAtEnd[i]);
+        return h;
     }
 
     public void writeSnapshot(DataOutputStream out) throws IOException {
@@ -253,6 +319,8 @@ public class VictoryTracker {
         out.writeInt(winner == null ? -1 : winner.playerId());
         out.writeInt(reason.ordinal());
         out.writeInt(decidedTick);
+        for (int i = 0; i < lost.length; i++)       out.writeInt(lost[i]);
+        for (int i = 0; i < ownedAtEnd.length; i++) out.writeInt(ownedAtEnd[i]);
     }
 
     public void readSnapshot(DataInputStream in) throws IOException {
@@ -267,5 +335,7 @@ public class VictoryTracker {
         winner      = victor < 0 ? null : Team.forPlayer(victor);
         reason      = Reason.values()[in.readInt()];
         decidedTick = in.readInt();
+        for (int i = 0; i < lost.length; i++)       lost[i]       = in.readInt();
+        for (int i = 0; i < ownedAtEnd.length; i++) ownedAtEnd[i] = in.readInt();
     }
 }

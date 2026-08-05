@@ -348,6 +348,40 @@ public final class UIFactory {
         return label(SIZE_NOTE + 1, 0f, NOTE);
     }
 
+    // ── Екран результату матчу (DESIGN §9) ────────────────────────────────
+
+    /**
+     * Слово результату — найбільший напис у грі після назви.
+     *
+     * <p>Розрідження 8 замість звичних 2–3: це єдиний напис, який стоїть сам
+     * на порожній смузі, і щільний набір читався б там як заголовок діалогу, а
+     * не як оголошення. Анімувати сам крок не можна — він запікається в
+     * {@code xadvance} при генерації (DESIGN §6), тож поява йде прозорістю.
+     */
+    public static Label.LabelStyle createResultTitleStyle(Color color) {
+        return label(SIZE_GAME_TITLE, 8f, color);
+    }
+
+    /** Число рахунку на екрані результату. Золоте, як і в HUD. */
+    public static Label.LabelStyle createResultScoreStyle() {
+        return label(SIZE_GAME_TITLE - 8, 2f, COLOR_ACCENT);
+    }
+
+    /** Число в колонці статистики. */
+    public static Label.LabelStyle createResultStatStyle() {
+        return label(SIZE_SCREEN_TITLE - 6, 1f, COLOR_TEXT);
+    }
+
+    /** Підпис під числом статистики. */
+    public static Label.LabelStyle createResultCaptionStyle() {
+        return label(SIZE_NOTE, 1.5f, NOTE);
+    }
+
+    /** Причина завершення — один рядок під заголовком. */
+    public static Label.LabelStyle createResultCauseStyle() {
+        return label(SIZE_NOTE + 1, 1f, NOTE);
+    }
+
     private static Label.LabelStyle label(int size, float spacing, Color color) {
         Label.LabelStyle s = new Label.LabelStyle();
         s.font = generateTintableFont(size, spacing);
