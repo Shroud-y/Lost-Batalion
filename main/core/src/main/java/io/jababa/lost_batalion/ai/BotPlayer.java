@@ -54,7 +54,16 @@ public class BotPlayer {
      */
     public static final int DECISION_PERIOD_TICKS = 4;
 
-    private final BotBrain brain;
+    /**
+     * Не {@code final}: налагоджувальна консоль міняє рівень супротивника
+     * посеред матчу, а рівень — це властивість мозку. Підміна безпечна саме
+     * тому, що ритм тримає гравець, а не мозок: новий мозок відповість на
+     * наступний же запит, і жодного тіку без повідомлення не буде.
+     */
+    private BotBrain brain;
+
+    public void setBrain(BotBrain next) { if (next != null) brain = next; }
+    public BotBrain getBrain() { return brain; }
 
     /**
      * Тік останнього роздумування.

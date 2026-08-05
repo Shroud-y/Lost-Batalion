@@ -42,6 +42,11 @@ import io.jababa.lost_batalion.net.commands.MoveLineCommand;
 import io.jababa.lost_batalion.net.commands.PathMoveCommand;
 import io.jababa.lost_batalion.net.commands.SpawnCommand;
 import io.jababa.lost_batalion.net.commands.StopCommand;
+import io.jababa.lost_batalion.debug.DevConsole;
+import io.jababa.lost_batalion.debug.DownloadsGag;
+import io.jababa.lost_batalion.debug.DevView;
+import io.jababa.lost_batalion.screens.renderer.AiIntentRenderer;
+import io.jababa.lost_batalion.units.UnitType;
 import io.jababa.lost_batalion.ai.BotPlayer;
 import io.jababa.lost_batalion.ai.Difficulty;
 import io.jababa.lost_batalion.ai.TacticalBrain;
@@ -166,6 +171,34 @@ public class GameScreen implements Screen {
     /** Матч дограно: далі лише показ підсумку. Ставиться на тому ж кадрі, що й глушіння вводу. */
     private boolean matchOver;
     private float   resultDelay = RESULT_DELAY;
+
+    // ── Налагодження (лише одиночна гра) ──────────────────────────────────
+
+    private Stage      devStage;
+    private DevConsole devConsole;
+    /** ЖАРТ, тимчасове — див. {@link DownloadsGag}. Прибрати разом із класом. */
+    private DownloadsGag gag;
+    private AiIntentRenderer aiIntent;
+
+    /** Бот, який грає за суперника. Тримаємо, щоб міняти йому рівень на льоту. */
+    private BotPlayer   foeBot;
+    private TacticalBrain foeBrain;
+
+    /**
+     * Мозок, який грає ЗА ГРАВЦЯ, коли ввімкнено {@code aivsai}.
+     *
+     * <p>Окремого каналу для нього не треба: {@code MatchRunner.issue} штампує
+     * накази локальним playerId, тобто мозок, чиї накази туди подають, стає
+     * гравцем за цим комп'ютером. Той самий прийом, яким бот тестується проти
+     * бота, тільки всередині гри.
+     */
+    private TacticalBrain autopilot;
+    private int autopilotNextTick;
+
+    /** Сценарій із {@code lb.devCmd} виконується один раз на матч, а не на кожен resize. */
+    private boolean devScriptDone;
+
+    private boolean devOpen() { return devConsole != null && devConsole.isOpen(); }
 
     /**
      * Скільки часу тримати на екрані повідомлення про вибуття суперника.
@@ -334,10 +367,15 @@ public class GameScreen implements Screen {
         // Одиночна гра — це матч проти бота. Він підключається як другий
         // учасник того самого lockstep-каналу (див. BotPlayer), тому нижче
         // нічого про нього знати не треба.
-        MatchTransport channel = transport != null
-                               ? transport
-                               : new LocalMatchTransport(new BotPlayer(new TacticalBrain(
-                                     sim, Difficulty.byName(LostBatalion.Settings.getBotDifficulty()))));
+        MatchTransport channel;
+        if (transport != null) {
+            channel = transport;
+        } else {
+            foeBrain = new TacticalBrain(sim, BotPlayer.PLAYER_ID,
+                           Difficulty.byName(LostBatalion.Settings.getBotDifficulty()));
+            foeBot   = new BotPlayer(foeBrain);
+            channel  = new LocalMatchTransport(foeBot);
+        }
         runner      = new MatchRunner(sim, channel);
         localTeam   = Team.forPlayer(runner.getLocalPlayerId());
 
@@ -429,7 +467,64 @@ public class GameScreen implements Screen {
         modalStage = new Stage(UIScale.createViewport(), batch);
         updateHudViewport(modalStage);
 
+        // Консоль існує ТІЛЬКИ в одиночній грі: майже все, що вона вміє, — це
+        // пряма зміна стану повз накази або зміна темпу годинника, і те, і те
+        // в lockstep розводить клієнтів на першому ж тіку.
+        if (!multiplayer) {
+            devStage = new Stage(UIScale.createViewport(), batch);
+            updateHudViewport(devStage);
+            devConsole = new DevConsole(devStage, new DevHost());
+
+            // Сценарій із командного рядка: -Dlb.devCmd="aivsai hard hard;reveal on"
+            String script = System.getProperty("lb.devCmd");
+            if (script != null && !devScriptDone) {
+                devScriptDone = true;   // buildUI перескладає сцену на кожен resize
+                devConsole.execute(script);
+            }
+        }
+
         InputMultiplexer mux = new InputMultiplexer();
+
+        // Консоль — найперша: поки вона відкрита, набране мусить іти в неї, а
+        // не перетворюватись на гарячі клавіші гри.
+        mux.addProcessor(new InputAdapter() {
+            @Override public boolean keyDown(int k) {
+                if (devConsole == null) return false;
+                if (k == Input.Keys.GRAVE) { devConsole.toggle(devStage); return true; }
+                if (devConsole.isOpen() && k == Input.Keys.ESCAPE) {
+                    devConsole.close(devStage);
+                    return true;
+                }
+                return false;
+            }
+
+            /**
+             * Символ клавіші-перемикача поглинається ЗАВЖДИ.
+             *
+             * <p>{@code keyDown} і {@code keyTyped} — дві різні події однієї
+             * клавіші. Перша перемикає консоль, друга приходить слідом уже з
+             * символом, і на той момент консоль відкрита — тож тильда сама себе
+             * вписувала в поле вводу. Гасити її лише «одразу після перемикання»
+             * було б крихко (порядок подій у різних бекендах не гарантований),
+             * а зробити ` частиною команди все одно нема потреби.
+             */
+            @Override public boolean keyTyped(char c) {
+                if (devConsole == null) return false;
+                return c == '`' || c == '~';
+            }
+        });
+        // Поки консоль відкрита — увесь ввід їй, і ПОГЛИНАЄТЬСЯ незалежно від
+        // того, чи сцена його обробила: інакше набране «speed 4» просочилось би
+        // у гру гарячими клавішами, а порожній клік ганяв би камеру.
+        mux.addProcessor(new InputAdapter() {
+            @Override public boolean keyDown(int k)   { if (!devOpen()) return false; devStage.keyDown(k);   return true; }
+            @Override public boolean keyUp(int k)     { if (!devOpen()) return false; devStage.keyUp(k);     return true; }
+            @Override public boolean keyTyped(char c) { if (!devOpen()) return false; devStage.keyTyped(c);  return true; }
+            @Override public boolean touchDown(int x, int y, int p, int b) { if (!devOpen()) return false; devStage.touchDown(x,y,p,b); return true; }
+            @Override public boolean touchUp  (int x, int y, int p, int b) { if (!devOpen()) return false; devStage.touchUp  (x,y,p,b); return true; }
+            @Override public boolean touchDragged(int x, int y, int p)     { if (!devOpen()) return false; devStage.touchDragged(x,y,p); return true; }
+            @Override public boolean scrolled(float ax, float ay)          { return devOpen(); }
+        });
         // Вікно десинхрону перехоплює ввід першим: поки стан розійшовся,
         // командувати військами не можна взагалі.
         mux.addProcessor(new InputAdapter() {
@@ -597,7 +692,9 @@ public class GameScreen implements Screen {
         if (!paused) {
             handleCameraMovement(delta);
 
-            if (curvedFormation.isDrawing() && Gdx.input.isButtonPressed(Input.Buttons.LEFT)) {
+            // Опитування миші — так само, як WASD: мультиплексор його не гасить.
+            if (!devOpen() && curvedFormation.isDrawing()
+                && Gdx.input.isButtonPressed(Input.Buttons.LEFT)) {
                 Vector3 cur = camera.unproject(new Vector3(Gdx.input.getX(), Gdx.input.getY(), 0));
                 curvedFormation.tickCurrentCursor(cur.x, cur.y);
             }
@@ -610,7 +707,13 @@ public class GameScreen implements Screen {
         // чекати, поки хтось читає меню. Пауза лишається паузою тільки в
         // одиночній грі — там зупиняти нікого.
         if (!paused || multiplayer) {
-            runner.update(delta);
+            updateAutopilot();
+            // Темп множить лише delta годинника: сам крок тіку лишається 25 мс,
+            // тобто симуляція від прискорення не міняється — просто тіків за
+            // секунду виходить більше. У мережевому матчі множник завжди 1:
+            // консолі там немає, а другий бік крутить свій годинник у реальному
+            // часі й чекав би на нас.
+            runner.update(multiplayer ? delta : delta * DevView.timeScale);
             renderAlpha = runner.getRenderAlpha();
         }
         if (dropNoticeTimer > 0f) dropNoticeTimer -= delta;
@@ -720,8 +823,10 @@ public class GameScreen implements Screen {
         if (!paused) {
             shapes.setProjectionMatrix(camera.combined);
             fogRenderer.render(shapes, camera, unitManager.getAllUnits());
-            boolean altHeld = Gdx.input.isKeyPressed(Input.Keys.ALT_LEFT)
-                || Gdx.input.isKeyPressed(Input.Keys.ALT_RIGHT);
+            // Теж опитування — теж мусить мовчати під консоллю (див. handleCameraMovement).
+            boolean altHeld = !devOpen()
+                && (Gdx.input.isKeyPressed(Input.Keys.ALT_LEFT)
+                 || Gdx.input.isKeyPressed(Input.Keys.ALT_RIGHT));
             if (altHeld) {
                 // Один центр, дві різні відповіді: віяло — «куди звідси взагалі
                 // можна дивитись» (лише рельєф, без дальності), кільця — «і
@@ -730,6 +835,16 @@ public class GameScreen implements Screen {
                                                      cursorWorldX, cursorWorldY);
                 sightRings.render(shapes, camera, unitManager.getSelectedUnits(),
                                   cursorWorldX, cursorWorldY);
+            }
+
+            // Наміри ботів — поверх поля, під HUD.
+            if (DevView.showAiIntent) {
+                ensureIntentRenderer();
+                if (autopilot == null && foeBrain != null) {
+                    aiIntent.clear();
+                    aiIntent.watch(foeBrain);
+                }
+                aiIntent.render(camera, unitManager.getAllUnits());
             }
         }
 
@@ -800,6 +915,17 @@ public class GameScreen implements Screen {
             modalStage.act(delta);
             if (disposed) return;
             modalStage.draw();
+        }
+
+        // Консоль — над усім, зокрема над вікном результату: якщо матч уже
+        // дограно, а перевірити щось треба, іншого шляху немає.
+        // Малюємо не лише при відкритій консолі: картинка-жарт живе кілька
+        // секунд і після того, як консоль закрили.
+        if (devStage != null && (devOpen() || (gag != null && gag.isActive()))) {
+            updateHudViewport(devStage);
+            devStage.act(delta);
+            if (disposed) return;
+            devStage.draw();
         }
     }
 
@@ -962,6 +1088,142 @@ public class GameScreen implements Screen {
         modalStage.clear();
         desyncOverlay = null;
         resultOverlay = new MatchResultOverlay(modalStage, s, this::leaveToMenu);
+    }
+
+    // ── Налагоджувальна консоль ───────────────────────────────────────────
+
+    /**
+     * Дії консолі над матчем.
+     *
+     * <p>Усе тут міняє стан симуляції НАПРЯМУ, повз накази. В одиночній грі це
+     * безпечно рівно тому, що симуляція одна; саме через це консоль і не
+     * створюється в мережевому матчі.
+     */
+    private class DevHost implements DevConsole.Host {
+
+        @Override
+        public void setAutoPlay(boolean enabled, String selfLevel, String foeLevel) {
+            if (!enabled) {
+                autopilot = null;
+                if (aiIntent != null) { aiIntent.clear(); aiIntent.watch(foeBrain); }
+                return;
+            }
+            // ЖАРТ, тимчасове: картинка з Завантажень. Прибрати разом із полем
+            // gag і класом DownloadsGag — більше від нього нічого не залежить.
+            if (gag == null) gag = new DownloadsGag();
+            devConsole.print(gag.show(devStage));
+
+            int me = runner.getLocalPlayerId();
+            autopilot = new TacticalBrain(sim, me, Difficulty.byName(selfLevel));
+            unitManager.clearSelection();   // виділення під автопілотом лише заважає
+            setFoeLevel(foeLevel);
+            ensureIntentRenderer();
+            aiIntent.clear();
+            aiIntent.watch(autopilot);
+            aiIntent.watch(foeBrain);
+        }
+
+        @Override
+        public void setFoeLevel(String level) {
+            if (foeBot == null || level == null) return;
+            foeBrain = new TacticalBrain(sim, BotPlayer.PLAYER_ID, Difficulty.byName(level));
+            foeBot.setBrain(foeBrain);
+            if (aiIntent != null) { aiIntent.clear(); aiIntent.watch(autopilot); aiIntent.watch(foeBrain); }
+        }
+
+        @Override
+        public void setGold(int playerId, int amount) {
+            // refund, а не окремий сетер: додавання золота вже існує як частина
+            // скасування замовлення, і другий шлях до того самого поля — це
+            // другий шлях щось у ньому зламати.
+            sim.getEconomy().refund(playerId, amount);
+        }
+
+        @Override
+        public void spawn(int playerId, String type, int count) {
+            UnitType want = parseType(type);
+            if (want == null) { devConsole.print("тип: inf | art | cav"); return; }
+
+            // Виходить із власного кута й іде в центр карти — там його видно.
+            long tx = Fixed.fromFloat(sim.getMapWidth()  * 0.5f);
+            long ty = Fixed.fromFloat(sim.getMapHeight() * 0.5f);
+            for (int i = 0; i < Math.max(1, count); i++) {
+                // Спершу віддати ціну, потім замовити: spawnUnit списує золото,
+                // і без цього консольний спавн тихо з'їдав би скарбницю.
+                sim.getEconomy().refund(playerId, want.cost);
+                sim.spawnUnit(playerId, want.ordinal(), tx, ty);
+            }
+        }
+
+        @Override
+        public void killArmy(int playerId) {
+            sim.removeArmy(Team.forPlayer(playerId));
+        }
+
+        @Override
+        public void forceWin(int playerId) {
+            // Через знищення армії суперника, а не через запис у VictoryTracker:
+            // так спрацьовує та сама умова, що й у справжньому матчі, і разом із
+            // нею — підсумкові числа. Прямий запис показав би екран результату,
+            // якого гра насправді не вміє виробляти.
+            killArmy(playerId == 0 ? 1 : 0);
+        }
+
+        @Override
+        public String describeState() {
+            int me = runner.getLocalPlayerId(), foe = me == 0 ? 1 : 0;
+            int armyMe = 0, armyFoe = 0;
+            Array<Unit> all = unitManager.getAllUnits();
+            for (int i = 0; i < all.size; i++) {
+                Unit u = all.get(i);
+                if (!u.alive) continue;
+                if (u.team == localTeam) armyMe++; else armyFoe++;
+            }
+            VictoryTracker v = sim.getVictory();
+            return "тік " + sim.getTickNumber() + " · темп ×" + DevView.timeScale
+                 + "\nви: золото " + sim.getEconomy().gold(me) + ", армія " + armyMe
+                 + ", точок " + sim.getCapturePoints().countOwned(localTeam)
+                 + ", очок " + v.score(me)
+                 + "\nсуперник (" + (foeBrain == null ? "—" : foeBrain.getLevel().title)
+                 + "): золото " + sim.getEconomy().gold(foe) + ", армія " + armyFoe
+                 + ", точок " + sim.getCapturePoints().countOwned(
+                       localTeam == Team.PLAYER ? Team.ENEMY : Team.PLAYER)
+                 + ", очок " + v.score(foe);
+        }
+
+        private UnitType parseType(String s) {
+            if (s == null) return null;
+            switch (s.toLowerCase()) {
+                case "inf": case "піхота":  return UnitType.INFANTRY;
+                case "art": case "гармата": return UnitType.ARTILLERY;
+                case "cav": case "кіннота": return UnitType.CAVALRY;
+                default: return null;
+            }
+        }
+    }
+
+    private void ensureIntentRenderer() {
+        if (aiIntent == null) aiIntent = new AiIntentRenderer();
+    }
+
+    /**
+     * Хід автопілота.
+     *
+     * <p>Питається з тим самим періодом, що й бот, і подає накази через
+     * {@code runner.issue} — тобто рівно тим шляхом, яким їх подає рука гравця.
+     * Ніякого окремого каналу: якби автопілот ходив повз буфер наказів, він
+     * грав би в іншу гру, ніж та, яку ми спостерігаємо.
+     */
+    private void updateAutopilot() {
+        if (autopilot == null || sim.getVictory().isFinished()) return;
+
+        int tick = sim.getTickNumber();
+        if (tick < autopilotNextTick) return;
+        autopilotNextTick = tick + Math.max(1, autopilot.decisionPeriodTicks());
+
+        java.util.List<io.jababa.lost_batalion.net.commands.GameCommand> cmds = autopilot.think(tick);
+        if (cmds == null) return;
+        for (int i = 0; i < cmds.size(); i++) runner.issue(cmds.get(i));
     }
 
     private void leaveToMenu() {
@@ -1346,6 +1608,12 @@ public class GameScreen implements Screen {
         if (pauseStage      != null) pauseStage.dispose();
         if (hudStage        != null) hudStage.dispose();
         if (modalStage      != null) modalStage.dispose();
+        if (devStage        != null) devStage.dispose();
+        if (aiIntent        != null) aiIntent.dispose();
+        if (gag             != null) gag.dispose();
+        // Прапорці налагодження статичні: без скидання ввімкнений reveal
+        // пережив би вихід у меню й наступний матч почався б без туману.
+        DevView.reset();
         if (terrainMask     != null) terrainMask.dispose();
         if (forestTooltip   != null) forestTooltip.dispose();
         if (unitRenderer    != null) unitRenderer.dispose();
@@ -1454,6 +1722,13 @@ public class GameScreen implements Screen {
     }
 
     private void handleCameraMovement(float delta) {
+        // Камера читає клавіатуру ОПИТУВАННЯМ, а не подіями, тому мультиплексор
+        // її не затуляє: `Gdx.input.isKeyPressed` не знає нічого про те, хто там
+        // поглинув подію. Через це WASD їздив камерою навіть із відкритою
+        // консоллю — набираючи «aivsai», гравець одночасно летів по карті.
+        // Будь-який новий опитуваний ввід мусить питати те саме.
+        if (devOpen()) return;
+
         float speed = CAM_SPEED * camera.zoom;
         if (Gdx.input.isKeyPressed(Input.Keys.W)||Gdx.input.isKeyPressed(Input.Keys.UP))    camera.position.y+=speed*delta;
         if (Gdx.input.isKeyPressed(Input.Keys.S)||Gdx.input.isKeyPressed(Input.Keys.DOWN))  camera.position.y-=speed*delta;

@@ -9,6 +9,7 @@ import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.utils.ObjectMap;
+import io.jababa.lost_batalion.debug.DevView;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.units.Artillery;
@@ -42,7 +43,7 @@ public class UnitRenderer {
     public void drawSprites(SpriteBatch batch, Iterable<Unit> units, float alpha, Team viewer) {
         for (Unit u : units) {
             if (!u.alive) continue;
-            if (!u.isVisibleTo(viewer)) continue; // туман
+            if (!DevView.visible(u, viewer)) continue; // туман (dev: reveal)
 
             Texture tex = getTexture(u);
             // getSizePx(), а НЕ getSize(): друге повертає fixed-point long, і
@@ -86,7 +87,7 @@ public class UnitRenderer {
         shapes.begin(ShapeRenderer.ShapeType.Line);
         for (Unit u : units) {
             if (!u.alive) continue;
-            if (!u.isVisibleTo(viewer)) continue;
+            if (!DevView.visible(u, viewer)) continue;
             if (u.selected) drawOutline(u, alpha);
         }
         shapes.end();
@@ -94,7 +95,7 @@ public class UnitRenderer {
         shapes.begin(ShapeRenderer.ShapeType.Filled);
         for (Unit u : units) {
             if (!u.alive) continue;
-            if (!u.isVisibleTo(viewer)) continue;
+            if (!DevView.visible(u, viewer)) continue;
             // Ціле здоров'я бара не малює: смужка має привертати увагу до того,
             // хто вже отримав по зубах, а не стояти над кожним юнітом завжди.
             // Порівняння цілих (Q47.16), а не hpRatio(): ratio міг би дати 1.0

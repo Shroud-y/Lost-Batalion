@@ -6,6 +6,7 @@ import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.utils.IntArray;
+import io.jababa.lost_batalion.debug.DevView;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.terrain.TerrainQuery;
 import io.jababa.lost_batalion.terrain.TerrainType;
@@ -115,7 +116,7 @@ public class TerrainIndicatorRenderer {
         for (Unit u : units) {
             if (!u.alive) continue;
             if (!u.selected) continue;            // тільки виділені
-            if (!u.isVisibleTo(viewer)) continue; // туман
+            if (!DevView.visible(u, viewer)) continue; // туман (dev: reveal)
 
             collect(u, terrain);
             if (scratch.size == 0) continue;

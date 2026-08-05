@@ -10,6 +10,7 @@ import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.Disposable;
+import io.jababa.lost_batalion.debug.DevView;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.ui.UIFactory;
 import io.jababa.lost_batalion.ui.UIScale;
@@ -178,7 +179,7 @@ public class Minimap implements Disposable {
             for (Unit u : units) {
                 if (u == null || !u.alive) continue;
                 boolean own = u.team == viewer;
-                if (!own && !u.isVisibleTo(viewer)) continue;
+                if (!own && !DevView.visible(u, viewer)) continue;
 
                 if (own) shapes.setColor(0.35f, 0.80f, 1f, 0.95f);
                 else     shapes.setColor(1f, 0.30f, 0.25f, 0.95f);

@@ -124,6 +124,29 @@ public class TacticalBrain implements BotBrain {
     }
 
     public Difficulty getLevel() { return level; }
+    public int getPlayerId()     { return playerId; }
+
+    // ── Намір назовні (для налагоджувального оверлея) ─────────────────────
+    //
+    // Читається ЛИШЕ з рендера. Це не інтерфейс керування ботом, а вікно в
+    // нього: дивитись матч ботів і не бачити, куди вони збираються, означає
+    // бачити ЩО вони роблять і не бачити ЧОМУ — а всі три вади, знайдені при
+    // налагодженні, були саме про «чому».
+
+    private CapturePoint lastObjective;
+    private final float[] lastRally = new float[2];
+
+    /** Куди бот зараз тисне. {@code null}, поки він ще не думав. */
+    public CapturePoint getObjective() { return lastObjective; }
+    /** Збірний пункт у світових координатах. */
+    public float getRallyX() { return lastRally[0]; }
+    public float getRallyY() { return lastRally[1]; }
+    /** Чи армія вже рушила, чи ще збирається. */
+    public boolean isCommitted() { return committed; }
+    /** Найбільша купа своїх — те число, з яким порівнюється поріг маси. */
+    public int getCluster() { return lastCluster; }
+
+    private int lastCluster;
 
     @Override public int decisionPeriodTicks() { return level.thinkPeriodTicks; }
 
@@ -146,6 +169,14 @@ public class TacticalBrain implements BotBrain {
             updateCommitment();
             assignObjectives();
             march();
+
+            // Знімок наміру для оверлея — після рішень, щоб показував те, що
+            // бот щойно вирішив, а не те, що збирався.
+            lastObjective = mainObjective();
+            float[] rally = rallyPoint(lastObjective);
+            lastRally[0] = rally[0];
+            lastRally[1] = rally[1];
+            lastCluster  = biggestCluster();
         }
         fight();
         if (level.retreatsWounded) retreatWounded();
