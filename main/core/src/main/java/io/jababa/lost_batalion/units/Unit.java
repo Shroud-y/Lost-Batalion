@@ -3,6 +3,7 @@ package io.jababa.lost_batalion.units;
 import com.badlogic.gdx.math.MathUtils;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.math.Fixed;
+import io.jababa.lost_batalion.sim.TickRate;
 
 /**
  * Юніт: увесь його стан — цілочисельний.
@@ -799,6 +800,44 @@ public abstract class Unit {
      * рендера.
      */
     public boolean usesRangedFx() { return true; }
+
+    /**
+     * Чи юніт воює В СТРОЮ: іде разом із загоном, рахується в його масу,
+     * тримає й боронить точку.
+     *
+     * <p>Типово — чи він узагалі має чим бити. Гармата має {@code damage == 0}
+     * і стріляє окремою процедурою, тож у строю з неї користі немає; будь-який
+     * майбутній юніт підтримки дістане ту саму поведінку задарма.
+     *
+     * <p><b>Тут, а не {@code instanceof Artillery} у боті.</b> Цим питанням
+     * перевірялись два десятки місць — розподіл по напрямках, поріг маси, марш,
+     * оборона точки, охорона гармат, — і кожен новий тип означав би двадцять
+     * нових гілок. Той самий принцип, що в {@link #knockbackForce}.
+     */
+    public boolean holdsLine() { return damage > 0; }
+
+    /**
+     * Чи юніт помітно швидший за строй: такий відривається на марші й встигає
+     * туди, куди піхота не встигає.
+     *
+     * <p>Теж за ЧИСЛОМ, а не за класом. Межа стоїть між піхотою (20/с) і
+     * кіннотою (40/с), тож новий швидкий юніт стає «швидким» сам собою, а
+     * повільний — ні, і бота правити не треба.
+     */
+    public boolean outrunsLine() { return speedPerTick > FAST_SPEED_PER_TICK; }
+
+    /** Межа «швидкого»: 30 одиниць/с. */
+    private static final long FAST_SPEED_PER_TICK =
+        Fixed.divInt(Fixed.fromInt(30), TickRate.TICKS_PER_SECOND);
+
+    /**
+     * Якому пункту каталогу відповідає юніт.
+     *
+     * <p>Абстрактний навмисно: новий тип мусить назватись, і забути про це не
+     * дасть компілятор. Це єдиний рядок, який новий юніт зобов'язаний написати
+     * заради бота — решту той виводить із чисел.
+     */
+    public abstract UnitType type();
 
     /** Розмір у пікселях — єдине, що можна брати в рендер. */
     public float getSizePx() { return Fixed.toFloat(sizeFixed()); }

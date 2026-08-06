@@ -92,4 +92,6 @@ public class Infantry extends Unit {
             ? "units/infantry_player.png"
             : "units/infantry_enemy.png";
     }
+
+    @Override public UnitType type() { return UnitType.INFANTRY; }
 }

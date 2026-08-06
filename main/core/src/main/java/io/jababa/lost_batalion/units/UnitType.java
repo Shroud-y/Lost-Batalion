@@ -17,9 +17,9 @@ import io.jababa.lost_batalion.Team;
  */
 public enum UnitType {
 
-    INFANTRY (Category.INF, "ПІХОТА",    50),
-    ARTILLERY(Category.ART, "ГАРМАТА",  150),
-    CAVALRY  (Category.CAV, "КІННОТА",   80);
+    INFANTRY (Category.INF, "ПІХОТА",    50, 0.60f),
+    ARTILLERY(Category.ART, "ГАРМАТА",  150, 0.15f),
+    CAVALRY  (Category.CAV, "КІННОТА",   80, 0.25f);
 
     /** Розділ у меню замовлення. */
     public enum Category {
@@ -44,10 +44,21 @@ public enum UnitType {
     public final String   title;
     public final int      cost;
 
-    UnitType(Category category, String title, int cost) {
+    /**
+     * Яку частку армії бот хоче бачити цим типом.
+     *
+     * <p>Тут, а не константами в боті: частки треба ПЕРЕЛІЧИТИ всі разом, і
+     * доки вони жили в {@code TacticalBrain}, кожен новий тип означав нову
+     * константу плюс правку арифметики недобору. Тепер новий рядок цього enum
+     * — уся потрібна зміна: частки дозволених типів нормуються самі.
+     */
+    public final float    share;
+
+    UnitType(Category category, String title, int cost, float share) {
         this.category = category;
         this.title    = title;
         this.cost     = cost;
+        this.share    = share;
     }
 
     /** Тип за номером із команди. Невідомий номер → {@code null}, а не виняток. */

@@ -95,4 +95,6 @@ public class Cavalry extends Unit {
             ? "units/light_cavalry_player.png"
             : "units/light_cavalry_enemy.png";
     }
+
+    @Override public UnitType type() { return UnitType.CAVALRY; }
 }

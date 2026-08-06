@@ -212,4 +212,6 @@ public class Artillery extends Unit {
             ? "units/artillery_player.png"
             : "units/artillery_enemy.png";
     }
+
+    @Override public UnitType type() { return UnitType.ARTILLERY; }
 }

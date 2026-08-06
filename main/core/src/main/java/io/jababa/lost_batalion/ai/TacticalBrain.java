@@ -64,10 +64,6 @@ public class TacticalBrain implements BotBrain {
     private static final int ASSIGN_PERIOD_TICKS  = 80;   // 2 с
     private static final int ECONOMY_PERIOD_TICKS = 40;   // 1 с
 
-    /** Бажаний склад армії, частками. */
-    private static final float WANT_INFANTRY = 0.60f;
-    private static final float WANT_CAVALRY  = 0.25f;
-
     /**
      * Допуск «гармата вже на позиції».
      *
@@ -374,7 +370,7 @@ public class TacticalBrain implements BotBrain {
         int n = 0;
         for (int i = 0; i < mine.size; i++) {
             Unit u = mine.get(i);
-            if (u instanceof Artillery || assignment.get(u.id, -1) != front) continue;
+            if (!u.holdsLine() || assignment.get(u.id, -1) != front) continue;
             if (!released(u)) continue;
             sx += u.worldX(); sy += u.worldY(); n++;
         }
@@ -387,7 +383,7 @@ public class TacticalBrain implements BotBrain {
         int n = 0;
         for (int i = 0; i < mine.size; i++) {
             Unit u = mine.get(i);
-            if (u instanceof Artillery || assignment.get(u.id, -1) != front) continue;
+            if (!u.holdsLine() || assignment.get(u.id, -1) != front) continue;
             if (released(u)) continue;
             if (Math.hypot(u.worldX() - spot[0], u.worldY() - spot[1]) <= MASS_RADIUS) n++;
         }
@@ -406,7 +402,7 @@ public class TacticalBrain implements BotBrain {
     private void releaseWave(int front, int executeTick, float[] gather, boolean all) {
         for (int i = 0; i < mine.size; i++) {
             Unit u = mine.get(i);
-            if (u instanceof Artillery || assignment.get(u.id, -1) != front) continue;
+            if (!u.holdsLine() || assignment.get(u.id, -1) != front) continue;
             if (!all
                 && Math.hypot(u.worldX() - gather[0], u.worldY() - gather[1]) > MASS_RADIUS) continue;
             releasedFor.put(u.id, front);
@@ -449,7 +445,7 @@ public class TacticalBrain implements BotBrain {
      * напрямок, випущеним не рахується й іде збиратись на новий збірний.
      */
     private boolean released(Unit u) {
-        if (u instanceof Artillery) {
+        if (!u.holdsLine()) {
             // Гармата власного збору не має: вона рушає, коли рушив головний
             // загін. Сам по собі цей прапорець майже нічого не гейтить —
             // виміряно, що він вмикається на першому ж циклі й не відкочується;
@@ -479,11 +475,11 @@ public class TacticalBrain implements BotBrain {
         int best = 0;
         for (int i = 0; i < mine.size; i++) {
             Unit a = mine.get(i);
-            if (a instanceof Artillery || assignment.get(a.id, -1) != point) continue;
+            if (!a.holdsLine() || assignment.get(a.id, -1) != point) continue;
             int near = 1;
             for (int j = 0; j < mine.size; j++) {
                 Unit b = mine.get(j);
-                if (b == a || b instanceof Artillery || assignment.get(b.id, -1) != point) continue;
+                if (b == a || !b.holdsLine() || assignment.get(b.id, -1) != point) continue;
                 if (Math.hypot(a.worldX() - b.worldX(), a.worldY() - b.worldY()) <= MASS_RADIUS) near++;
             }
             if (near > best) best = near;
@@ -534,30 +530,50 @@ public class TacticalBrain implements BotBrain {
                                Fixed.fromFloat(spot[0]), Fixed.fromFloat(spot[1])));
     }
 
-    /** Чого зараз бракує складу — беремо найбільший недобір проти бажаних часток. */
+    /**
+     * Чого зараз бракує складу — беремо найбільший недобір проти бажаних часток.
+     *
+     * <p>Жодного типу тут не названо, і це головне. Бажані частки лежать у
+     * {@link UnitType#share}, дозволені типи визначає рівень, а частки
+     * дозволених нормуються — тобто якщо рівень не вміє артилерії, її частка
+     * сама розходиться між рештою. Новий рід військ = один рядок у каталозі.
+     *
+     * <p>При РІВНОМУ недоборі береться дорожчий. Це не примха: дорогий тип
+     * рідший, його недобір структурний, а дешевого армія добере наступним
+     * замовленням через секунду. Раніше той самий порядок був записаний
+     * ланцюжком if-ів (гармата → кіннота → піхота) — тепер він випливає з ціни.
+     */
     private UnitType nextUnitType() {
-        int inf = 0, cav = 0, art = 0;
+        UnitType[] types = UnitType.values();
+        int[] have = new int[types.length];
+        int total = 0;
         for (int i = 0; i < mine.size; i++) {
-            Unit u = mine.get(i);
-            if (u instanceof Artillery)    art++;
-            else if (u instanceof Cavalry) cav++;
-            else                           inf++;
+            have[mine.get(i).type().ordinal()]++;
+            total++;
         }
-        int total = inf + cav + art;
         if (total == 0) return UnitType.INFANTRY;
 
-        float wantArt = level.usesArtillery ? 1f - WANT_INFANTRY - WANT_CAVALRY : 0f;
-        float wantInf = level.usesArtillery ? WANT_INFANTRY
-                                            : WANT_INFANTRY / (WANT_INFANTRY + WANT_CAVALRY);
-        float wantCav = 1f - wantInf - wantArt;
+        float sum = 0f;
+        for (int i = 0; i < types.length; i++) if (buyable(types[i])) sum += types[i].share;
+        if (sum <= 0f) return UnitType.INFANTRY;
 
-        float lackInf = wantInf - inf / (float) total;
-        float lackCav = wantCav - cav / (float) total;
-        float lackArt = wantArt - art / (float) total;
+        UnitType best = null;
+        float bestLack = -Float.MAX_VALUE;
+        for (int i = 0; i < types.length; i++) {
+            UnitType t = types[i];
+            if (!buyable(t)) continue;
+            float lack = t.share / sum - have[t.ordinal()] / (float) total;
+            if (lack > bestLack || (lack == bestLack && best != null && t.cost > best.cost)) {
+                bestLack = lack;
+                best     = t;
+            }
+        }
+        return best == null ? UnitType.INFANTRY : best;
+    }
 
-        if (lackArt >= lackInf && lackArt >= lackCav && wantArt > 0f) return UnitType.ARTILLERY;
-        if (lackCav >= lackInf)                                       return UnitType.CAVALRY;
-        return UnitType.INFANTRY;
+    /** Чи рівень узагалі замовляє такий рід військ. */
+    private boolean buyable(UnitType t) {
+        return level.usesArtillery || t.category != UnitType.Category.ART;
     }
 
     // ── Цілі ──────────────────────────────────────────────────────────────
@@ -654,7 +670,7 @@ public class TacticalBrain implements BotBrain {
         // нальотчика, при тому що той узагалі не шукав генеральної битви.
         for (int i = 0; i < mine.size; i++) {
             Unit u = mine.get(i);
-            if (u instanceof Artillery || executeTick >= lockedUntil.get(u.id, 0)) continue;
+            if (!u.holdsLine() || executeTick >= lockedUntil.get(u.id, 0)) continue;
             int p = lockedTo.get(u.id, -1);
             if (p < 0 || p >= pts.size) continue;
             assignment.put(u.id, p);
@@ -680,9 +696,9 @@ public class TacticalBrain implements BotBrain {
                 float bestDist = Float.MAX_VALUE;
                 for (int i = 0; i < mine.size; i++) {
                     Unit u = mine.get(i);
-                    if (u instanceof Artillery || assignment.containsKey(u.id)) continue;
+                    if (!u.holdsLine() || assignment.containsKey(u.id)) continue;
                     float d = dist(u, pts.get(p));
-                    if (urgent && u instanceof Cavalry) d -= CAVALRY_DEFENCE_BONUS;
+                    if (urgent && u.outrunsLine()) d -= FAST_DEFENCE_BONUS;
                     if (d < bestDist) { bestDist = d; best = u; }
                 }
                 if (best == null) break;
@@ -705,7 +721,7 @@ public class TacticalBrain implements BotBrain {
         int mainIndex = heaviestFront();
         for (int i = 0; i < mine.size; i++) {
             Unit u = mine.get(i);
-            if (u instanceof Artillery || assignment.containsKey(u.id)) continue;
+            if (!u.holdsLine() || assignment.containsKey(u.id)) continue;
             assignment.put(u.id, mainIndex);
             squadSize.put(mainIndex, squadSize.get(mainIndex, 0) + 1);
         }
@@ -740,7 +756,7 @@ public class TacticalBrain implements BotBrain {
     /** Скільки живих бійців без гармат — міра сили, а не строю. */
     private int combatCount() {
         int n = 0;
-        for (int i = 0; i < mine.size; i++) if (!(mine.get(i) instanceof Artillery)) n++;
+        for (int i = 0; i < mine.size; i++) if (mine.get(i).holdsLine()) n++;
         return n;
     }
 
@@ -851,7 +867,7 @@ public class TacticalBrain implements BotBrain {
             wave.clear();
             for (int i = 0; i < mine.size; i++) {
                 Unit u = mine.get(i);
-                if (assignment.get(u.id, -1) != p || u instanceof Artillery) continue;
+                if (assignment.get(u.id, -1) != p || !u.holdsLine()) continue;
                 // Хто боронить гармату — не чіпаємо: інакше наступний цикл
                 // покликав би його назад на точку, і охорона не встигла б нікуди.
                 if (guarding(u, marchTick)) continue;
@@ -934,7 +950,7 @@ public class TacticalBrain implements BotBrain {
         for (int i = 0; i < mine.size; i++) {
             Unit u = mine.get(i);
             if (assignment.get(u.id, -1) != front) continue;
-            if (u instanceof Artillery || u instanceof Cavalry || !released(u)) continue;
+            if (!u.holdsLine() || u.outrunsLine() || !released(u)) continue;
             cx += u.worldX(); cy += u.worldY(); n++;
         }
         if (n == 0) return;                       // сама кіннота — рівнятись нема на кого
@@ -945,7 +961,7 @@ public class TacticalBrain implements BotBrain {
         escort.clear();
         for (int i = 0; i < mine.size; i++) {
             Unit u = mine.get(i);
-            if (!(u instanceof Cavalry) || assignment.get(u.id, -1) != front) continue;
+            if (!u.outrunsLine() || assignment.get(u.id, -1) != front) continue;
             if (!released(u) || guarding(u, marchTick)) continue;
             // Уже притриманий — не наказувати вдруге. Наказ, повторений щодві
             // секунди на центр маси, що сам рухається, скидає маршрут щоразу.
@@ -1094,7 +1110,7 @@ public class TacticalBrain implements BotBrain {
         wave.clear();
         for (int i = 0; i < mine.size; i++) {
             Unit u = mine.get(i);
-            if (!(u instanceof Artillery) || u.isMoving()) continue;
+            if (u.holdsLine() || u.isMoving()) continue;
             // Гармату, яку щойно відводила тривога, СЮДИ НЕ ЧІПАТИ.
             //
             // Інакше два контролери тягнуть один юніт у різні боки: тут її
@@ -1239,7 +1255,7 @@ public class TacticalBrain implements BotBrain {
             group.clear();
             for (int i = 0; i < mine.size; i++) {
                 Unit u = mine.get(i);
-                if (u instanceof Artillery) continue;
+                if (!u.holdsLine()) continue;
                 if (assignment.get(u.id, -1) != p) continue;
                 if (guarding(u, executeTick)) continue;   // відряджений до гармати
                 group.add(u);
@@ -1320,7 +1336,7 @@ public class TacticalBrain implements BotBrain {
     /** Куди гармата відходить: частка шляху до своїх. */
     private static final float RETREAT_STEP = 160f;
     /** Наскільки «ближчою» рахується кіннота, коли треба гасити зрив точки. */
-    private static final float CAVALRY_DEFENCE_BONUS = 600f;
+    private static final float FAST_DEFENCE_BONUS = 600f;
 
     /** Скільки оборонець лишається приписаним до точки, яку боронить. */
     private static final int DEFEND_LOCK_TICKS = 320;   // 8 с
@@ -1363,7 +1379,7 @@ public class TacticalBrain implements BotBrain {
     private void protectGuns(int executeTick) {
         for (int i = 0; i < mine.size; i++) {
             Unit gun = mine.get(i);
-            if (!(gun instanceof Artillery)) continue;
+            if (gun.holdsLine()) continue;
 
             Unit raider = null;
             float best = GUN_ALARM;
@@ -1406,7 +1422,7 @@ public class TacticalBrain implements BotBrain {
                 float bestD = GUARD_REACH;
                 for (int j = 0; j < mine.size; j++) {
                     Unit u = mine.get(j);
-                    if (u instanceof Artillery || pressing.contains(u, true)) continue;
+                    if (!u.holdsLine() || pressing.contains(u, true)) continue;
                     if (guarding(u, executeTick)) continue;
                     float d = (float) Math.hypot(u.worldX() - raider.worldX(),
                                                  u.worldY() - raider.worldY());
@@ -1428,7 +1444,7 @@ public class TacticalBrain implements BotBrain {
         float best = Float.MAX_VALUE;
         for (int i = 0; i < mine.size; i++) {
             Unit u = mine.get(i);
-            if (u instanceof Artillery) continue;
+            if (!u.holdsLine()) continue;
             float d = (float) Math.hypot(u.worldX() - gun.worldX(),
                                          u.worldY() - gun.worldY());
             if (d < best) best = d;
@@ -1442,7 +1458,7 @@ public class TacticalBrain implements BotBrain {
         int n = 0;
         for (int i = 0; i < mine.size; i++) {
             Unit u = mine.get(i);
-            if (u instanceof Artillery) continue;
+            if (!u.holdsLine()) continue;
             sx += u.worldX(); sy += u.worldY(); n++;
         }
         return n == 0 ? null : new float[] { sx / n, sy / n };
@@ -1624,7 +1640,7 @@ public class TacticalBrain implements BotBrain {
         group.clear();
         for (int i = 0; i < mine.size; i++) {
             Unit u = mine.get(i);
-            if (u instanceof Artillery || u.isMoving()) continue;
+            if (!u.holdsLine() || u.isMoving()) continue;
             if (u.hpRatio() > WOUNDED_HP) continue;
             // Відводити нема сенсу, якщо поруч і так нікого немає.
             boolean threatened = false;
