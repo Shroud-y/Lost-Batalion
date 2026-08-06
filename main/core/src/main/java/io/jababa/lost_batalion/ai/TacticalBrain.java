@@ -3,10 +3,12 @@ package io.jababa.lost_batalion.ai;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.IntIntMap;
 import io.jababa.lost_batalion.Team;
+import io.jababa.lost_batalion.capture.CaptureManager;
 import io.jababa.lost_batalion.capture.CapturePoint;
 import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.net.commands.AttackCommand;
 import io.jababa.lost_batalion.net.commands.GameCommand;
+import io.jababa.lost_batalion.net.commands.MoveCommand;
 import io.jababa.lost_batalion.net.commands.PathMoveCommand;
 import io.jababa.lost_batalion.net.commands.SpawnCommand;
 import io.jababa.lost_batalion.sim.GameSimulation;
@@ -93,6 +95,15 @@ public class TacticalBrain implements BotBrain {
     /** Де саме збірний пункт: частка шляху від свого кута до цілі. */
     private static final float RALLY_FRACTION = 0.45f;
 
+    /**
+     * Скільки загін щонайдовше чекає на збірному, поки збереться хвиля.
+     *
+     * <p>Потрібен, бо поріг хвилі може не набратись НІКОЛИ: остання пара
+     * новобранців при бідній економіці — це один юніт на ~50 секунд. Без
+     * відсічки вони простояли б у тилу до кінця матчу.
+     */
+    private static final int WAVE_TIMEOUT_TICKS = 800;   // 20 с
+
     /** Скільки одиниць відстані «варта» повна смуга здоров'я при виборі цілі. */
     private static final float WEAKEST_WEIGHT = 120f;
 
@@ -110,6 +121,12 @@ public class TacticalBrain implements BotBrain {
     private final Array<Unit> group  = new Array<>();
     /** Хто з групи вже дістає до бою — окремий буфер, бо {@link #group} зайнятий. */
     private final Array<Unit> battle = new Array<>();
+    /** Уже випущені вперед — другий буфер маршу, поруч із тими, хто ще збирається. */
+    private final Array<Unit> wave   = new Array<>();
+    /** Хто зараз тисне на дистанцію вогню — власний буфер, бо {@link #battle} потрібен далі. */
+    private final Array<Unit> pressing = new Array<>();
+    /** Кіннота, яку притримують, щоб не відірвалась від піхоти. */
+    private final Array<Unit> escort = new Array<>();
 
     /** id юніта → індекс точки, за яку він відповідає. */
     private final IntIntMap assignment = new IntIntMap();
@@ -126,6 +143,24 @@ public class TacticalBrain implements BotBrain {
     private final IntIntMap squadSize = new IntIntMap();
     /** індекс точки → 1, якщо її загін уже рушив (гістерезис збору). */
     private final IntIntMap committedTo = new IntIntMap();
+    /**
+     * id юніта → індекс фронту, на який його ВЖЕ випустили зі збірного пункту.
+     *
+     * <p>Ключове тут — що прапорець на ЮНІТОВІ, а не на напрямку. Поки
+     * зобов'язання було на напрямку, воно вмикалось раз і лишалось увімкненим:
+     * {@link #assignment} перескладається щодві секунди, свіжий новобранець
+     * одразу потрапляв до фронту, позначеного «рушив», і йшов у зону сам.
+     * Поріг маси гейтив рівно ПЕРШУ хвилю, а далі йшов рівний струмочок по
+     * одному — та сама вада, від якої поріг і робився, тільки з іншого боку.
+     *
+     * <p>Значення зберігає саме фронт: юніта, переприписаного на інший напрямок,
+     * треба зібрати заново, а не вважати випущеним за старим наказом.
+     */
+    private final IntIntMap releasedFor = new IntIntMap();
+    /** Буфер для чистки {@link #releasedFor} від мертвих id. */
+    private final IntIntMap releaseScratch = new IntIntMap();
+    /** індекс точки → тік, коли звідти востаннє йшла хвиля (для відсічки чекання). */
+    private final IntIntMap lastWaveTick = new IntIntMap();
 
     private static final int[] EMPTY = new int[0];
     /** Індекси точок за спаданням важливості. */
@@ -150,6 +185,7 @@ public class TacticalBrain implements BotBrain {
         this.level    = level;
         this.me       = Team.forPlayer(playerId);
         this.foe      = Team.forPlayer(playerId == 0 ? 1 : 0);
+
     }
 
     public Difficulty getLevel() { return level; }
@@ -205,9 +241,11 @@ public class TacticalBrain implements BotBrain {
             // Порядок обов'язковий: спершу хто куди приписаний, і лише потім
             // чи зібрався кожен загін — готовність тепер міряється в межах
             // ЗАГОНУ, а не по всій армії.
-            assignObjectives();
-            updateCommitment();
-            march();
+            assignObjectives(executeTick);
+            updateWaves(executeTick);
+            march(executeTick);
+            // ПІСЛЯ маршу: охорона знімає юнітів із походу, а не навпаки.
+            if (level.usesArtillery) protectGuns(executeTick);
 
             // Знімок наміру для оверлея — після рішень, щоб показував те, що
             // бот щойно вирішив, а не те, що збирався.
@@ -230,7 +268,7 @@ public class TacticalBrain implements BotBrain {
     // ── Збір сил ──────────────────────────────────────────────────────────
 
     /**
-     * Чи вже пора йти — окремо для КОЖНОГО загону.
+     * Чи вже пора йти — окремо для КОЖНОГО загону і для кожної ХВИЛІ.
      *
      * <p>Загін іде, коли зібрав купу зі свого бюджету, і повертається
      * збиратись, лише коли від нього лишилось менше половини. Є випадки, коли
@@ -243,34 +281,185 @@ public class TacticalBrain implements BotBrain {
      *   <li>цю точку зривають — оборона не чекає, поки збереться загін;</li>
      *   <li>рівень узагалі не вміє збиратись ({@code massThreshold == 1}).</li>
      * </ul>
+     *
+     * <p><b>Хвиля не одна.</b> Перша йде на повний бюджет, а кожне наступне
+     * поповнення чекає на збірному свою, меншу купу — воно приєднується до
+     * кулака, який уже стоїть на точці, тож рівно стільки війська йому не
+     * потрібно. Раніше наступних хвиль не було взагалі: {@link #committedTo}
+     * вмикався один раз, і далі кожен новобранець ішов у зону поодинці.
      */
-    private void updateCommitment() {
+    private void updateWaves(int executeTick) {
         Array<CapturePoint> pts = points();
         boolean desperate = sim.getCapturePoints().countOwned(me) == 0;
 
         for (int p = 0; p < pts.size; p++) {
             int size = squadSize.get(p, 0);
-            if (size == 0) { committedTo.remove(p, 0); continue; }
+            if (size == 0) {
+                committedTo.remove(p, 0);
+                lastWaveTick.remove(p, 0);
+                continue;
+            }
 
             CapturePoint point = pts.get(p);
             int want = budget.get(p, 1);
+            boolean first = committedTo.get(p, 0) == 0;
             boolean forced = want <= 1
                           || level.massThreshold <= 1
                           || desperate
                           || underThreat(point);
-            if (forced) { committedTo.put(p, 1); continue; }
 
-            if (committedTo.get(p, 0) == 0) {
-                if (biggestCluster(p) >= Math.min(want, size)) committedTo.put(p, 1);
-            } else if (size < Math.max(2, want / 2)) {
+            if (!forced && !first && size < Math.max(2, want / 2)) {
                 // Відкат міряється ВИСНАЖЕННЯМ, а не купністю, і це принципово:
                 // рота на марші розтягується в колону сама собою, купність
                 // падає — і бот, який дивився на неї, розвертався на півдорозі
                 // збиратись, потім знову вперед, і так усю гру. Виміряно:
                 // HARD у такому стані програвав EASY, бо той просто грав.
+                //
+                // Відкочується ВЕСЬ загін разом із випусками: залишки, розкидані
+                // по дорозі, мусять зібратись, а не доходити поодинці.
                 committedTo.remove(p, 0);
+                unrelease(p);
+                first = true;
             }
+
+            // Відлік чекання починається з появи загону, а не з першої хвилі:
+            // інакше перший збір не має відсічки взагалі.
+            if (!lastWaveTick.containsKey(p)) lastWaveTick.put(p, executeTick);
+
+            // ПЕРША хвиля — рівно як раніше: купа з бюджету, будь-де. Це число
+            // виміряне (massThreshold має вузьке дно 4–5), і чіпати його не
+            // треба; вада була не в ньому, а в тому, що хвиля була одна.
+            //
+            // ПОПОВНЕННЯ ж не чекає взагалі: воно йде до СВОГО ЗАГОНУ
+            // ({@link #gatherPoint}) і вважається випущеним, щойно до нього
+            // пристало. Чекання на збірному тут пробувалось першим і виміряно
+            // ГІРШИМ (6/16 перемог проти 10/16, самотніх смертей не менше):
+            // поки поповнення стоїть у тилу, точки віддаються, а доходить воно
+            // однаково поодинці, тільки пізніше.
+            float[] gather = gatherPoint(p, point);
+            int waiting = first ? biggestCluster(p) : waitingAt(p, gather);
+            if (waiting == 0 && !forced) continue;
+
+            // ПОВНИЙ бюджет, а не «скільки є».
+            //
+            // Було `Math.min(want, size)`, і це знецінювало поріг маси рівно
+            // там, де він потрібен: {@link #budgetFor} рахує бюджет за баченими
+            // ворогами, тож проти роти на точці want виходив 8, — але якщо в
+            // загоні троє, min давав 3, і трійка вирушала на вісьмох. Саме це
+            // видно оком: загін марширує в купу ворогів і не звертає. Тепер він
+            // просто не виходить, поки не набере, скільки треба; примусові
+            // випадки (зрив своєї точки, жодної точки, одиничний бюджет) свою
+            // силу зберігають.
+            int need = first ? want : 1;
+            boolean timedOut = executeTick - lastWaveTick.get(p, executeTick) >= WAVE_TIMEOUT_TICKS;
+
+            // Перша хвиля виступає ЦІЛКОМ, скільки б не розтягнулась: саме так
+            // це й міряли. Поповнення — лише те, що вже пристало до загону.
+            if (forced || waiting >= need || timedOut)
+                releaseWave(p, executeTick, gather, forced || first);
         }
+    }
+
+    /**
+     * Куди йде поповнення цього напрямку.
+     *
+     * <p>Поки загін збирається — на збірний пункт у тилу. Щойно він рушив —
+     * до НЬОГО САМОГО, у середину його маси, а не на точку. Різниця в цьому і
+     * є виправленням струмочка: новобранець, посланий на точку, приходив туди
+     * сам і під вогонь, а посланий до своїх — приходить до своїх, хоч би де
+     * вони зараз були, і далі отримує накази разом з ними.
+     */
+    private float[] gatherPoint(int front, CapturePoint point) {
+        float sx = 0f, sy = 0f;
+        int n = 0;
+        for (int i = 0; i < mine.size; i++) {
+            Unit u = mine.get(i);
+            if (u instanceof Artillery || assignment.get(u.id, -1) != front) continue;
+            if (!released(u)) continue;
+            sx += u.worldX(); sy += u.worldY(); n++;
+        }
+        if (n == 0) return rallyPoint(point);
+        return new float[] { sx / n, sy / n };
+    }
+
+    /** Скільки бійців фронту вже зібралось у заданій точці й чекає випуску. */
+    private int waitingAt(int front, float[] spot) {
+        int n = 0;
+        for (int i = 0; i < mine.size; i++) {
+            Unit u = mine.get(i);
+            if (u instanceof Artillery || assignment.get(u.id, -1) != front) continue;
+            if (released(u)) continue;
+            if (Math.hypot(u.worldX() - spot[0], u.worldY() - spot[1]) <= MASS_RADIUS) n++;
+        }
+        return n;
+    }
+
+    /**
+     * Випустити хвилю: тих, хто приписаний до фронту і вже пристав до загону.
+     * Хто ще в дорозі — піде наступною; інакше «хвиля» розчіплюється дорогою і
+     * кожен доходить сам.
+     *
+     * <p>{@code all} знімає умову близькості: так виступає ПЕРША хвиля (вона
+     * йде цілим загоном, хоч би як розтягнулась) і будь-яка примусова —
+     * оборона не чекає, поки всі доїдуть.
+     */
+    private void releaseWave(int front, int executeTick, float[] gather, boolean all) {
+        for (int i = 0; i < mine.size; i++) {
+            Unit u = mine.get(i);
+            if (u instanceof Artillery || assignment.get(u.id, -1) != front) continue;
+            if (!all
+                && Math.hypot(u.worldX() - gather[0], u.worldY() - gather[1]) > MASS_RADIUS) continue;
+            releasedFor.put(u.id, front);
+        }
+        committedTo.put(front, 1);
+        lastWaveTick.put(front, executeTick);
+    }
+
+    /**
+     * Викинути з {@link #releasedFor} тих, кого вже немає серед живих.
+     *
+     * <p>Мапа переживає всю партію, а мертвих юнітів за десять хвилин
+     * набирається більше, ніж живих. {@link IntIntMap} не має видалення за
+     * умовою, тож простіше перекласти вцілілих у буфер.
+     */
+    private void pruneReleased() {
+        if (releasedFor.size == 0) return;
+        releaseScratch.clear();
+        for (int i = 0; i < mine.size; i++) {
+            Unit u = mine.get(i);
+            int front = releasedFor.get(u.id, Integer.MIN_VALUE);
+            if (front != Integer.MIN_VALUE) releaseScratch.put(u.id, front);
+        }
+        releasedFor.clear();
+        releasedFor.putAll(releaseScratch);
+    }
+
+    /** Повернути фронт у стан збору: всі його випуски скасовано. */
+    private void unrelease(int front) {
+        for (int i = 0; i < mine.size; i++) {
+            Unit u = mine.get(i);
+            if (releasedFor.get(u.id, -1) == front) releasedFor.remove(u.id, 0);
+        }
+    }
+
+    /**
+     * Чи цього юніта вже випустили вперед.
+     *
+     * <p>Порівнюється саме з ПОТОЧНОЮ припискою: юніт, переприписаний на інший
+     * напрямок, випущеним не рахується й іде збиратись на новий збірний.
+     */
+    private boolean released(Unit u) {
+        if (u instanceof Artillery) {
+            // Гармата власного збору не має: вона рушає, коли рушив головний
+            // загін. Сам по собі цей прапорець майже нічого не гейтить —
+            // виміряно, що він вмикається на першому ж циклі й не відкочується;
+            // від'їзд гармати вперед стримує не він, а GUN_BEHIND у marchArtillery.
+            if (mainFront < 0) return true;
+            return committedTo.get(mainFront, 0) == 1;
+        }
+        int front = assignment.get(u.id, -1);
+        if (front < 0) return true;
+        return releasedFor.get(u.id, -1) == front;
     }
 
     /**
@@ -281,6 +470,10 @@ public class TacticalBrain implements BotBrain {
      * тримає лінію, і рота з двох піхотинців плюс гармати не є групою з трьох.
      * Рахувати по ВСІЙ армії, як було, тепер не можна: тоді кулак на одному
      * напрямку зараховувався б як готовність загону на іншому.
+     *
+     * <p>Готовність ХВИЛІ міряється не цим, а {@link #waitingAtRally}: там
+     * важливо, скільки бійців уже стоїть на збірному, а не наскільки купно
+     * розтягнулась армія взагалі.
      */
     private int biggestCluster(int point) {
         int best = 0;
@@ -377,7 +570,19 @@ public class TacticalBrain implements BotBrain {
      * її колись бракувало: він ішов уперед, поки за спиною втрачав усе.
      */
     private boolean underThreat(CapturePoint p) {
-        return level.defendsPoints && p.owner == me && p.holder == foe && p.progress > 0;
+        // Ознака — ПРОСІДАННЯ прогресу на своїй точці, а не чужий holder.
+        //
+        // Було `owner == me && holder == foe`, і ці два стани взаємно виключні
+        // за побудовою: `CaptureManager` при зриві лишає holder власником і
+        // тільки гасить progress, а holder стає чужим рівно в той тік, коли
+        // owner обнуляється (CaptureManager:118-122). Тобто умова не могла
+        // справдитись НІКОЛИ — уся оборона точок була мертвим кодом, і рівні з
+        // `defendsPoints` нічим від інших у цьому не відрізнялись.
+        //
+        // `progress < FULL` на своїй точці — це рівно те, що бачить гравець:
+        // смуга захоплення поповзла вниз. Ніякого зазирання тут немає.
+        return level.defendsPoints && p.owner == me && p.holder == me
+            && p.progress < CaptureManager.FULL;
     }
 
     /**
@@ -428,14 +633,33 @@ public class TacticalBrain implements BotBrain {
      * Скільки напрямків бот веде водночас, вирішує {@link Difficulty#fronts} —
      * це і є та навичка, якої новачок не має.
      */
-    private void assignObjectives() {
+    private void assignObjectives(int executeTick) {
         Array<CapturePoint> pts = points();
         assignment.clear();
         budget.clear();
         squadSize.clear();
+        pruneReleased();
         if (pts.size == 0) { objectiveOrder = EMPTY; return; }
 
         objectiveOrder = rankObjectives(pts);
+
+        // Оборонці лишаються там, куди їх послали, доки не вийде замок.
+        //
+        // Без цього бот беззахисний перед найдешевшим прийомом у жанрі: кіннота
+        // (швидкість 40) заходить на тилову точку, {@link #priorityOf} ставить
+        // її першою, розподіл тягне туди піхоту (швидкість 20), кіннота йде
+        // далі — і наступний же цикл тягне ту саму піхоту назад. Кулак їздить
+        // по карті й не б'ється ніде. Виміряно зондом {@code FlipStand}: бот
+        // програвав 11 матчів із 12, втрачаючи по 14–21 юніта проти 3–15 у
+        // нальотчика, при тому що той узагалі не шукав генеральної битви.
+        for (int i = 0; i < mine.size; i++) {
+            Unit u = mine.get(i);
+            if (u instanceof Artillery || executeTick >= lockedUntil.get(u.id, 0)) continue;
+            int p = lockedTo.get(u.id, -1);
+            if (p < 0 || p >= pts.size) continue;
+            assignment.put(u.id, p);
+            squadSize.put(p, squadSize.get(p, 0) + 1);
+        }
 
         int combat = combatCount();
         int fronts = Math.max(1, Math.min(level.fronts, objectiveOrder.length));
@@ -447,18 +671,27 @@ public class TacticalBrain implements BotBrain {
             int want = budgetFor(pts.get(p));
             budget.put(p, want);
 
-            for (int taken = 0; taken < want; taken++) {
+            // Оборона зриву — робота для ШВИДКИХ. Піхота, послана навздогін
+            // кінноті, не наздожене її ніколи: 20 проти 40.
+            boolean urgent = level.defendsPoints && underThreat(pts.get(p));
+
+            for (int taken = squadSize.get(p, 0); taken < want; taken++) {
                 Unit best = null;
                 float bestDist = Float.MAX_VALUE;
                 for (int i = 0; i < mine.size; i++) {
                     Unit u = mine.get(i);
                     if (u instanceof Artillery || assignment.containsKey(u.id)) continue;
                     float d = dist(u, pts.get(p));
+                    if (urgent && u instanceof Cavalry) d -= CAVALRY_DEFENCE_BONUS;
                     if (d < bestDist) { bestDist = d; best = u; }
                 }
                 if (best == null) break;
                 assignment.put(best.id, p);
                 squadSize.put(p, squadSize.get(p, 0) + 1);
+                if (urgent) {
+                    lockedTo.put(best.id, p);
+                    lockedUntil.put(best.id, executeTick + DEFEND_LOCK_TICKS);
+                }
             }
         }
 
@@ -602,7 +835,7 @@ public class TacticalBrain implements BotBrain {
      * саме так група отримує спільний маршрут із особистими смугами — строй
      * складається сам по дорозі. Окремі накази дали б купу в одній точці.
      */
-    private void march() {
+    private void march(int marchTick) {
         Array<CapturePoint> pts = points();
         if (pts.size == 0) return;
 
@@ -610,24 +843,27 @@ public class TacticalBrain implements BotBrain {
             if (squadSize.get(p, 0) == 0) continue;
 
             CapturePoint point = pts.get(p);
-            boolean gathering  = committedTo.get(p, 0) == 0;
-            float[] rally = rallyPoint(point);
-            float[] spot  = gathering ? rally : approachSpot(point);
+            float[] rally = gatherPoint(p, point);
 
+            // Два накази на напрямок, бо в одному загоні тепер два стани:
+            // випущена хвиля йде на точку, поповнення — до неї.
             group.clear();
+            wave.clear();
             for (int i = 0; i < mine.size; i++) {
                 Unit u = mine.get(i);
                 if (assignment.get(u.id, -1) != p || u instanceof Artillery) continue;
+                // Хто боронить гармату — не чіпаємо: інакше наступний цикл
+                // покликав би його назад на точку, і охорона не встигла б нікуди.
+                if (guarding(u, marchTick)) continue;
+                if (marchTick < heldUntil.get(u.id, 0)) continue;   // притримана кіннота
                 // Хто вже йде — не чіпаємо: повторний наказ обнулив би маршрут.
                 if (u.isMoving()) continue;
                 // Хто б'ється — тим паче: наказ руху скасовує наказ атаки, і
                 // юніт вийшов би з-під вогню рівно посеред бою.
                 if (inContact(u)) continue;
 
-                if (gathering) {
-                    // Уже в купі біля збірного — стоїмо й чекаємо решту.
-                    if (Math.hypot(u.worldX() - rally[0], u.worldY() - rally[1]) < MASS_RADIUS) continue;
-                } else {
+                if (released(u)) {
+                    // Ціль хвилі — сама точка.
                     // ТІЛЬКИ входження в зону, і це важливо. Раніше тут стояло
                     // ще й «або ближче за NEAR_POINT = 120», і саме воно ламало
                     // захоплення: юніт, який став за 80 одиниць від центру, але
@@ -635,16 +871,122 @@ public class TacticalBrain implements BotBrain {
                     // більше не отримував жодного наказу. Бот приходив, ставав
                     // поруч із точкою і не брав її до кінця матчу.
                     if (point.contains(u.x, u.y)) continue;
+                    wave.add(u);
+                } else {
+                    // Уже в купі біля збірного — стоїмо й чекаємо решту.
+                    if (Math.hypot(u.worldX() - rally[0], u.worldY() - rally[1]) < MASS_RADIUS) continue;
+                    group.add(u);
                 }
-                group.add(u);
             }
-            if (group.size == 0) continue;
 
-            order(new PathMoveCommand(playerId, idsOf(group),
-                                      Fixed.fromFloat(spot[0]), Fixed.fromFloat(spot[1])));
+            if (group.size > 0)
+                order(new PathMoveCommand(playerId, idsOf(group),
+                                          Fixed.fromFloat(rally[0]), Fixed.fromFloat(rally[1])));
+
+            float[] spot = approachSpot(point);
+            holdBackHorse(p, spot, marchTick);
+            if (wave.size > 0)
+                order(new PathMoveCommand(playerId, idsOf(wave),
+                                          Fixed.fromFloat(spot[0]), Fixed.fromFloat(spot[1])));
         }
 
-        marchArtillery(mainObjective());
+        marchArtillery(mainObjective(), marchTick);
+    }
+
+    /**
+     * Наскільки кінноті дозволено випереджати піхоту, перш ніж її притримають.
+     *
+     * <p>Не нуль: рівно в лінію її не поставити, бо наказ віддається раз на дві
+     * секунди, а за цей час кіннота проходить 80 одиниць.
+     */
+    private static final float COHESION_PAD = 120f;
+
+    /** Скільки притримана кіннота лишається без нових наказів. */
+    private static final int HOLD_TICKS = 240;   // 6 с
+
+    /** id кіннотника → до якого тіку його не чіпають після притримання. */
+    private final IntIntMap heldUntil = new IntIntMap();
+
+    /**
+     * Не дати кінноті прийти в бій самій.
+     *
+     * <p>Хвиля виходить однією групою, але кіннота має швидкість 40 проти 20 у
+     * піхоти — тобто ДО ЦІЛІ ВОНА ДОХОДИТЬ УДВІЧІ ШВИДШЕ і зустрічає ворога
+     * сама. Поріг маси тут не рятує: він рахує, скільки вийшло, а не скільки
+     * дійшло разом. Саме це видно оком — «кіннота йде насмерть».
+     *
+     * <p>Тому та кіннота, що відірвалась, дістає за ціль не точку, а СВОЮ
+     * ПІХОТУ: вона підтягується до лінії й іде далі разом з нею. Вилучається з
+     * {@link #wave}, щоб не отримати обидва накази в одному тіку.
+     */
+
+
+
+    private void holdBackHorse(int front, float[] spot, int marchTick) {
+        if (!level.holdsFormation) return;
+
+        // Центр піхоти рахується по ВСІХ випущених, у тому числі тих, що йдуть.
+        // Брати тільки нерухомих (тобто те, що зібрав march) не можна: на марші
+        // нерухома піхота — це саме та, що вже прийшла, і кіннота порівнювалась
+        // би сама з собою.
+        float cx = 0f, cy = 0f;
+        int n = 0;
+        for (int i = 0; i < mine.size; i++) {
+            Unit u = mine.get(i);
+            if (assignment.get(u.id, -1) != front) continue;
+            if (u instanceof Artillery || u instanceof Cavalry || !released(u)) continue;
+            cx += u.worldX(); cy += u.worldY(); n++;
+        }
+        if (n == 0) return;                       // сама кіннота — рівнятись нема на кого
+        cx /= n; cy /= n;
+
+        float footDist = (float) Math.hypot(cx - spot[0], cy - spot[1]);
+
+        escort.clear();
+        for (int i = 0; i < mine.size; i++) {
+            Unit u = mine.get(i);
+            if (!(u instanceof Cavalry) || assignment.get(u.id, -1) != front) continue;
+            if (!released(u) || guarding(u, marchTick)) continue;
+            // Уже притриманий — не наказувати вдруге. Наказ, повторений щодві
+            // секунди на центр маси, що сам рухається, скидає маршрут щоразу.
+            if (marchTick < heldUntil.get(u.id, 0)) continue;
+            // Хто вже б'ється — не чіпати. Витягти його звідти означало б
+            // відступ, а відступ у цій грі виміряно програшним: розриву
+            // контакту немає, і той, хто пішов, дістає урон у спину задарма.
+            if (inContact(u)) continue;
+            float d = (float) Math.hypot(u.worldX() - spot[0], u.worldY() - spot[1]);
+            if (d >= footDist - COHESION_PAD) continue;   // ще не відірвалась
+            escort.add(u);
+        }
+        if (escort.size == 0) return;
+
+        // Притримувати ЛИШЕ перед справжньою смертю, а не завжди.
+        //
+        // Безумовне вирівнювання по піхоті виміряно дорогим: HARD проти NORMAL
+        // 6/12 замість 12/12. Кіннота це 26 урону проти 15 у піхоти й удвічі
+        // більша швидкість, тобто темп усієї армії; гальмувати її там, де
+        // попереду порожньо, означає віддати і темп, і точки. А от заїхати
+        // самою в юрбу — те, від чого вона й гине.
+        int foesThere = 0;
+        for (int i = 0; i < foes.size; i++) {
+            Unit f = foes.get(i);
+            if (Math.hypot(f.worldX() - spot[0], f.worldY() - spot[1]) <= ENGAGE_RANGE) foesThere++;
+        }
+        if (foesThere < escort.size) return;
+
+        // Тут СВІДОМО віддається наказ тому, хто вже йде, — єдине таке місце в
+        // боті. Марш узагалі не чіпає рухомих юнітів, бо повторний наказ скидає
+        // маршрут; але кіннота, яка вдвічі швидша за піхоту, саме В РУСІ й
+        // відривається, тож правило «не чіпати рухомих» означало б, що
+        // стримати її не може ніщо. Перевірено виміром: доки холдбек дивився
+        // лише на нерухомих, він не спрацьовував майже ніколи.
+        for (int i = wave.size - 1; i >= 0; i--)
+            if (escort.contains(wave.get(i), true)) wave.removeIndex(i);
+        for (int i = 0; i < escort.size; i++)
+            heldUntil.put(escort.get(i).id, marchTick + HOLD_TICKS);
+
+        order(new PathMoveCommand(playerId, idsOf(escort),
+                                  Fixed.fromFloat(cx), Fixed.fromFloat(cy)));
     }
 
     /**
@@ -745,16 +1087,36 @@ public class TacticalBrain implements BotBrain {
      * <p>Ліс тут, на відміну від піхоти, штраф, а не бонус: гармата, яка
      * сховалась і осліпла, марна.
      */
-    private void marchArtillery(CapturePoint target) {
+    private void marchArtillery(CapturePoint target, int marchTick) {
         if (target == null) return;
 
         group.clear();
+        wave.clear();
         for (int i = 0; i < mine.size; i++) {
             Unit u = mine.get(i);
             if (!(u instanceof Artillery) || u.isMoving()) continue;
-            group.add(u);
+            // Гармату, яку щойно відводила тривога, СЮДИ НЕ ЧІПАТИ.
+            //
+            // Інакше два контролери тягнуть один юніт у різні боки: тут її
+            // женуть на позицію за ARTILLERY_STANDOFF від точки, а protectGuns
+            // бачить ворога ближче за своїх і відводить назад — і так по колу
+            // кожні дві секунди. Оком це видно точно як «гармата дійшла до
+            // точки й повернулась».
+            if (marchTick < gunAlarm.get(u.id, 0)) continue;
+            if (released(u)) wave.add(u); else group.add(u);
         }
-        if (group.size == 0) return;
+
+        // Невипущена гармата чекає на збірному разом із піхотою. Раніше цієї
+        // гілки не було зовсім: {@code marchArtillery} — окремий шлях, він не
+        // питав зобов'язання взагалі, і гармата виїжджала на STANDOFF (140 від
+        // цілі) сама, поки її прикриття ще стояло на збірному за 45% шляху.
+        // Тобто найдорожчий юніт у грі йшов попереду армії й без охорони.
+        float[] rally = rallyPoint(target);
+        if (group.size > 0 && anyFartherThan(group, rally, NEAR_POINT))
+            order(new PathMoveCommand(playerId, idsOf(group),
+                                      Fixed.fromFloat(rally[0]), Fixed.fromFloat(rally[1])));
+
+        if (wave.size == 0) return;
 
         float tx = Fixed.toFloat(target.x), ty = Fixed.toFloat(target.y);
         float homeX = playerId == 0 ? 0f : sim.getMapWidth();
@@ -770,17 +1132,29 @@ public class TacticalBrain implements BotBrain {
                      ? gunPosition(baseX, baseY, tx, ty)
                      : new float[] { baseX, baseY };
 
-        boolean anyFar = false;
-        for (int i = 0; i < group.size; i++) {
-            if (Math.hypot(group.get(i).worldX() - spot[0],
-                           group.get(i).worldY() - spot[1]) > NEAR_POINT) {
-                anyFar = true; break;
-            }
-        }
-        if (!anyFar) return;
+        if (!anyFartherThan(wave, spot, NEAR_POINT)) return;
 
-        order(new PathMoveCommand(playerId, idsOf(group),
+        order(new PathMoveCommand(playerId, idsOf(wave),
                                   Fixed.fromFloat(spot[0]), Fixed.fromFloat(spot[1])));
+    }
+
+    /**
+     * Чи хоч хтось із групи стоїть далі за {@code limit} від точки.
+     *
+     * <p>Допуск тут несучий, а не косметичний: гармата цілиться 3 секунди, і
+     * будь-який наказ руху це наведення скидає. Позиція, перерахована щодві
+     * секунди, зрушує на десятки одиниць сама собою — без допуску гармата
+     * переїжджала б вічно й не стріляла ніколи. Пробували прив'язати позицію до
+     * центру маси піхоти (щоб гармата не виїжджала поперед строю) — виміряно
+     * ЗБИТКОВИМ саме через це: HARD проти NORMAL 6/12 замість 8/12, бо позиція
+     * почала їздити за строєм. Не повертати без вирішеної проблеми наведення.
+     */
+    private boolean anyFartherThan(Array<Unit> units, float[] spot, float limit) {
+        for (int i = 0; i < units.size; i++) {
+            if (Math.hypot(units.get(i).worldX() - spot[0],
+                           units.get(i).worldY() - spot[1]) > limit) return true;
+        }
+        return false;
     }
 
     /**
@@ -867,6 +1241,7 @@ public class TacticalBrain implements BotBrain {
                 Unit u = mine.get(i);
                 if (u instanceof Artillery) continue;
                 if (assignment.get(u.id, -1) != p) continue;
+                if (guarding(u, executeTick)) continue;   // відряджений до гармати
                 group.add(u);
             }
             if (group.size == 0) { forget(p); continue; }
@@ -893,7 +1268,30 @@ public class TacticalBrain implements BotBrain {
             }
             // Перевага по головах. Точнішої оцінки не треба: рішення бінарне, а
             // зайва точність зробила б поведінку смиканою на кожній втраті.
-            if (battle.size < nearbyFoes * oddsAgainst(target)) { forget(p); continue; }
+            float need = nearbyFoes * oddsAgainst(target);
+            if (battle.size < need) {
+                // ВІДСТУПУ ТУТ НЕМАЄ, І ЦЕ ВИМІРЯНО ДВІЧІ.
+                //
+                // Спокуса очевидна: загін програє за головами — хай відійде.
+                // Пробували 2026-08-06 і на збірний, і коротким кроком назад
+                // (220 одиниць): в обох випадках NORMAL програвав EASY 4/12
+                // замість 9/12, хоча EASY відступати не вміє взагалі. Причина в
+                // правилах гри, а не в реалізації: РОЗРИВУ КОНТАКТУ немає —
+                // той, хто пішов, не стріляє й далі отримує урон у спину, тож
+                // відступ це подарунок. А втрачена точка — це очки, тобто умова
+                // перемоги.
+                //
+                // Лікується не реакція, а ПРИБУТТЯ: див. поріг першої хвилі в
+                // {@link #updateWaves} — саме він не давав загонові прийти в
+                // бій, який він не тягне.
+                forget(p);
+                continue;
+            }
+
+            // Зійтись на дистанцію влучного вогню. Робиться ПІСЛЯ перевірки
+            // переваги й до наказу атаки: наказ атаки доводить шеренгу до
+            // standoff, натиск проходить останні метри.
+            if (level.pressesRange) pressRange(p, target, executeTick);
 
             boolean sameTarget = engagedWith.get(p, -1) == target.id;
             boolean sameRoster = engagedSize.get(p, -1) == battle.size;
@@ -908,6 +1306,218 @@ public class TacticalBrain implements BotBrain {
             nextAttackTick.put(p, executeTick + ASSIGN_PERIOD_TICKS);
             order(new AttackCommand(playerId, idsOf(battle), target.id));
         }
+    }
+
+    /** З якої відстані ворог біля гармати вважається загрозою. */
+    private static final float GUN_ALARM = 140f;
+
+    /** Скільки далі за тривогу шукається перехоплення. */
+    private static final float GUARD_REACH = 420f;
+
+    /** Скільки юніт лишається в охороні — і скільки його не чіпають марш і бій. */
+    private static final int GUARD_TICKS = 240;   // 6 с
+
+    /** Куди гармата відходить: частка шляху до своїх. */
+    private static final float RETREAT_STEP = 160f;
+    /** Наскільки «ближчою» рахується кіннота, коли треба гасити зрив точки. */
+    private static final float CAVALRY_DEFENCE_BONUS = 600f;
+
+    /** Скільки оборонець лишається приписаним до точки, яку боронить. */
+    private static final int DEFEND_LOCK_TICKS = 320;   // 8 с
+
+    /** id юніта → точка, до якої він прив'язаний обороною. */
+    private final IntIntMap lockedTo = new IntIntMap();
+    /** id юніта → до якого тіку тримається прив'язка. */
+    private final IntIntMap lockedUntil = new IntIntMap();
+
+    /** id юніта → до якого тіку він в охороні гармати. */
+    private final IntIntMap guardUntil = new IntIntMap();
+    /** id гармати → з якого тіку можна знову піднімати тривогу. */
+    private final IntIntMap gunAlarm = new IntIntMap();
+
+    /** Чи цей юніт зараз відряджений боронити гармату. */
+    private boolean guarding(Unit u, int executeTick) {
+        return executeTick < guardUntil.get(u.id, 0);
+    }
+
+    /**
+     * Тривога за гарматою: відвести її до своїх і вислати перехоплення.
+     *
+     * <h3>Чому це взагалі потрібно</h3>
+     * {@code Artillery.damage == 0} — гармата не може відбитись НІЯК. Швидкість
+     * 17 проти 40 у кінноти, тобто втекти вона теж не може. Тому єдина відповідь
+     * — бігти ДО СВОЇХ і водночас кинути на нальотчика тих, хто дістане.
+     *
+     * <p>Виміряно зондом {@code RaidStand} (той самий рівень плюс один прийом:
+     * кіннотою на видиму гармату, ціль тримається до смерті): бот без цієї
+     * реакції програвав 9 матчів із 12 і втрачав УСІ свої гармати в кожному.
+     * 150 золота за штуку, тобто три піхотинці, і жодного пострілу у відповідь.
+     *
+     * <h3>Чому з відсічкою, а не щодумки</h3>
+     * Наказ скидає те, що юніт робив. Тривога, піднята щодві секунди,
+     * тримала б і гармату, і охорону в стані вічного перезапуску — та сама
+     * пастка, що й скрізь тут. Тому один наказ на {@link #GUARD_TICKS}, а
+     * відряджені юніти на цей час випадають із {@link #march} і {@link #fight}:
+     * інакше наступний же цикл покликав би їх назад на точку.
+     */
+    private void protectGuns(int executeTick) {
+        for (int i = 0; i < mine.size; i++) {
+            Unit gun = mine.get(i);
+            if (!(gun instanceof Artillery)) continue;
+
+            Unit raider = null;
+            float best = GUN_ALARM;
+            for (int j = 0; j < foes.size; j++) {
+                Unit f = foes.get(j);
+                float d = (float) Math.hypot(f.worldX() - gun.worldX(),
+                                             f.worldY() - gun.worldY());
+                if (d < best) { best = d; raider = f; }
+            }
+            // Тривога — це ПРОРИВ до гармати, а не «ворог десь попереду».
+            // Ознака: нальотчик ближчий до гармати, ніж будь-хто зі своїх,
+            // тобто він уже за спиною лінії. Без цієї умови тривога висіла б
+            // увесь бій — ворожа лінія стоїть у межах GUN_ALARM завжди, — і бот
+            // без упину задкував гарматою й висмикував по двоє з бою. Виміряно:
+            // так він програвав ЛЕГКОМУ рівню, який гармат не має взагалі.
+            if (raider != null && best >= nearestFriendDist(gun)) raider = null;
+            if (raider == null) { gunAlarm.remove(gun.id, 0); continue; }
+            if (executeTick < gunAlarm.get(gun.id, 0)) continue;
+            gunAlarm.put(gun.id, executeTick + GUARD_TICKS);
+
+            // 1. Гармата відходить ДО СВОЇХ. Не «геть від ворога»: тікаючи в
+            //    порожнечу, вона просто вмирає далі від допомоги.
+            float[] home = infantryCentre();
+            if (home == null) home = rallyPoint(mainObjective());
+            float dx = home[0] - gun.worldX(), dy = home[1] - gun.worldY();
+            float len = (float) Math.hypot(dx, dy);
+            if (len > 1f) {
+                float step = Math.min(RETREAT_STEP, len);
+                order(new MoveCommand(playerId, new int[] { gun.id },
+                        Fixed.fromFloat(gun.worldX() + dx / len * step),
+                        Fixed.fromFloat(gun.worldY() + dy / len * step)));
+            }
+
+            // 2. Перехоплення: найближчі до НАЛЬОТЧИКА, а не до гармати —
+            //    важливо, хто встигне, а не хто поруч із тим, що бороним.
+            pressing.clear();
+            int want = 2;
+            for (int pass = 0; pass < want; pass++) {
+                Unit bestGuard = null;
+                float bestD = GUARD_REACH;
+                for (int j = 0; j < mine.size; j++) {
+                    Unit u = mine.get(j);
+                    if (u instanceof Artillery || pressing.contains(u, true)) continue;
+                    if (guarding(u, executeTick)) continue;
+                    float d = (float) Math.hypot(u.worldX() - raider.worldX(),
+                                                 u.worldY() - raider.worldY());
+                    if (d < bestD) { bestD = d; bestGuard = u; }
+                }
+                if (bestGuard == null) break;
+                pressing.add(bestGuard);
+            }
+            if (pressing.size == 0) continue;
+
+            for (int j = 0; j < pressing.size; j++)
+                guardUntil.put(pressing.get(j).id, executeTick + GUARD_TICKS);
+            order(new AttackCommand(playerId, idsOf(pressing), raider.id));
+        }
+    }
+
+    /** Відстань від гармати до найближчого свого бійця; {@code MAX_VALUE}, якщо бійців немає. */
+    private float nearestFriendDist(Unit gun) {
+        float best = Float.MAX_VALUE;
+        for (int i = 0; i < mine.size; i++) {
+            Unit u = mine.get(i);
+            if (u instanceof Artillery) continue;
+            float d = (float) Math.hypot(u.worldX() - gun.worldX(),
+                                         u.worldY() - gun.worldY());
+            if (d < best) best = d;
+        }
+        return best;
+    }
+
+    /** Центр маси живої піхоти (без гармат); {@code null}, якщо піхоти немає. */
+    private float[] infantryCentre() {
+        float sx = 0f, sy = 0f;
+        int n = 0;
+        for (int i = 0; i < mine.size; i++) {
+            Unit u = mine.get(i);
+            if (u instanceof Artillery) continue;
+            sx += u.worldX(); sy += u.worldY(); n++;
+        }
+        return n == 0 ? null : new float[] { sx / n, sy / n };
+    }
+
+    /**
+     * Дистанція, на яку бот підводить лінію.
+     *
+     * <p>{@code Infantry} влучає зі 100% до 30 одиниць і лише з 35% на межі 90.
+     * Ставиться трохи ближче за 30, бо ціль рухається, а наказ віддається раз
+     * на секунду — на самій межі половина залпів уже летіла б із розкидом.
+     */
+    private static final float PRESS_DIST = 26f;
+
+    /** Допуск, у межах якого лінію не чіпають: наказ руху скидає те, що юніт робив. */
+    private static final float PRESS_PAD = 14f;
+
+    /** Не частіше разу на секунду — інакше це знову «наказ, що скасовує наказ». */
+    private static final int PRESS_PERIOD_TICKS = 40;
+
+    /** індекс точки → з якого тіку можна знову тиснути. */
+    private final IntIntMap nextPressTick = new IntIntMap();
+
+    /**
+     * Довести групу до дистанції влучного вогню й тримати її там.
+     *
+     * <h3>Навіщо</h3>
+     * {@code CombatManager.standoff} спиняє стрільця на {@code 0.85 × дальність},
+     * тобто на 76.5 для піхоти, і {@code processOrder} узагалі не зближується,
+     * якщо ціль уже в межах 90. Шанс влучити там ~50% проти 100% упритул — той
+     * самий загін б'є вдвічі слабше. Дуельний стенд, 6 проти 6, єдина різниця
+     * дистанція: сторона, що зійшлась, виграла 5 боїв із 6, 18 вцілілих проти 1.
+     *
+     * <h3>Чому наказ РУХУ, а не атаки</h3>
+     * Дистанцію наказ атаки не приймає: вона рахується всередині бою. А наказ
+     * руху скасовує наказ атаки — і це тут доречно, бо АВТОатака стріляє й на
+     * ходу ({@code CombatManager.update} не спиняє того, хто йде). Тобто
+     * група підходить, стріляючи, і лишається під автовогнем упритул. Рівно те,
+     * що робить рукою гравець.
+     *
+     * <h3>Пастка, від якої тут допуск і період</h3>
+     * Наказ СКИДАЄ те, що юніт робив. Натиск, повторений щодумки (у HARD це
+     * 20 разів на секунду), не дав би зробити й кроку — та сама вада, через яку
+     * колись «найшвидший» рівень програвав найповільнішому. Тому не частіше
+     * разу на секунду і лише коли група справді стоїть задалеко.
+     */
+    private void pressRange(int front, Unit target, int executeTick) {
+        if (executeTick < nextPressTick.get(front, 0)) return;
+
+        // Тиснуть лише ті, хто вже дістає: підхід від ENGAGE_RANGE — робота
+        // наказу атаки, він веде шеренгою, а натиск зіпсував би її строй.
+        pressing.clear();
+        float cx = 0f, cy = 0f;
+        for (int i = 0; i < battle.size; i++) {
+            Unit u = battle.get(i);
+            float d = (float) Math.hypot(u.worldX() - target.worldX(),
+                                         u.worldY() - target.worldY());
+            if (d > Fixed.toFloat(u.attackRange) + PRESS_PAD) continue;
+            if (d <= PRESS_DIST + PRESS_PAD) continue;   // уже впритул
+            pressing.add(u);
+            cx += u.worldX(); cy += u.worldY();
+        }
+        if (pressing.size == 0) return;
+        cx /= pressing.size; cy /= pressing.size;
+
+        // Точка на PRESS_DIST від цілі з БОКУ ГРУПИ: інакше половина лінії
+        // обходила б ціль, підставляючи спину решті ворогів.
+        float dx = cx - target.worldX(), dy = cy - target.worldY();
+        float len = (float) Math.hypot(dx, dy);
+        if (len < 1f) return;
+
+        nextPressTick.put(front, executeTick + PRESS_PERIOD_TICKS);
+        order(new MoveCommand(playerId, idsOf(pressing),
+                              Fixed.fromFloat(target.worldX() + dx / len * PRESS_DIST),
+                              Fixed.fromFloat(target.worldY() + dy / len * PRESS_DIST)));
     }
 
     /**

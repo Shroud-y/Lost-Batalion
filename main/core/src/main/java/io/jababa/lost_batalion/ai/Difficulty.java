@@ -31,13 +31,13 @@ public enum Difficulty {
     EASY("ЛЕГКИЙ",
          12, 0.35f, 1.60f, false, false,
           1,    1, false, false, false,
-          1, false),
+          1, false, false, false),
 
     /** Рівний суперник: збирає групу, боронить свої точки, тримає висоти. */
     NORMAL("ЗВИЧАЙНИЙ",
             4, 0.00f, 1.05f, true, true,
             3,    2, true, false, false,
-            2, false),
+            2, false, true, false),
 
     /**
      * Тисне. Збирає найбільший кулак, б'є найслабшого, відводить поранених,
@@ -45,8 +45,8 @@ public enum Difficulty {
      */
     HARD("ВАЖКИЙ",
           2, 0.00f, 1.00f, true, true,
-          5,    2, true, true, true,
-          3, true);
+          5,    3, true, true, true,
+          3, true, true, true);
 
     public final String title;
 
@@ -130,13 +130,42 @@ public enum Difficulty {
      */
     public final boolean usesCover;
 
+    /**
+     * Чи веде бот лінію на дистанцію влучного вогню.
+     *
+     * <p>Найдорожча навичка в грі, і в коді її не було ЗОВСІМ.
+     * {@code CombatManager.standoff} спиняє стрільця на {@code 0.85 × 90 = 76.5},
+     * де {@code Infantry.hitChanceAt} дає ~50%; впритул (≤30) — 100%. Тобто
+     * загін, який не зійшовся, б'є вдвічі слабше тим самим складом. Дзеркальний
+     * стенд цього НЕ бачить: обидва боти однаково косі. Виміряно окремим
+     * дуельним стендом — 6 проти 6, єдина різниця дистанція: сторона, що
+     * зійшлась, виграла 5 боїв із 6 із рахунком 18 вцілілих проти 1.
+     *
+     * <p>Легкому рівню не дається навмисно: не знати, що треба зійтись
+     * ближче, — це і є те, чим новачок відрізняється від гравця.
+     */
+    public final boolean pressesRange;
+
+    /**
+     * Чи тримає бот кінноту при піхоті на марші.
+     *
+     * <p>Кіннота вдвічі швидша (40 проти 20) і доходить до цілі сама — саме це
+     * видно оком як `кіннота йде насмерть`. Тримати її при лінії вміє не
+     * кожен: у дуелі лоб у лоб прийом дав 7 перемог із 12, а частка часу, який
+     * кіннота проводить під ворогом без своєї піхоти, впала з 50% до 30%.
+     * Але ДАТИ ЙОГО ВСІМ означало зрівняти рівні: HARD проти NORMAL просів
+     * 12/12 до 6/12, бо темп втрачали обидва. Тому це навичка важкого.
+     */
+    public final boolean holdsFormation;
+
     Difficulty(String title,
                int thinkPeriodTicks, float goldReserve, float attackOdds,
                boolean usesArtillery, boolean seeksHighGround,
                int massThreshold, int garrison,
                boolean defendsPoints, boolean focusesWeakest,
                boolean retreatsWounded,
-               int fronts, boolean usesCover) {
+               int fronts, boolean usesCover, boolean pressesRange,
+               boolean holdsFormation) {
         this.title            = title;
         this.thinkPeriodTicks = thinkPeriodTicks;
         this.goldReserve      = goldReserve;
@@ -150,6 +179,8 @@ public enum Difficulty {
         this.retreatsWounded  = retreatsWounded;
         this.fronts           = fronts;
         this.usesCover        = usesCover;
+        this.pressesRange     = pressesRange;
+        this.holdsFormation   = holdsFormation;
     }
 
     public static Difficulty byName(String name) {
