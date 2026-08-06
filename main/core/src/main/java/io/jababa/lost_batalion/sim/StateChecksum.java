@@ -46,11 +46,17 @@ public final class StateChecksum {
     public static final int C_POINTS     = 6;
     public static final int C_ECONOMY    = 7;
     public static final int C_VICTORY    = 8;
-    public static final int COMPONENTS   = 9;
+    /**
+     * Мораль окремо від здоров'я навмисно: це інша підсистема з іншими
+     * причинами розійтись, і «розійшлась мораль, а hp збіглись» одразу
+     * називає винного.
+     */
+    public static final int C_MORALE     = 9;
+    public static final int COMPONENTS   = 10;
 
     private static final String[] NAMES = {
         "позиції", "здоров'я", "таймери", "накази", "видимість", "RNG",
-        "точки", "економіка", "перемога"
+        "точки", "економіка", "перемога", "мораль"
     };
 
     public static String componentName(int index) {
@@ -88,6 +94,7 @@ public final class StateChecksum {
         long health    = FNV_OFFSET;
         long timers    = FNV_OFFSET;
         long visible   = FNV_OFFSET;
+        long morale    = FNV_OFFSET;
 
         Array<Unit> all = sim.getUnitManager().getAllUnits();
         for (int i = 0; i < all.size; i++) {
@@ -134,6 +141,15 @@ public final class StateChecksum {
             visible = mix(visible, u.id);
             visible = mix(visible, u.isVisibleTo(Team.PLAYER));
             visible = mix(visible, u.isVisibleTo(Team.ENEMY));
+
+            // Усі три поля, а не лише саму мораль: лічильник спокою вирішує,
+            // коли почнеться відновлення, а лічильник втечі — коли юніт
+            // повернеться в стрій. Розбіжність у будь-якому з них розводить
+            // клієнтів через секунди.
+            morale = mix(morale, u.id);
+            morale = mix(morale, u.morale);
+            morale = mix(morale, u.calmTicks);
+            morale = mix(morale, u.routTicks);
         }
 
         CombatManager combat = sim.getCombatManager();
@@ -148,6 +164,7 @@ public final class StateChecksum {
         out[C_TIMERS]     = timers;
         out[C_ORDERS]     = orders;
         out[C_VISIBILITY] = visible;
+        out[C_MORALE]     = morale;
         out[C_RNG]        = rng;
         out[C_POINTS]     = sim.getCapturePoints() == null
                           ? FNV_OFFSET

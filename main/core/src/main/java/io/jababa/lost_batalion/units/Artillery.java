@@ -40,7 +40,8 @@ public class Artillery extends Unit {
     private static final float ART_HP_BAR_OFFSET_X = 2f;
 
     private static final long ART_SPEED   = Fixed.fromInt(17);
-    private static final long ART_HP      = Fixed.fromInt(180);
+    /** Було 180; подвоєно разом з усіма (див. {@code Infantry.INF_HP}). */
+    private static final long ART_HP      = Fixed.fromInt(360);
     private static final long ART_DEFENSE = Fixed.fromInt(5);
 
     // ── Параметри пострілу ────────────────────────────────────────────────
@@ -108,10 +109,32 @@ public class Artillery extends Unit {
      */
     public Unit aimTarget = null;
 
+    /**
+     * Мораль обслуги — 60 проти сотні в піхоти.
+     *
+     * <p>Біля гармати теж люди, і це найгірше місце в бою: відбитись нема чим
+     * ({@code damage == 0}), утекти нема на чому (17 одиниць проти 40 у
+     * кінноти). Прорив до батареї має її розганяти, а не мовчки з'їдати —
+     * і саме тому тривога {@code protectGuns} у бота коштує двох бійців.
+     */
+    private static final long ART_MORALE = Fixed.fromInt(60);
+
+    /**
+     * Обстріл лякає вдвічі.
+     *
+     * <p>Множник живе на гарматі, а не на снаряді, бо страшна саме зброя:
+     * 120 урону по площі — це не постріл, це подія. Разом із
+     * {@link Unit#MORALE_PER_HP} пряме влучання забирає піхотинцю близько
+     * половини моралі, не вбивши його.
+     */
+    public static final long ART_MORALE_SHOCK = Fixed.fromInt(2);
+
     public Artillery(Team team, long rawX, long rawY) {
         super(team);
         maxHp               = ART_HP;
         hp                  = ART_HP;
+        maxMorale           = ART_MORALE;
+        morale              = ART_MORALE;
         speedPerTick        = Fixed.divInt(ART_SPEED, TickRate.TICKS_PER_SECOND);
         damage              = 0;
         attackRange         = 0;

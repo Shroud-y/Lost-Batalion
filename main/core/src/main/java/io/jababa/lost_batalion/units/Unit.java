@@ -47,6 +47,35 @@ public abstract class Unit {
     public long hp;
 
     /**
+     * Мораль — та сама шкала, що й здоров'я, і навмисно тим самим типом.
+     *
+     * <p>Друге здоров'я, яке витрачає не свинець, а страх: юніт із цілим hp і
+     * нулем моралі виходить з бою так само надійно, як убитий, тільки живим.
+     *
+     * <p>Стан симуляції: входить у checksum ({@code C_MORALE}) і в знімок.
+     * Рахує його {@code morale.MoraleSystem} — тут лише поля й правила зміни.
+     */
+    public long maxMorale;
+    public long morale;
+
+    /**
+     * Скільки тіків поспіль юніт не втрачав моралі.
+     *
+     * <p>Саме «не втрачав», а не «не стріляв»: спокій — це коли по тобі ніхто
+     * не працює. Стрілець, що безкарно розстрілює втікачів, відновлюється, і
+     * це правильно.
+     */
+    public int calmTicks;
+
+    /**
+     * Скільки тіків ще триває втеча; {@code 0} — юніт при собі.
+     *
+     * <p>Один лічильник замість пари «прапорець + таймер»: зламаність і час до
+     * повернення — це те саме число, і два поля могли б розійтись.
+     */
+    public int routTicks;
+
+    /**
      * Швидкість у світових одиницях за ТІК, а не за секунду.
      *
      * <p>Перерахунок робиться один раз при створенні: множити щотіку на
@@ -573,9 +602,16 @@ public abstract class Unit {
 
     /** Проста атака без урахування місцевості. */
     public boolean takeDamage(long rawDamage) {
+        return takeDamage(rawDamage, Fixed.ONE);
+    }
+
+    /**
+     * @param moraleShock у скільки разів цей удар страшніший за звичайний
+     *                    ({@link #moraleShock()} того, хто б'є)
+     */
+    public boolean takeDamage(long rawDamage, long moraleShock) {
         long effective = Fixed.max(0, rawDamage - defense);
-        hp -= effective;
-        if (hp <= 0) { hp = 0; alive = false; }
+        applyHit(effective, moraleShock);
         return !alive;
     }
 
@@ -587,14 +623,99 @@ public abstract class Unit {
      *                          (> ONE = захищений, < ONE = вразливий)
      */
     public boolean takeDamageWithTerrain(long rawDamage, long defenseMultiplier) {
+        return takeDamageWithTerrain(rawDamage, defenseMultiplier, Fixed.ONE);
+    }
+
+    public boolean takeDamageWithTerrain(long rawDamage, long defenseMultiplier, long moraleShock) {
         long afterArmor = Fixed.max(0, rawDamage - defense);
         // defenseMultiplier > 1 → ділимо (захист більший)
         // defenseMultiplier < 1 → ціль вразлива, урон більший
         long effective = Fixed.div(afterArmor, defenseMultiplier);
-        hp -= effective;
-        if (hp <= 0) { hp = 0; alive = false; }
+        applyHit(effective, moraleShock);
         return !alive;
     }
+
+    /**
+     * Спільний хвіст обох атак: здоров'я, мораль, смерть.
+     *
+     * <p>Один метод, а не два однакові хвости, саме тому, що місць загибелі в
+     * грі й так три, і четверте, про яке забули, тут з'явилось би першим.
+     *
+     * <p>Мораль коштує рівно те, що ДІЙШЛО крізь броню й місцевість, а не
+     * заявлений damage: одна цифра урону — одна причина боятись. Тому
+     * позиція на висоті й у лісі бережe не лише життя, а й нерви, і другого
+     * набору множників заводити не треба.
+     */
+    private void applyHit(long effective, long moraleShock) {
+        // Втікача рубають. Це не приправа до механіки, а те, що робить її
+        // чесною: без цього злам був БЕЗКОШТОВНОЮ евакуацією, і вигідною саме
+        // тому, хто програє — накритий загін не гинув, а розбігався, потім
+        // повертався. Тобто маса переставала конвертуватись у вбитих, і
+        // зосередження сил — те, на чому стоїть гра, — знецінювалось.
+        // Виміряно: NORMAL проти EASY 6/12 без цього і 10/12 з ним.
+        if (isBroken()) effective = Fixed.mul(effective, ROUT_VULNERABILITY);
+        hp -= effective;
+        if (hp <= 0) { hp = 0; alive = false; }
+        loseMorale(Fixed.mul(Fixed.mul(effective, MORALE_PER_HP), moraleShock));
+    }
+
+    // ── Мораль ────────────────────────────────────────────────────────────
+
+    /**
+     * Скільки моралі коштує одиниця отриманого урону.
+     *
+     * <p>Було 0.25; поділено на 1.5 разом з рештою джерел втрати
+     * (див. {@code MoraleSystem}) — мораль мусить згоряти повільніше за бій,
+     * а бій став удвічі довшим від подвоєння здоров'я.
+     */
+    public static final long MORALE_PER_HP = Fixed.fromFloat(0.1667f);
+
+    /**
+     * У скільки разів більше урону отримує зламаний.
+     *
+     * <p>Спина, що біжить, — найлегша ціль у бою, і в грі це мусить бути так
+     * само. Див. {@link #applyHit} про те, що ламалось без цього.
+     */
+    public static final long ROUT_VULNERABILITY = Fixed.fromFloat(1.6f);
+
+    /**
+     * Забрати моралі. Єдина точка, де мораль падає, — саме тому тут же
+     * скидається лічильник спокою: втрата і є ознака того, що юніт у бою.
+     */
+    public void loseMorale(long amount) {
+        if (amount <= 0 || !alive) return;
+        morale = Fixed.max(0, morale - amount);
+        calmTicks = 0;
+    }
+
+    /** Чи юніт зламаний: не слухає наказів, не б'ється, тікає. */
+    public boolean isBroken() { return routTicks > 0; }
+
+    /** Частка моралі 0..1 — тільки для бару. */
+    public float moraleRatio() {
+        return maxMorale <= 0 ? 1f : (float) ((double) morale / (double) maxMorale);
+    }
+
+    /**
+     * У скільки разів удар цього юніта страшніший за звичайний постріл.
+     *
+     * <p>Тут, а не гілкою по типу зброї в бою: лякає не «клас юніта», а те, ЯК
+     * б'ють. Наступний юніт, чий удар має ламати стрій, дістане це,
+     * перевизначивши одне число, — рівно як {@link #knockbackForce()}.
+     */
+    public long moraleShock() { return Fixed.ONE; }
+
+    /**
+     * Радіус, у якому юніт підтримує своїх (Q47.16); {@code 0} — не підтримує.
+     *
+     * <p>Порожній хук навмисно: офіцери й музиканти будуть, і коли будуть, вони
+     * мусять коштувати клас плюс два числа, а не правку в системі моралі.
+     * {@code MoraleSystem} читає ці два методи вже зараз.
+     */
+    public long moraleAuraRadius() { return 0; }
+
+    /** Скільки моралі за секунду додає аура своїм у радіусі. */
+    public long moraleAuraBonus() { return 0; }
 
     /**
      * Шанс влучити з відстані {@code dist} (Q47.16), у частках {@link Fixed#ONE}.
@@ -624,7 +745,7 @@ public abstract class Unit {
     /** Базова атака (без місцевості). */
     public boolean attack(Unit target) {
         if (attackTimerTicks > 0) return false;
-        target.takeDamage(damage);
+        target.takeDamage(damage, moraleShock());
         attackTimerTicks = attackCooldownTicks;
         return true;
     }
@@ -632,7 +753,7 @@ public abstract class Unit {
     /** Атака з урахуванням місцевості. Викликається з CombatManager. */
     public boolean attackWithTerrain(Unit target, long defenseMultiplier) {
         if (attackTimerTicks > 0) return false;
-        target.takeDamageWithTerrain(damage, defenseMultiplier);
+        target.takeDamageWithTerrain(damage, defenseMultiplier, moraleShock());
         attackTimerTicks = attackCooldownTicks;
         return true;
     }
@@ -676,6 +797,9 @@ public abstract class Unit {
         out.writeInt(pushTicks);
         out.writeLong(pathOffX);
         out.writeLong(pathOffY);
+        out.writeLong(morale);
+        out.writeInt(calmTicks);
+        out.writeInt(routTicks);
         out.writeInt(path == null ? 0 : path.length);
         if (path != null) for (int i = 0; i < path.length; i++) out.writeLong(path[i]);
     }
@@ -702,6 +826,10 @@ public abstract class Unit {
         pushTicks = in.readInt();
         pathOffX  = in.readLong();
         pathOffY  = in.readLong();
+        // maxMorale не їде: це характеристика з конструктора, як maxHp.
+        morale    = in.readLong();
+        calmTicks = in.readInt();
+        routTicks = in.readInt();
         int pathLength = in.readInt();
         if (pathLength <= 0) {
             path = null;

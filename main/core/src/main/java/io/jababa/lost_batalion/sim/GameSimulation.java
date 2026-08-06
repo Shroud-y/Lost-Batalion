@@ -9,6 +9,7 @@ import io.jababa.lost_batalion.economy.PendingSpawn;
 import io.jababa.lost_batalion.economy.SpawnQueue;
 import io.jababa.lost_batalion.math.DeterministicRandom;
 import io.jababa.lost_batalion.math.Fixed;
+import io.jababa.lost_batalion.morale.MoraleSystem;
 import io.jababa.lost_batalion.net.commands.CommandContext;
 import io.jababa.lost_batalion.path.NavGrid;
 import io.jababa.lost_batalion.path.PathFinder;
@@ -45,6 +46,7 @@ public class GameSimulation implements CommandContext {
     private final CombatManager     combatManager;
     private final VisibilitySystem  visibilitySystem;
     private final CaptureManager    captureManager;
+    private final MoraleSystem      moraleSystem;
     private final Economy           economy;
     private final SpawnQueue        spawnQueue;
     private final VictoryTracker    victory = new VictoryTracker();
@@ -100,6 +102,7 @@ public class GameSimulation implements CommandContext {
         this.combatManager    = new CombatManager(unitManager, terrain, random);
         this.visibilitySystem = new VisibilitySystem(terrain);
         this.captureManager   = new CaptureManager(zones);
+        this.moraleSystem     = new MoraleSystem(mapW, mapH);
         this.economy          = new Economy();
         this.spawnQueue       = new SpawnQueue();
 
@@ -157,10 +160,11 @@ public class GameSimulation implements CommandContext {
     /**
      * Рівно один крок симуляції.
      *
-     * <p>Порядок підсистем зафіксований і однаковий скрізь: рух, бій, видимість,
-     * захоплення. Переставити їх місцями — змінити результат, бо бій дивиться на
-     * позиції після руху, видимість — на те, хто вижив у бою, а точки — на те,
-     * хто ще стоїть у колі після всього цього.
+     * <p>Порядок підсистем зафіксований і однаковий скрізь: рух, бій, мораль,
+     * видимість, захоплення. Переставити їх місцями — змінити результат, бо бій
+     * дивиться на позиції після руху, мораль — на урон, уже нанесений цього
+     * тіку, видимість — на те, хто вижив у бою, а точки — на те, хто ще стоїть
+     * у колі після всього цього (і хто при цьому не побіг).
      *
      * <p>Команди на цей тік мають бути застосовані ДО виклику — це робить
      * {@link MatchRunner}, бо наказ, відданий на тіку N, мусить впливати вже
@@ -171,6 +175,11 @@ public class GameSimulation implements CommandContext {
 
         unitManager.tick(terrain, mapW, mapH);
         combatManager.tick();
+        // Мораль — одразу після бою: шок від влучань уже списаний усередині
+        // takeDamage, лишилось порахувати тиск і наслідки. Зламаним тут же
+        // знімаються накази атаки — цей стан належить бою, і чіпає його бій.
+        moraleSystem.tick(unitManager.getAllUnits(), captureManager);
+        combatManager.dropBrokenOrders();
         visibilitySystem.update(unitManager.getAllUnits());
         captureManager.tick(unitManager.getAllUnits());
         economy.tick(captureManager);
@@ -434,6 +443,7 @@ public class GameSimulation implements CommandContext {
     public CombatManager getCombatManager()   { return combatManager; }
     public VisibilitySystem getVisibility()   { return visibilitySystem; }
     public CaptureManager getCapturePoints()  { return captureManager; }
+    public MoraleSystem getMorale()           { return moraleSystem; }
     public Economy getEconomy()               { return economy; }
     public SpawnQueue getSpawnQueue()         { return spawnQueue; }
     public VictoryTracker getVictory()        { return victory; }

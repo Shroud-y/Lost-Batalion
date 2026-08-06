@@ -6,7 +6,15 @@ import io.jababa.lost_batalion.sim.TickRate;
 
 public class Infantry extends Unit {
 
-    private static final long INF_HP       = Fixed.fromInt(100);
+    /**
+     * Було 100; подвоєно 2026-08-06 разом з усіма родами військ.
+     *
+     * <p>Урон при цьому НЕ змінювався, тобто бій став удвічі довшим. Це не
+     * побічний ефект, а сенс зміни: юніт, який гине за кілька пострілів, не
+     * встигає ні зламатись, ні відновитись, і мораль лишалась би цифрою, яку
+     * ніхто не бачить. Числа моралі перераховані під новий темп.
+     */
+    private static final long INF_HP       = Fixed.fromInt(200);
     /** Одиниць за секунду; у полі юніта зберігається вже перерахованим на тік. */
     private static final long INF_SPEED    = Fixed.fromInt(20);
     private static final long INF_DAMAGE   = Fixed.fromInt(15);
@@ -35,10 +43,19 @@ public class Infantry extends Unit {
     /** Публічний, бо кіннота свідомо повторює піхотний габарит. */
     public static final long INF_HIT_RADIUS = Fixed.fromInt(8);
 
+    /**
+     * Мораль лінійного строю — та сама сотня, що й здоров'я.
+     *
+     * <p>Піхота тут еталон: усі інші числа моралі підбирались відносно неї.
+     */
+    private static final long INF_MORALE = Fixed.fromInt(100);
+
     public Infantry(Team team, long rawX, long rawY) {
         super(team);
         this.maxHp               = INF_HP;
         this.hp                  = INF_HP;
+        this.maxMorale           = INF_MORALE;
+        this.morale              = INF_MORALE;
         this.speedPerTick        = Fixed.divInt(INF_SPEED, TickRate.TICKS_PER_SECOND);
         this.damage              = INF_DAMAGE;
         this.defense             = INF_DEFENSE;

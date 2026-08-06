@@ -24,6 +24,25 @@ public class UnitRenderer {
     private static final float BAR_W             = 0.7f;
     private static final float BAR_LEFT          = 0.5f;
 
+    /**
+     * Наскільки прозорим стає юніт, поки біжить.
+     *
+     * <p>Не «трохи блідішим»: прозорість тут несе сенс «його зараз немає» —
+     * він не слухає, не стріляє й не тримає точку. Гравець мусить читати це з
+     * одного погляду на юрбу, а не звіряючи відтінки.
+     */
+    private static final float BROKEN_ALPHA = 0.45f;
+
+    /**
+     * Проміжок між баром здоров'я і баром моралі.
+     *
+     * <p>Обидва ліворуч від фігури, мораль — крайня. Дзеркальну розкладку
+     * (мораль праворуч) пробували першою і відкинули: у бою погляд читає
+     * стовпчик збоку від юніта, і два боки означали два місця, куди треба
+     * дивитись. Тепер це одна колонка, і бари порівнюються між собою.
+     */
+    private static final float MORALE_BAR_GAP = 0.4f;
+
     public UnitRenderer() {
         shapes = new ShapeRenderer();
     }
@@ -67,6 +86,12 @@ public class UnitRenderer {
                 }
             }
 
+            // Зламаний малюється напівпрозорим. Колір ставиться на batch, а не
+            // домішується в текстуру, і обов'язково повертається назад: batch
+            // спільний, і забутий колір пофарбував би все, що малюється далі.
+            boolean broken = u.isBroken();
+            if (broken) batch.setColor(1f, 1f, 1f, BROKEN_ALPHA);
+
             if (u.hasFacing()) {
                 // Юніти з напрямком (артилерія) малюються поверненими. Кут —
                 // стан симуляції, тут його лише переводять у градуси.
@@ -76,6 +101,8 @@ public class UnitRenderer {
             } else {
                 batch.draw(tex, x, y, size, size);
             }
+
+            if (broken) batch.setColor(Color.WHITE);
         }
     }
 
@@ -102,6 +129,14 @@ public class UnitRenderer {
             // після округлення при подряпині в кілька одиниць.
             if (u.hp >= u.maxHp) continue;
             drawHpBar(u, alpha);
+        }
+        // Другим проходом, а не в тому ж циклі: у моралі власна умова показу,
+        // і юніт із цілим hp та просілою мораллю мусить показати саме її.
+        for (Unit u : units) {
+            if (!u.alive) continue;
+            if (!DevView.visible(u, viewer)) continue;
+            if (u.morale >= u.maxMorale) continue;
+            drawMoraleBar(u, alpha);
         }
         shapes.end();
 
@@ -146,6 +181,39 @@ public class UnitRenderer {
         if (ratio > 0.5f)       shapes.setColor(0.2f, 0.8f, 0.2f, 0.9f);
         else if (ratio > 0.25f) shapes.setColor(0.9f, 0.8f, 0.1f, 0.9f);
         else                    shapes.setColor(0.9f, 0.2f, 0.1f, 0.9f);
+
+        shapes.rect(x, y, BAR_W, barH * ratio);
+    }
+
+    /**
+     * Бар моралі — ліворуч від бару здоров'я, тобто крайній у колонці.
+     *
+     * <p>Колір НЕ повторює HP навмисно. Здоров'я — зелене-жовте-червоне, тобто
+     * «скільки лишилось»; мораль синя і при просіданні білішає, тобто «наскільки
+     * вигорає». Однакова гама означала б два однакові стовпчики поруч, і
+     * гравець щоразу згадував би, який з них який.
+     */
+    private void drawMoraleBar(Unit u, float alpha) {
+        float size = u.getHitRadiusPx() * 2f;
+        float barH = size;
+
+        // Рівно на ширину HP-бару плюс проміжок далі від фігури, ніж він.
+        // Формула повторює drawHpBar навмисно: два бари мусять стояти на одній
+        // висоті й однакової довжини, інакше вони не порівнюються.
+        float x = u.renderX(alpha) - size / 2f - BAR_LEFT - BAR_W + u.hpBarOffsetX()
+                - MORALE_BAR_GAP - BAR_W;
+        float y = u.renderY(alpha) - size / 2f;
+
+        shapes.setColor(0f, 0.08f, 0.22f, 0.85f);
+        shapes.rect(x, y, BAR_W, barH);
+
+        float ratio = u.moraleRatio();
+        // Поки що мораль не міняє нічого, крім себе самої (стат-ефектів немає
+        // навмисно), тож уся її розповідь — це колір. Він мусить встигнути
+        // попередити ДО зламу, а не показати його постфактум.
+        if (ratio > 0.5f)       shapes.setColor(0.35f, 0.6f, 1f, 0.9f);
+        else if (ratio > 0.25f) shapes.setColor(0.75f, 0.8f, 1f, 0.9f);
+        else                    shapes.setColor(1f, 1f, 1f, 0.95f);
 
         shapes.rect(x, y, BAR_W, barH * ratio);
     }

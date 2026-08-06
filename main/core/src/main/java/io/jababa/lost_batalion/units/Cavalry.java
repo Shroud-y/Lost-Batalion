@@ -23,7 +23,8 @@ import io.jababa.lost_batalion.sim.TickRate;
  */
 public class Cavalry extends Unit {
 
-    private static final long CAV_HP      = Fixed.fromInt(80);
+    /** Було 80; подвоєно разом з усіма (див. {@code Infantry.INF_HP}). */
+    private static final long CAV_HP      = Fixed.fromInt(160);
     /** Одиниць за секунду. Піхота ходить 20, гармата 17 — кіннота вдвічі швидша. */
     private static final long CAV_SPEED   = Fixed.fromInt(40);
     private static final long CAV_DAMAGE  = Fixed.fromInt(26);
@@ -64,10 +65,25 @@ public class Cavalry extends Unit {
     /** Частка загального розмаху тремтіння для ударів кінноти. */
     private static final float CAV_SHAKE_SCALE = 0.65f;
 
+    /** Мораль піхотна: вершник не хоробріший за стрільця, він лише швидший. */
+    private static final long CAV_MORALE = Fixed.fromInt(100);
+
+    /**
+     * Удар з розгону лякає в півтора раза сильніше за постріл.
+     *
+     * <p>Те саме число, що й {@link #CAV_KNOCKBACK}, тільки для нервів: кіннота
+     * дістає лише того, кого фактично збила конем, і це видно як з боку
+     * шеренги, так і з боку того, кого збили. Саме цим вона й корисна проти
+     * строю, який лобовою перестрілкою не пробити.
+     */
+    private static final long CAV_MORALE_SHOCK = Fixed.fromFloat(1.5f);
+
     public Cavalry(Team team, long rawX, long rawY) {
         super(team);
         this.maxHp               = CAV_HP;
         this.hp                  = CAV_HP;
+        this.maxMorale           = CAV_MORALE;
+        this.morale              = CAV_MORALE;
         this.speedPerTick        = Fixed.divInt(CAV_SPEED, TickRate.TICKS_PER_SECOND);
         this.damage              = CAV_DAMAGE;
         this.defense             = CAV_DEFENSE;
@@ -79,6 +95,7 @@ public class Cavalry extends Unit {
     }
 
     @Override public long  knockbackForce() { return CAV_KNOCKBACK; }
+    @Override public long  moraleShock()    { return CAV_MORALE_SHOCK; }
     @Override public boolean usesRangedFx() { return false; }
 
     /**

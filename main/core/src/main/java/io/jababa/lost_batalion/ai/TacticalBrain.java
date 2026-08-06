@@ -1663,12 +1663,25 @@ public class TacticalBrain implements BotBrain {
 
     protected void order(GameCommand command) { orders.add(command); }
 
+    /**
+     * Свої юніти, якими можна розпоряджатись.
+     *
+     * <p>Зламані сюди НЕ входять, і одного цього рядка боту вистачає. Наказ
+     * втікачеві все одно відсіється в {@code UnitManager.collectOwned}, тобто
+     * шкоди від нього немає, — але поки він рахувався своїм, він рахувався і в
+     * масі загону, і серед оборонців точки, і в бюджеті напрямку. Тобто бот
+     * тримав би за наявні сили ту роту, якої на полі вже немає, і не купував
+     * би заміну саме тоді, коли вона потрібна.
+     *
+     * <p>Наслідок задарма: коли юніт отямиться, він сам повернеться в розподіл
+     * наступного ж циклу мислення, без жодного окремого коду про повернення.
+     */
     private Array<Unit> myUnits(Array<Unit> out) {
         out.clear();
         Array<Unit> all = sim.getUnitManager().getAllUnits();
         for (int i = 0; i < all.size; i++) {
             Unit u = all.get(i);
-            if (u.alive && u.team == me) out.add(u);
+            if (u.alive && u.team == me && !u.isBroken()) out.add(u);
         }
         return out;
     }

@@ -198,6 +198,37 @@ public class CombatManager {
         }
     }
 
+    /**
+     * Зняти накази з тих, хто щойно зламався.
+     *
+     * <p>Кличе {@code GameSimulation} одразу після системи моралі. Окремий
+     * прохід, а не перевірка всередині {@link MoraleSystem}, бо ордери й групи
+     * — стан БОЮ: друге місце, яке в них лізе, рано чи пізно розійдеться з
+     * першим у тому, що вважати порожньою групою.
+     *
+     * <p>Ручну ціль гармати тут теж треба гасити: обслуга, що розбіглась,
+     * нікуди не наводить.
+     */
+    public void dropBrokenOrders() {
+        for (int i = orders.size - 1; i >= 0; i--) {
+            if (orders.get(i).att.isBroken()) orders.removeIndex(i);
+        }
+        for (int i = groups.size - 1; i >= 0; i--) {
+            AttackGroup g = groups.get(i);
+            g.cleanup();
+            if (g.isEmpty()) groups.removeIndex(i);
+        }
+        Array<Unit> all = unitManager.getAllUnits();
+        for (int i = 0; i < all.size; i++) {
+            Unit u = all.get(i);
+            if (!u.isBroken() || !(u instanceof Artillery)) continue;
+            Artillery a = (Artillery) u;
+            a.manualTarget = null;
+            a.aimTarget    = null;
+            a.aimTicks     = 0;
+        }
+    }
+
     public void cancelAttackOrders(Array<Unit> units) {
         for (int i = orders.size - 1; i >= 0; i--) {
             Unit att = orders.get(i).att;
@@ -239,7 +270,8 @@ public class CombatManager {
             AttackOrder o = orders.get(i);
             // Видимість перевіряється очима атакуючого, а не «гравця»: у 1v1
             // сторін дві, і ціль, невидиму для одного, інший бачить чудово.
-            if (!o.att.alive || !o.target.alive || !o.target.isVisibleTo(o.att.team)) {
+            if (!o.att.alive || o.att.isBroken()
+                    || !o.target.alive || !o.target.isVisibleTo(o.att.team)) {
                 orders.removeIndex(i); continue;
             }
             processOrder(o);
@@ -248,6 +280,10 @@ public class CombatManager {
         for (int i = 0; i < all.size; i++) {
             Unit u = all.get(i);
             if (!u.alive) continue;
+            // Зламаний не воює — у цьому вся суть зламу. Перевірка стоїть тут,
+            // а не всередині tryAttack: вона однаково стосується і автовогню,
+            // і гарматного, і не має повторюватись у кожному з них.
+            if (u.isBroken()) continue;
 
             // Артилерія має власну логіку: авто-обстріл + ручна ціль
             if (u instanceof Artillery) { updateArtillery((Artillery) u, all); continue; }
@@ -995,7 +1031,11 @@ public class CombatManager {
             long distSq = Fixed.dstSq(u.x, u.y, cx, cy);
             if (distSq > radiusSq) continue;
             long falloff = Fixed.ONE - Fixed.div(Fixed.sqrt(distSq), radius);
-            u.takeDamage(Fixed.mul(baseDamage, falloff));
+            // Множник моралі береться з гармати напряму, бо снаряди в грі
+            // поки що бувають тільки її. Щойно з'явиться друга зброя по
+            // площі, число переїде на сам ArtilleryShell — а до того це
+            // означало б поле у знімку, яке ні від чого не залежить.
+            u.takeDamage(Fixed.mul(baseDamage, falloff), Artillery.ART_MORALE_SHOCK);
         }
     }
 
@@ -1122,7 +1162,10 @@ public class CombatManager {
         void cleanup() {
             for (int i = orders.size-1; i >= 0; i--) {
                 AttackOrder o = orders.get(i);
-                if (!o.att.alive || !o.target.alive) orders.removeIndex(i);
+                // Зламаний вибуває з групи нарівні з убитим: інакше шеренга
+                // чекала б, поки він займе своє місце, а він біжить у
+                // протилежний бік — фаза SPREAD не завершилась би ніколи.
+                if (!o.att.alive || o.att.isBroken() || !o.target.alive) orders.removeIndex(i);
             }
         }
         boolean isEmpty() { return orders.size == 0; }

@@ -37,7 +37,7 @@ public final class SimulationSnapshot {
      * (їх відсіює лоббі), але тег коштує 4 байти і одразу відрізняє
      * пошкоджені дані від чужих.
      */
-    private static final int MAGIC = 0x4C42_5303;   // "LBS" + версія 3 (точки, золото, черга військ)
+    private static final int MAGIC = 0x4C42_5304;   // "LBS" + версія 4 (мораль)
 
     /** Зняти стан. Викликається лише на хості й лише коли симуляція стоїть. */
     public static byte[] capture(GameSimulation sim) {
