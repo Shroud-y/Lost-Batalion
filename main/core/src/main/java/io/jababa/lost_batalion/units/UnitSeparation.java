@@ -57,8 +57,18 @@ public final class UnitSeparation {
                 Unit b = units.get(j);
                 if (!b.alive) continue;
 
-                long minGap = a.hitRadiusFixed() + b.hitRadiusFixed();
                 long dx = b.x - a.x, dy = b.y - a.y;
+
+                // Прямокутник бере участь у парі — розводимо по осях (див.
+                // resolveBoxes). Квадратні між собою лишаються на КОЛІ: та сама
+                // математика, що була до появи витягнутих хітбоксів, і той
+                // самий строй, під який підбирались відступи формацій.
+                if (a.rectangular() || b.rectangular()) {
+                    resolveBoxes(a, b, dx, dy, mapW, mapH);
+                    continue;
+                }
+
+                long minGap = a.hitRadiusFixed() + b.hitRadiusFixed();
 
                 // Спершу дешева відсічка по квадратах: корінь потрібен лише
                 // тим парам, що справді перетнулись.
@@ -92,6 +102,50 @@ public final class UnitSeparation {
                 b.y = clamp(b.y + offY, b.hitRadiusFixed(), mapH - b.hitRadiusFixed());
             }
         }
+    }
+
+    /**
+     * Розвести пару, у якій хоч один хітбокс прямокутний.
+     *
+     * <p>Перекриття двох AABB прибирається по ОДНІЙ осі — тій, де воно менше.
+     * Це стандартний мінімальний вектор зсуву: пхати по обох осях одразу
+     * означало б виштовхувати юніта по діагоналі там, де досить було відсунути
+     * його вбік, і витягнута фігура з'їжджала б із лінії строю щотіку.
+     *
+     * <p>Ділення навпіл і {@link #RESOLVE_FRACTION} — ті самі, що в круглій
+     * гілці: пара мусить розходитись однаково, з якого боку на неї не глянь.
+     */
+    private static void resolveBoxes(Unit a, Unit b, long dx, long dy,
+                                     long mapW, long mapH) {
+        long gapX = a.halfWidthFixed()  + b.halfWidthFixed();
+        long gapY = a.halfHeightFixed() + b.halfHeightFixed();
+
+        long absX = dx < 0 ? -dx : dx;
+        long absY = dy < 0 ? -dy : dy;
+        if (absX >= gapX || absY >= gapY) return;   // не перетинаються
+
+        long overX = gapX - absX;
+        long overY = gapY - absY;
+
+        long offX = 0, offY = 0;
+        if (overX <= overY) {
+            long push = Fixed.mul(Fixed.mul(overX, RESOLVE_FRACTION), Fixed.HALF);
+            if (push < MIN_PUSH) return;
+            // Стоять на одній вертикалі — напрямок беремо з id, як і в колі:
+            // потрібен хоч якийсь, але ОДНАКОВИЙ на всіх клієнтах.
+            offX = dx == 0 ? (((a.id + b.id) & 1) == 0 ? push : -push)
+                           : (dx > 0 ? push : -push);
+        } else {
+            long push = Fixed.mul(Fixed.mul(overY, RESOLVE_FRACTION), Fixed.HALF);
+            if (push < MIN_PUSH) return;
+            offY = dy == 0 ? (((a.id + b.id) & 1) == 0 ? push : -push)
+                           : (dy > 0 ? push : -push);
+        }
+
+        a.x = clamp(a.x - offX, a.halfWidthFixed(),  mapW - a.halfWidthFixed());
+        a.y = clamp(a.y - offY, a.halfHeightFixed(), mapH - a.halfHeightFixed());
+        b.x = clamp(b.x + offX, b.halfWidthFixed(),  mapW - b.halfWidthFixed());
+        b.y = clamp(b.y + offY, b.halfHeightFixed(), mapH - b.halfHeightFixed());
     }
 
     private static long clamp(long v, long lo, long hi) {

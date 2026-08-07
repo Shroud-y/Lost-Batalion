@@ -215,9 +215,17 @@ public class SelectionPanel {
             }
 
             Texture portrait = getPortrait(u.getTexturePath());
-            if (portrait != null)
-                batch.draw(portrait, px + ICON_INSET, py + ICON_INSET,
-                          PORTRAIT_SIZE - ICON_INSET * 2f, PORTRAIT_SIZE - ICON_INSET * 2f);
+            if (portrait != null) {
+                // Вписуємо картинку в слот ЗІ ЗБЕРЕЖЕННЯМ пропорції й по центру.
+                // Розтягнути в квадрат можна було, поки всі спрайти квадратні;
+                // легка піхота (29×11) у квадраті виглядає розчавленою.
+                float box = PORTRAIT_SIZE - ICON_INSET * 2f;
+                float k   = Math.min(box / portrait.getWidth(), box / portrait.getHeight());
+                float iw  = portrait.getWidth()  * k;
+                float ih  = portrait.getHeight() * k;
+                batch.draw(portrait, px + ICON_INSET + (box - iw) / 2f,
+                                     py + ICON_INSET + (box - ih) / 2f, iw, ih);
+            }
 
             px += PORTRAIT_SIZE + PORTRAIT_PAD;
         }

@@ -184,7 +184,7 @@ public class DevConsole {
                 print("speed <0.25..8>    — темп симуляції");
                 print("level <easy|normal|hard> — рівень супротивника");
                 print("gold <0|1> <n>     — видати золото");
-                print("spawn <inf|art|cav> <0|1> [скільки]");
+                print("spawn <inf|linf|art|cav|hcav> <0|1> [скільки]");
                 print("kill <0|1>         — знищити армію сторони");
                 print("win <0|1>          — оголосити переможця");
                 print("state              — стан матчу");
@@ -235,7 +235,7 @@ public class DevConsole {
                 break;
 
             case "spawn":
-                if (a.length < 3) { print("spawn <inf|art|cav> <0|1> [скільки]"); break; }
+                if (a.length < 3) { print("spawn <inf|linf|art|cav|hcav> <0|1> [скільки]"); break; }
                 host.spawn(Integer.parseInt(a[2]), a[1],
                            a.length > 3 ? Integer.parseInt(a[3]) : 1);
                 print("замовлено");

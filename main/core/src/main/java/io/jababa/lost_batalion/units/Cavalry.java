@@ -98,6 +98,9 @@ public class Cavalry extends Unit {
     @Override public long  moraleShock()    { return CAV_MORALE_SHOCK; }
     @Override public boolean usesRangedFx() { return false; }
 
+    /** Верхи — тобто важка кіннота її не зносить (див. {@code Unit.mounted}). */
+    @Override public boolean mounted()      { return true; }
+
     /**
      * Єдиний тип, чий бій тремтить: у сутичці впритул рух доречний, у
      * перестрілці — ні (див. {@code Unit.combatShakeScale}).

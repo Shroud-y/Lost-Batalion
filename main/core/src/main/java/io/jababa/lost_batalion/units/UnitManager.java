@@ -145,9 +145,9 @@ public class UnitManager {
             if (u == null || !u.alive || u.team != owner) continue;
             // Хітбокс, а не розмір спрайту: у частини юнітів (артилерія) фігура
             // займає лише середину картинки.
-            float halfSize = u.getHitRadiusPx();
-            if (x >= u.worldX() - halfSize && x <= u.worldX() + halfSize &&
-                y >= u.worldY() - halfSize && y <= u.worldY() + halfSize) {
+            float halfW = u.getHalfWidthPx(), halfH = u.getHalfHeightPx();
+            if (x >= u.worldX() - halfW && x <= u.worldX() + halfW &&
+                y >= u.worldY() - halfH && y <= u.worldY() + halfH) {
                 found = u;
                 break; // Беремо першого знайденого зверху
             }
@@ -278,6 +278,10 @@ public class UnitManager {
     }
 
     private void moveClamped(Unit u, long tx, long ty, long mapW, long mapH) {
+        // sizeFixed, а НЕ півосі хітбокса: це відступ ЦІЛІ від краю карти, він
+        // однаковий по обох осях і мусить лишитись тим самим числом, що й до
+        // появи витягнутих хітбоксів — інакше зсунулись би всі накази руху
+        // вздовж межі, у тому числі в уже зіграних матчах.
         long half = u.sizeFixed() >> 1;
         u.moveTo(Fixed.clamp(tx, half, mapW - half),
                  Fixed.clamp(ty, half, mapH - half));
@@ -289,15 +293,19 @@ public class UnitManager {
     private static final byte KIND_INFANTRY  = 0;
     private static final byte KIND_ARTILLERY = 1;
     private static final byte KIND_CAVALRY   = 2;
+    private static final byte KIND_HEAVY_CAV = 3;
+    private static final byte KIND_LIGHT_INF = 4;
 
     public void writeSnapshot(java.io.DataOutputStream out) throws java.io.IOException {
         out.writeInt(nextId);
         out.writeInt(allUnits.size);
         for (int i = 0; i < allUnits.size; i++) {
             Unit u = allUnits.get(i);
-            out.writeByte(u instanceof Artillery ? KIND_ARTILLERY
-                        : u instanceof Cavalry   ? KIND_CAVALRY
-                                                 : KIND_INFANTRY);
+            out.writeByte(u instanceof Artillery     ? KIND_ARTILLERY
+                        : u instanceof HeavyCavalry  ? KIND_HEAVY_CAV
+                        : u instanceof Cavalry       ? KIND_CAVALRY
+                        : u instanceof LightInfantry ? KIND_LIGHT_INF
+                                                     : KIND_INFANTRY);
             out.writeInt(u.team.ordinal());
             u.writeSnapshot(out);
         }
@@ -330,7 +338,9 @@ public class UnitManager {
             Team team = teams[in.readInt()];
 
             Unit u = kind == KIND_ARTILLERY ? new Artillery(team, 0, 0)
+                   : kind == KIND_HEAVY_CAV ? new HeavyCavalry(team, 0, 0)
                    : kind == KIND_CAVALRY   ? new Cavalry(team, 0, 0)
+                   : kind == KIND_LIGHT_INF ? new LightInfantry(team, 0, 0)
                                             : new Infantry(team, 0, 0);
             u.readSnapshot(in);
 

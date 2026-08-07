@@ -79,16 +79,20 @@ public class SpawnGhostRenderer {
     public void drawCursor(SpriteBatch uiBatch, UnitType type, int count, Team team,
                            float screenX, float screenY) {
         if (type == null || count <= 0) return;
-        float size = type.sizePx() * CURSOR_SCALE;
+        // Ширина й висота окремо: спрайт легкої піхоти не квадратний, і
+        // квадратний привид показував би розтягнуту фігуру.
+        float w = type.sizePx()   * CURSOR_SCALE;
+        float h = type.heightPx() * CURSOR_SCALE;
         Texture tex = texture(type, team);
 
         int shown = Math.min(count, CURSOR_MAX_GHOSTS);
-        float step = size * CURSOR_STACK;
+        // Крок по ШИРИНІ — силуети йдуть рядком, тобто нахлист горизонтальний.
+        float step = w * CURSOR_STACK;
 
         uiBatch.setColor(1f, 1f, 1f, CURSOR_ALPHA);
         for (int i = 0; i < shown; i++) {
-            uiBatch.draw(tex, screenX - CURSOR_OFFSET - size - i * step,
-                         screenY - size / 2f, size, size);
+            uiBatch.draw(tex, screenX - CURSOR_OFFSET - w - i * step,
+                         screenY - h / 2f, w, h);
         }
         uiBatch.setColor(1f, 1f, 1f, 1f);
     }
@@ -102,15 +106,16 @@ public class SpawnGhostRenderer {
             PendingSpawn s = all.get(i);
             if (s.playerId != viewer.playerId()) continue;
 
-            float size = s.type.sizePx();
-            float x = Fixed.toFloat(s.x) - size / 2f;
-            float y = Fixed.toFloat(s.y) - size / 2f;
+            float w = s.type.sizePx();
+            float h = s.type.heightPx();
+            float x = Fixed.toFloat(s.x) - w / 2f;
+            float y = Fixed.toFloat(s.y) - h / 2f;
 
             float alpha = PLACED_ALPHA_START
                         + (PLACED_ALPHA_END - PLACED_ALPHA_START) * s.elapsed();
 
             batch.setColor(1f, 1f, 1f, alpha);
-            batch.draw(texture(s.type, viewer), x, y, size, size);
+            batch.draw(texture(s.type, viewer), x, y, w, h);
         }
         batch.setColor(1f, 1f, 1f, 1f);
     }

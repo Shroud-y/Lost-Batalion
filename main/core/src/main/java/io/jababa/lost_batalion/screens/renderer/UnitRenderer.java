@@ -68,12 +68,15 @@ public class UnitRenderer {
             // getSizePx(), а НЕ getSize(): друге повертає fixed-point long, і
             // Java мовчки розширила б його у float — юніт розміром 10 малювався б
             // розміром 655360 і закривав би собою всю карту.
-            float size  = u.renderSizePx();
+            // Ширина й висота окремо: спрайт легкої піхоти 29×11, і квадрат
+            // показував би її розчавленою. У решти обидва числа однакові.
+            float w     = u.renderWidthPx();
+            float h     = u.renderHeightPx();
             // Тремтіння бою — тільки спрайт. Обводка виділення й HP-бар стоять
             // рівно: смужка, що дрижить разом із фігурою, читається як брак
             // рендера, а не як напруга бою.
-            float x     = u.renderX(alpha) - size / 2f + u.shakeOffsetX();
-            float y     = u.renderY(alpha) - size / 2f + u.shakeOffsetY();
+            float x     = u.renderX(alpha) - w / 2f + u.shakeOffsetX();
+            float y     = u.renderY(alpha) - h / 2f + u.shakeOffsetY();
 
             if (u instanceof Artillery) {
                 // Віддача: гармату відкидає НАЗАД уздовж ствола. Це рендер —
@@ -95,11 +98,11 @@ public class UnitRenderer {
             if (u.hasFacing()) {
                 // Юніти з напрямком (артилерія) малюються поверненими. Кут —
                 // стан симуляції, тут його лише переводять у градуси.
-                batch.draw(tex, x, y, size / 2f, size / 2f, size, size, 1f, 1f,
+                batch.draw(tex, x, y, w / 2f, h / 2f, w, h, 1f, 1f,
                            u.facingDegrees(), 0, 0, tex.getWidth(), tex.getHeight(),
                            false, false);
             } else {
-                batch.draw(tex, x, y, size, size);
+                batch.draw(tex, x, y, w, h);
             }
 
             if (broken) batch.setColor(Color.WHITE);
@@ -151,27 +154,44 @@ public class UnitRenderer {
 
     private void drawOutline(Unit u, float alpha) {
         // Обводка по хітбоксу, а не по спрайту: інакше в артилерії рамка
-        // обводить порожні кути картинки і виглядає завеликою.
-        float size = u.getHitRadiusPx() * 2f;
-        float pad  = OUTLINE_PAD;
-        float x    = u.renderX(alpha) - size / 2f - pad;
-        float y    = u.renderY(alpha) - size / 2f - pad;
-        float w    = size + pad * 2f;
-        float h    = size + pad * 2f;
+        // обводить порожні кути картинки і виглядає завеликою. Півосі окремо —
+        // у легкої піхоти хітбокс витягнутий, і квадратна рамка брехала б про
+        // те, куди по ній можна клікнути.
+        float halfW = u.getHalfWidthPx();
+        float halfH = u.getHalfHeightPx();
+        float pad   = OUTLINE_PAD;
+        float x     = u.renderX(alpha) - halfW - pad;
+        float y     = u.renderY(alpha) - halfH - pad;
+        float w     = halfW * 2f + pad * 2f;
+        float h     = halfH * 2f + pad * 2f;
 
         shapes.setColor(1f, 1f, 1f, 0.9f);
         shapes.rect(x, y, w, h);
 
     }
 
+    /**
+     * Найкоротший бар, який ще читається.
+     *
+     * <p>Висота бару йде від хітбокса, а в легкої піхоти той лише 7 одиниць —
+     * смужка виходила б утричі нижчою за сусідні й губилась би саме тоді, коли
+     * по ній треба щось зрозуміти. Ширина при цьому спільна для всіх, тож бари
+     * різних юнітів однаково широкі й порівнюються між собою.
+     */
+    private static final float BAR_MIN_H = 12f;
+
+    /** Висота бару: по хітбоксу, але не нижче {@link #BAR_MIN_H}. */
+    private static float barHeight(Unit u) {
+        return Math.max(u.getHalfHeightPx() * 2f, BAR_MIN_H);
+    }
+
     private void drawHpBar(Unit u, float alpha) {
         // Так само по хітбоксу — бар має стояти впритул до фігури, а не до
         // краю картинки.
-        float size = u.getHitRadiusPx() * 2f;
-        float barH = size;
+        float barH = barHeight(u);
 
-        float x = u.renderX(alpha) - size / 2f - BAR_LEFT - BAR_W + u.hpBarOffsetX();
-        float y = u.renderY(alpha) - size / 2f;
+        float x = u.renderX(alpha) - u.getHalfWidthPx() - BAR_LEFT - BAR_W + u.hpBarOffsetX();
+        float y = u.renderY(alpha) - barH / 2f;
 
         shapes.setColor(0.3f, 0f, 0f, 0.85f);
         shapes.rect(x, y, BAR_W, barH);
@@ -194,15 +214,14 @@ public class UnitRenderer {
      * гравець щоразу згадував би, який з них який.
      */
     private void drawMoraleBar(Unit u, float alpha) {
-        float size = u.getHitRadiusPx() * 2f;
-        float barH = size;
+        float barH = barHeight(u);
 
         // Рівно на ширину HP-бару плюс проміжок далі від фігури, ніж він.
         // Формула повторює drawHpBar навмисно: два бари мусять стояти на одній
         // висоті й однакової довжини, інакше вони не порівнюються.
-        float x = u.renderX(alpha) - size / 2f - BAR_LEFT - BAR_W + u.hpBarOffsetX()
+        float x = u.renderX(alpha) - u.getHalfWidthPx() - BAR_LEFT - BAR_W + u.hpBarOffsetX()
                 - MORALE_BAR_GAP - BAR_W;
-        float y = u.renderY(alpha) - size / 2f;
+        float y = u.renderY(alpha) - barH / 2f;
 
         shapes.setColor(0f, 0.08f, 0.22f, 0.85f);
         shapes.rect(x, y, BAR_W, barH);

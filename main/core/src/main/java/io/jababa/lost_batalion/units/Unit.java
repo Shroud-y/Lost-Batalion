@@ -864,6 +864,33 @@ public abstract class Unit {
     /** Радіус влучання (Q47.16). */
     public long hitRadiusFixed() { return sizeFixed() >> 1; }
 
+    /**
+     * Півширина хітбокса (Q47.16).
+     *
+     * <p>Типово хітбокс КВАДРАТНИЙ і збігається з {@link #hitRadiusFixed()} —
+     * саме так живуть усі юніти, чий спрайт квадратний. Перевизначають цю пару
+     * лише ті, чия фігура витягнута (легка піхота: спрайт 29×11), і тоді
+     * {@link #hitRadiusFixed()} лишається КОЛОМ для бою й поштовху, а прямокутник
+     * працює там, де питання геометричне: розштовхування, виділення, обводка.
+     *
+     * <p>Дві окремі осі, а не «розмір плюс пропорція»: пропорцію довелось би
+     * розгортати в кожному місці заново, і рано чи пізно хтось помножив би не
+     * ту вісь.
+     */
+    public long halfWidthFixed()  { return hitRadiusFixed(); }
+
+    /** Піввисота хітбокса (Q47.16). Див. {@link #halfWidthFixed()}. */
+    public long halfHeightFixed() { return hitRadiusFixed(); }
+
+    /**
+     * Чи хітбокс НЕ квадратний.
+     *
+     * <p>Питається там, де прямокутник вимагає іншої математики, ніж коло, —
+     * зараз це одне місце ({@code UnitSeparation}). Гілка тут відповідає на
+     * питання про ГЕОМЕТРІЮ, а не про тип юніта, і однакова на всіх клієнтах.
+     */
+    public final boolean rectangular() { return halfWidthFixed() != halfHeightFixed(); }
+
     // ── Поштовх ближнього бою ─────────────────────────────────────────────
 
     /**
@@ -903,10 +930,10 @@ public abstract class Unit {
         if (pushTicks <= 0) return;
         pushTicks--;
 
-        long half = hitRadiusFixed();
-        if (mapW > half * 2 && mapH > half * 2) {
-            x = Fixed.clamp(x + pushVelX, half, mapW - half);
-            y = Fixed.clamp(y + pushVelY, half, mapH - half);
+        long halfW = halfWidthFixed(), halfH = halfHeightFixed();
+        if (mapW > halfW * 2 && mapH > halfH * 2) {
+            x = Fixed.clamp(x + pushVelX, halfW, mapW - halfW);
+            y = Fixed.clamp(y + pushVelY, halfH, mapH - halfH);
         }
         if (pushTicks == 0) { pushVelX = 0; pushVelY = 0; }
     }
@@ -919,6 +946,25 @@ public abstract class Unit {
      * перевизначивши одне число, а не додавши ще одну гілку в {@code tryAttack}.
      */
     public long knockbackForce() { return 0; }
+
+    /**
+     * Чи юніт верхи.
+     *
+     * <p>Єдине, на що це впливає, — його НЕ зрушує той, чий поштовх бере лише
+     * піших ({@link #shovesMounted()}). Тому й ознака, а не {@code instanceof}:
+     * питання не «якого він класу», а «чи є під ним кінь, який тримає удар».
+     */
+    public boolean mounted() { return false; }
+
+    /**
+     * Чи поштовх цього юніта бере верхових.
+     *
+     * <p>Типово так — стріляють і б'ють однаково по всіх. Важка кіннота каже
+     * «ні»: вона зносить стрій піхоти, але чужого вершника лише зупиняє.
+     * Пара з {@link #mounted()} тримає це правило двома числами замість гілки
+     * по типах у {@code CombatManager}.
+     */
+    public boolean shovesMounted() { return true; }
 
     /**
      * Чи супроводжується удар пострілом — трасером і звуком.
@@ -981,8 +1027,27 @@ public abstract class Unit {
      */
     public float renderSizePx() { return getSizePx(); }
 
+    /**
+     * Ширина й висота спрайта в пікселях.
+     *
+     * <p>Типово квадрат {@link #renderSizePx()} — рівно те, що було до появи
+     * невквадратних спрайтів. Розводяться лише в юнітів із витягнутою
+     * картинкою; для них ці два числа МУСЯТЬ повторювати пропорцію файлу,
+     * інакше фігуру видно розтягнутою.
+     */
+    public float renderWidthPx()  { return renderSizePx(); }
+
+    /** Див. {@link #renderWidthPx()}. */
+    public float renderHeightPx() { return renderSizePx(); }
+
     /** Радіус влучання в пікселях — для UI-пікінгу (клік/рамка). */
     public float getHitRadiusPx() { return Fixed.toFloat(hitRadiusFixed()); }
+
+    /** Півширина хітбокса в пікселях — пікінг, обводка, бари. */
+    public float getHalfWidthPx()  { return Fixed.toFloat(halfWidthFixed()); }
+
+    /** Піввисота хітбокса в пікселях. Див. {@link #getHalfWidthPx()}. */
+    public float getHalfHeightPx() { return Fixed.toFloat(halfHeightFixed()); }
 
     /**
      * Зсув HP-бару по X у пікселях (додатне — правіше). Чисто косметика:

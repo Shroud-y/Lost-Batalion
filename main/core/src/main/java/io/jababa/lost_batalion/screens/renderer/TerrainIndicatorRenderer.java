@@ -124,12 +124,13 @@ public class TerrainIndicatorRenderer {
             // Прив'язка до хітбокса, а не до спрайта: у артилерії картинка має
             // порожні кути, і значок відлетів би від фігури. Так само роблять
             // обводка виділення й HP-бар.
-            float hitR = u.getHitRadiusPx();
-            float x    = u.renderX(alpha) + hitR + gap;
+            float hitW = u.getHalfWidthPx();
+            float hitH = u.getHalfHeightPx();
+            float x    = u.renderX(alpha) + hitW + gap;
             // Дно першого значка — трохи нижче дна хітбокса, далі стовпчик росте
             // вгору вздовж правого боку. batch.draw міряє y саме від низу
             // картинки, тому поправки на розмір значка тут немає.
-            float baseY = u.renderY(alpha) - hitR - DROP;
+            float baseY = u.renderY(alpha) - hitH - DROP;
 
             for (int i = 0; i < scratch.size; i++) {
                 batch.draw(icons[scratch.get(i)], x, baseY + i * step, size, size);

@@ -352,9 +352,10 @@ public class CombatManager {
         for (int i = 0; i < all.size; i++) {
             Unit u = all.get(i);
             if (u.team == viewer || !u.alive || !u.isVisibleTo(viewer)) continue;
-            float dx = worldX - u.worldX(), dy = worldY - u.worldY();
-            float r = Fixed.toFloat(u.hitRadiusFixed());
-            if (dx * dx + dy * dy <= r * r)
+            // Прямокутник, а не коло: у витягнутого юніта коло по короткій осі
+            // лишало б половину намальованої фігури некликабельною.
+            float dx = Math.abs(worldX - u.worldX()), dy = Math.abs(worldY - u.worldY());
+            if (dx <= u.getHalfWidthPx() && dy <= u.getHalfHeightPx())
                 return u;
         }
         return null;
@@ -780,6 +781,8 @@ public class CombatManager {
     private void applyKnockback(Unit attacker, Unit target) {
         long force = attacker.knockbackForce();
         if (force <= 0) return;
+        // Кінь тримає удар коня: важка кіннота зносить піших, а вершника ні.
+        if (target.mounted() && !attacker.shovesMounted()) return;
 
         long len = Fixed.normalize(target.x - attacker.x, target.y - attacker.y, dir);
         if (len == 0) return;   // стоять в одній точці — напрямку немає

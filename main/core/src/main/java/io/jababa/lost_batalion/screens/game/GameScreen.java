@@ -1171,7 +1171,7 @@ public class GameScreen implements Screen {
         @Override
         public void spawn(int playerId, String type, int count) {
             UnitType want = parseType(type);
-            if (want == null) { devConsole.print("тип: inf | art | cav"); return; }
+            if (want == null) { devConsole.print("тип: inf | linf | art | cav | hcav"); return; }
 
             // Виходить із власного кута й іде в центр карти — там його видно.
             long tx = Fixed.fromFloat(sim.getMapWidth()  * 0.5f);
@@ -1231,6 +1231,8 @@ public class GameScreen implements Screen {
                 case "inf": case "піхота":  return UnitType.INFANTRY;
                 case "art": case "гармата": return UnitType.ARTILLERY;
                 case "cav": case "кіннота": return UnitType.CAVALRY;
+                case "hcav": case "важка":  return UnitType.HEAVY_CAVALRY;
+                case "linf": case "легка":  return UnitType.LIGHT_INFANTRY;
                 default: return null;
             }
         }
@@ -1430,10 +1432,12 @@ public class GameScreen implements Screen {
         for (int i = 0; i < all.size; i++) {
             PendingSpawn s = all.get(i);
             if (s.playerId != localTeam.playerId()) continue;
-            float half = s.type.sizePx() / 2f;
+            // Півосі окремо — привид легкої піхоти витягнутий, як і сам юніт.
+            float halfW = s.type.sizePx()   / 2f;
+            float halfH = s.type.heightPx() / 2f;
             float dx = worldX - Fixed.toFloat(s.x);
             float dy = worldY - Fixed.toFloat(s.y);
-            if (Math.abs(dx) <= half && Math.abs(dy) <= half) return s;
+            if (Math.abs(dx) <= halfW && Math.abs(dy) <= halfH) return s;
         }
         return null;
     }
