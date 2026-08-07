@@ -102,8 +102,16 @@ public final class MultiplayerServices {
 
     public static LobbyDirectory createDirectory() { return current().createDirectory(); }
 
-    /** Створити лоббі і стати його хостом. */
+    /**
+     * Створити лоббі і стати його хостом.
+     *
+     * <p>Тут же фіксується затримка вводу цього матчу: її вимагає МЕРЕЖА, а
+     * розсилає всім хост у {@code StartMatch}. Робиться саме при створенні
+     * лоббі, а не при старті матчу, щоб хост і сам грав із тим числом, яке
+     * розіслав.
+     */
     public static LobbySession host(String lobbyName, String nick, String scenarioId, int maxPlayers) {
+        NetConfig.setInputDelayTicks(current().inputDelayTicks());
         return current().host(lobbyName, nick, scenarioId, maxPlayers);
     }
 

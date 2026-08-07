@@ -46,7 +46,32 @@ public final class NetConfig {
 
     /** @see TickRate#TICKS_PER_SECOND */
     public static final int TICK_RATE = TickRate.TICKS_PER_SECOND;
-    /** @see TickRate#INPUT_DELAY_TICKS */
+    /**
+     * Затримка виконання наказу В ЦЬОМУ матчі, у тіках.
+     *
+     * <p>Була константою, і це працювало рівно доти, доки мережа була одна.
+     * Lockstep не виконує тік, поки не має наказів ВІД УСІХ, тож затримка
+     * мусить перекривати час обігу пакета: 2 тіки — це 50 мс, тобто якраз
+     * локальна мережа. Через Steam пакет іде десятки, а через ретранслятор
+     * Valve і сотні мілісекунд — і кожен тік упирався в очікування. Саме це
+     * гравець бачить як «гравець #1 гальмує матч» і суцільні лаги.
+     *
+     * <p>Значення задає ХОСТ (бере його в мережі, див. {@code NetBackend}) і
+     * розсилає у {@code StartMatch}; клієнт застосовує прислане. Порівнювати
+     * його з власною константою більше НЕ можна — саме в тому й суть, що воно
+     * різне для різних мереж.
+     */
+    private static int inputDelayTicks = TickRate.INPUT_DELAY_TICKS;
+
+    public static int getInputDelayTicks() { return inputDelayTicks; }
+
+    public static void setInputDelayTicks(int ticks) {
+        // Нуль означав би виконання наказу тим самим тіком, на якому його
+        // віддали, — тобто до того, як він устигне доїхати до інших.
+        inputDelayTicks = Math.max(1, ticks);
+    }
+
+    /** Значення за замовчуванням — локальна мережа. */
     public static final int INPUT_DELAY_TICKS = TickRate.INPUT_DELAY_TICKS;
 
     // ── Checksum / десинхрон ──────────────────────────────────────────────

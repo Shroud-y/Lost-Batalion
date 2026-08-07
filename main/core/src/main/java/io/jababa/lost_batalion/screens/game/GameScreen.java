@@ -154,6 +154,18 @@ public class GameScreen implements Screen {
     private Stage pauseStage;
     private Stage hudStage;
     private Label waitLabel;
+    /**
+     * Стилі підказки очікування — створені ОДИН раз.
+     *
+     * <p>Не декоративна оптимізація: {@code UIFactory.create*Style()} на кожен
+     * виклик генерує новий шрифт FreeType зі сторінкою 1024×1024. Підказка
+     * оновлюється щокадру, поки хтось гальмує, тож виклик у {@code
+     * updateWaitHint} з'їдав пам'ять за секунди й валив гру з «Unable to
+     * allocate memory for pixmap». У локальній мережі цього не бачили ніколи:
+     * підказка там просто не встигала з'явитись.
+     */
+    private Label.LabelStyle waitHintStyle;
+    private Label.LabelStyle waitErrorStyle;
     /** Напис тактичної паузи. Показується лише коли {@link #frozen}. */
     private Label freezeLabel;
     /** Рахунок матчу вгорі по центру: свої очки : чужі. */
@@ -352,6 +364,15 @@ public class GameScreen implements Screen {
         this.scenario  = scenario;
         this.rngSeed   = rngSeed;
         this.transport = transport;
+
+        // Затримка вводу — параметр МАТЧУ, а не збірки: у мережевому матчі її
+        // задає хост (див. NetConfig.getInputDelayTicks). Одиночна гра мусить
+        // повернути типову, інакше після матчу по Steam наказ у грі з ботом
+        // виконувався б із чужою затримкою в 200 мс.
+        if (transport == null) {
+            io.jababa.lost_batalion.net.NetConfig.setInputDelayTicks(
+                io.jababa.lost_batalion.sim.TickRate.INPUT_DELAY_TICKS);
+        }
     }
 
     @Override
@@ -668,7 +689,9 @@ public class GameScreen implements Screen {
         // Нижче плашки рахунку, а не поряд: обидва тягнуться до центру верху, і
         // без рознесення підказка лягала б просто на цифри. Плашка підросла —
         // до рахунку додався рядок літер, — тому відступ більший за колишні 48.
-        waitLabel = new Label("", UIFactory.createHintStyle());
+        waitHintStyle  = UIFactory.createHintStyle();
+        waitErrorStyle = UIFactory.createErrorStyle();
+        waitLabel = new Label("", waitHintStyle);
         waitLabel.setVisible(false);
         Table waitRow = new Table();
         waitRow.setFillParent(true);
@@ -1311,7 +1334,7 @@ public class GameScreen implements Screen {
         if (dropNoticeTimer > 0f) {
             waitLabel.setText(String.join(", ", runner.getDroppedNicks())
                             + " вибув з матчу. Гра триває.");
-            waitLabel.setStyle(UIFactory.createErrorStyle());
+            waitLabel.setStyle(waitErrorStyle);
             waitLabel.setVisible(true);
             return;
         }
@@ -1322,7 +1345,7 @@ public class GameScreen implements Screen {
             int who = runner.getWaitingForPlayer();
             // Коротка затримка — це просто мережа; довга вже варта окремих слів.
             boolean lagging = runner.isLagWarning();
-            waitLabel.setStyle(lagging ? UIFactory.createErrorStyle() : UIFactory.createHintStyle());
+            waitLabel.setStyle(lagging ? waitErrorStyle : waitHintStyle);
             if (who < 0) {
                 waitLabel.setText("Очікування…");
             } else if (lagging) {

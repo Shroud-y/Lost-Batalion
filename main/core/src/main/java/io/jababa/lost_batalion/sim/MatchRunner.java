@@ -104,6 +104,12 @@ public class MatchRunner implements MatchTransport.Listener {
         this.host          = transport.isHost();
         this.checksumInterval = Math.max(1, NetConfig.getChecksumIntervalTicks());
 
+        // Затримка вводу тепер різна для різних мереж, тож вона мусить бути
+        // видимою: з неї починається розбір будь-якої скарги на «гру ривками».
+        NetLog.info("Матч: гравець " + localPlayerId + " з " + playerIds.length
+            + ", затримка вводу " + NetConfig.getInputDelayTicks() + " тіків ("
+            + (NetConfig.getInputDelayTicks() * TickRate.TICK_MILLIS) + " мс)");
+
         sendWarmup();
     }
 
@@ -113,7 +119,7 @@ public class MatchRunner implements MatchTransport.Listener {
      * матч на секунду пізніше, отримав би тіки, яких у нього не було.
      */
     private void sendWarmup() {
-        for (int tick = 1; tick <= TickRate.INPUT_DELAY_TICKS; tick++) {
+        for (int tick = 1; tick <= NetConfig.getInputDelayTicks(); tick++) {
             transport.sendCommands(
                 new TickCommands(tick, localPlayerId, new ArrayList<>(), generation));
         }
@@ -170,7 +176,7 @@ public class MatchRunner implements MatchTransport.Listener {
             // щотіку, навіть порожнім: мовчання теж треба підтвердити, інакше
             // решта не відрізнить його від лагу.
             transport.sendCommands(
-                buffer.flushLocal(next + TickRate.INPUT_DELAY_TICKS, localPlayerId));
+                buffer.flushLocal(next + NetConfig.getInputDelayTicks(), localPlayerId));
         }
 
         if (waiting) {
@@ -275,7 +281,7 @@ public class MatchRunner implements MatchTransport.Listener {
      * спрацює. Двох тіків input delay мало б вистачити, але один зайвий тік
      * коштує 25 мс і рятує від гонки на повільному з'єднанні.
      */
-    private static final int DROP_ANNOUNCE_MARGIN = TickRate.INPUT_DELAY_TICKS + 2;
+    private static int dropAnnounceMargin() { return NetConfig.getInputDelayTicks() + 2; }
 
     /** Хто вибув: playerId → нік. Порядок не важливий, це для UI. */
     private final java.util.Map<Integer, String> dropped = new java.util.LinkedHashMap<>();
@@ -322,7 +328,7 @@ public class MatchRunner implements MatchTransport.Listener {
     public boolean dropPlayer(int playerId, String nick, boolean removeUnits) {
         if (!host || dropped.containsKey(playerId)) return false;
 
-        int effectiveTick = Math.max(sim.getTickNumber() + DROP_ANNOUNCE_MARGIN,
+        int effectiveTick = Math.max(sim.getTickNumber() + dropAnnounceMargin(),
                                      buffer.lastTickFor(playerId) + 1);
 
         PlayerDropped message = new PlayerDropped(playerId, nick, effectiveTick, removeUnits);
@@ -513,7 +519,7 @@ public class MatchRunner implements MatchTransport.Listener {
         waitingFrames = 0;
         waitingForPlayer = -1;
 
-        for (int tick = resumeTick + 1; tick <= resumeTick + TickRate.INPUT_DELAY_TICKS; tick++) {
+        for (int tick = resumeTick + 1; tick <= resumeTick + NetConfig.getInputDelayTicks(); tick++) {
             transport.sendCommands(
                 new TickCommands(tick, localPlayerId, new ArrayList<>(), newGeneration));
         }

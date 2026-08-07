@@ -59,6 +59,15 @@ public class SteamMatchTransport implements MatchTransport, SteamNetworkingCallb
     /** Прийомний буфер. Прямий — інакше Steamworks не приймає. */
     private ByteBuffer inbox = ByteBuffer.allocateDirect(64 * 1024);
 
+    /**
+     * Буфер відправки — ОДИН на транспорт, а не новий на кожен пакет.
+     *
+     * <p>Накази йдуть 40 разів на секунду, і {@code allocateDirect} на кожен —
+     * це і системний виклик, і прямa пам'ять, яку звільняє лише збирач сміття.
+     * За кілька хвилин матчу так вичерпується ліміт прямої пам'яті.
+     */
+    private ByteBuffer outbox = ByteBuffer.allocateDirect(64 * 1024);
+
     private boolean open = true;
 
     private static final class Peer {
@@ -193,10 +202,15 @@ public class SteamMatchTransport implements MatchTransport, SteamNetworkingCallb
 
     private void send(Peer peer, byte[] data) {
         try {
-            ByteBuffer buffer = ByteBuffer.allocateDirect(data.length);
-            buffer.put(data);
-            buffer.flip();
-            networking.sendP2PPacket(peer.id, buffer, SteamNetworking.P2PSend.Reliable, CHANNEL);
+            if (outbox.capacity() < data.length) {
+                outbox = ByteBuffer.allocateDirect(
+                    Math.min(Math.max(data.length, outbox.capacity() * 2),
+                             SteamPacketCodec.MAX_PACKET_BYTES));
+            }
+            outbox.clear();
+            outbox.put(data, 0, data.length);
+            outbox.flip();
+            networking.sendP2PPacket(peer.id, outbox, SteamNetworking.P2PSend.Reliable, CHANNEL);
         } catch (Exception e) {
             SteamMatchmakingHub.log("не вдалось надіслати гравцю " + peer.playerId + ": " + e);
         }

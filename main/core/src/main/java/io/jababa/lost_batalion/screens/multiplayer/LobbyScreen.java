@@ -275,14 +275,18 @@ public class LobbyScreen extends BaseScreen {
     }
 
     private void launchMatch(StartMatch start) {
-        // Параметри матчу мусять збігатися побітово: різний tick rate або input
-        // delay означає, що збірки різні, і матч розсинхронізується не одразу,
-        // а через хвилину — коли причину вже не видно.
-        if (start.tickRate != NetConfig.TICK_RATE
-            || start.inputDelayTicks != NetConfig.INPUT_DELAY_TICKS) {
+        // Темп симуляції мусить збігатися побітово: різний tick rate означає,
+        // що збірки різні, і матч розсинхронізується не одразу, а через
+        // хвилину — коли причину вже не видно.
+        if (start.tickRate != NetConfig.TICK_RATE) {
             setStatus("Несумісні параметри матчу — у хоста інша версія гри.", true);
             return;
         }
+        // А от затримку вводу задає ХОСТ і саме її треба застосувати: вона
+        // залежить від мережі (локальна проти Steam), а не від версії гри.
+        // Раніше тут стояла звірка з власною константою — з нею матч через
+        // Steam був би просто неможливий.
+        NetConfig.setInputDelayTicks(start.inputDelayTicks);
         NetConfig.setChecksumIntervalTicks(start.checksumIntervalTicks);
 
         MatchTransport transport = session.openMatch(start);

@@ -129,7 +129,7 @@ public class HostLobbySession implements LobbySession {
             start.scenarioId = scenarioId;
             start.slots      = copySlots();
             start.tickRate              = NetConfig.TICK_RATE;
-            start.inputDelayTicks       = NetConfig.INPUT_DELAY_TICKS;
+            start.inputDelayTicks       = NetConfig.getInputDelayTicks();
             start.checksumIntervalTicks = NetConfig.getChecksumIntervalTicks();
         }
 
