@@ -177,7 +177,10 @@ public class SteamLobbyDirectory implements LobbyDirectory, SteamMatchmakingCall
 
         lobbies.clear();
         lobbies.addAll(fresh);
+        // Фільтр друкується ЗАВЖДИ, а не лише коли ключ заданий: «знайдено 0»
+        // саме по собі не каже, чи мережа порожня, чи ми шукаємо не те.
         SteamMatchmakingHub.log("пошук лоббі: знайдено " + fresh.size()
-            + (roomKey.isEmpty() ? "" : " за ключем " + roomKey));
+            + ", протокол " + NetConfig.PROTOCOL_VERSION
+            + (roomKey.isEmpty() ? ", без ключа" : ", ключ " + roomKey));
     }
 }
