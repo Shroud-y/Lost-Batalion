@@ -240,7 +240,9 @@ public class VictoryTracker {
             if (units != null) {
                 for (int i = 0; i < units.size; i++) {
                     Unit u = units.get(i);
-                    if (u != null && !u.alive && u.team == team) fallen++;
+                    // Поглинуті батареєю — не втрата: гармата не загинула, а
+                    // стала частиною сусідньої (див. Unit.absorbed).
+                    if (u != null && !u.alive && !u.absorbed() && u.team == team) fallen++;
                 }
             }
             lost[playerId]       = fallen;

@@ -50,6 +50,12 @@ public class DevConsole {
         void forceWin(int playerId);
         /** Тактична пауза — те саме, що пробіл. */
         void setFrozen(boolean frozen);
+        /**
+         * Звести ВСІ свої гармати в батареї — те саме, що кнопка в панелі,
+         * тільки без виділення мишею. Потрібне саме для автознімка: інакше
+         * механіку об'єднання неможливо ні побачити, ні прогнати без людини.
+         */
+        void mergeGuns();
         /** Рядок стану матчу. */
         String describeState();
     }
@@ -63,6 +69,11 @@ public class DevConsole {
     private final Deque<String> lines   = new ArrayDeque<>();
     private final java.util.List<String> history = new java.util.ArrayList<>();
     private int historyIndex = -1;
+
+    /** Відкладені команди сценарію: час від старту (с) і сам рядок. */
+    private final java.util.List<Float>  delayedAt  = new java.util.ArrayList<>();
+    private final java.util.List<String> delayedCmd = new java.util.ArrayList<>();
+    private float scriptClock;
 
     private boolean open;
     /** Останнє відоме положення паузи — щоб `pause` без аргументу перемикав. */
@@ -143,6 +154,25 @@ public class DevConsole {
         input.setCursorPosition(input.getText().length());
     }
 
+    /**
+     * Просунути годинник сценарію і виконати те, чому настав час.
+     *
+     * <p>Час КАДРУ, а не тіку: сценарій — це заміна руці за клавіатурою, і
+     * міряти його треба тим самим, чим міряються автознімки. Множник
+     * {@code speed} на нього свідомо не діє — інакше «зняти на 12-й секунді»
+     * означало б різні моменти в різних прогонах.
+     */
+    public void updateScript(float delta) {
+        if (delayedCmd.isEmpty()) return;
+        scriptClock += delta;
+        for (int i = delayedCmd.size() - 1; i >= 0; i--) {
+            if (scriptClock < delayedAt.get(i)) continue;
+            String cmd = delayedCmd.remove(i);
+            delayedAt.remove(i);
+            submit(cmd);
+        }
+    }
+
     // ── Розбір ────────────────────────────────────────────────────────────
 
     /**
@@ -154,7 +184,26 @@ public class DevConsole {
      */
     public void execute(String script) {
         if (script == null) return;
-        for (String part : script.split(";")) submit(part);
+        for (String part : script.split(";")) {
+            String cmd = part.trim();
+            // «12s:merge» — виконати через 12 секунд від старту матчу. Без
+            // відкладених команд сценарієм не перевірити нічого, що вимагає
+            // ДВОХ дій у часі: зведення батареї, підхід підкріплення, наказ по
+            // юніту, який ще не вийшов із кута. Секунди — ті самі, що в
+            // lb.shotAt, тобто знімок і команду можна ставити поруч.
+            int colon = cmd.indexOf(':');
+            if (colon > 1 && cmd.charAt(colon - 1) == 's') {
+                try {
+                    float at = Float.parseFloat(cmd.substring(0, colon - 1).trim());
+                    delayedAt.add(at);
+                    delayedCmd.add(cmd.substring(colon + 1).trim());
+                    continue;
+                } catch (NumberFormatException ignored) {
+                    // не час, а звичайна команда з двокрапкою — виконати одразу
+                }
+            }
+            submit(cmd);
+        }
     }
 
     private void submit(String raw) {
@@ -185,6 +234,7 @@ public class DevConsole {
                 print("level <easy|normal|hard> — рівень супротивника");
                 print("gold <0|1> <n>     — видати золото");
                 print("spawn <inf|linf|art|cav|hcav> <0|1> [скільки]");
+                print("merge              — звести всі свої гармати в батареї");
                 print("kill <0|1>         — знищити армію сторони");
                 print("win <0|1>          — оголосити переможця");
                 print("state              — стан матчу");
@@ -239,6 +289,11 @@ public class DevConsole {
                 host.spawn(Integer.parseInt(a[2]), a[1],
                            a.length > 3 ? Integer.parseInt(a[3]) : 1);
                 print("замовлено");
+                break;
+
+            case "merge":
+                host.mergeGuns();
+                print("гармати зводяться");
                 break;
 
             case "kill":

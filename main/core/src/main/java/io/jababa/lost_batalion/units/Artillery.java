@@ -40,8 +40,15 @@ public class Artillery extends Unit {
     private static final float ART_HP_BAR_OFFSET_X = 2f;
 
     private static final long ART_SPEED   = Fixed.fromInt(17);
-    /** Було 180; подвоєно разом з усіма (див. {@code Infantry.INF_HP}). */
-    private static final long ART_HP      = Fixed.fromInt(360);
+    /**
+     * Було 180; подвоєно разом з усіма (див. {@code Infantry.INF_HP}).
+     *
+     * <p>Публічне, бо від нього рахується межа здоров'я батареї: у дуо вона
+     * рівно вдвічі, у тріо втричі більша. Саме множення від базового, а не
+     * сума максимумів учасників, — щоб число не залежало від того, ЯКИМИ
+     * гарматами батарею зібрали.
+     */
+    public static final long ART_HP      = Fixed.fromInt(360);
     private static final long ART_DEFENSE = Fixed.fromInt(5);
 
     // ── Параметри пострілу ────────────────────────────────────────────────
@@ -109,6 +116,86 @@ public class Artillery extends Unit {
      */
     public Unit aimTarget = null;
 
+    // ── Батарея (об'єднання гармат) ───────────────────────────────────────
+    //
+    // Кілька гармат зводяться в ОДИН юніт, а не в групу з посиланнями. Це
+    // рішення тут головне, і воно про симуляцію: юніт — це те, що має id,
+    // позицію, hp і рядок у знімку. «Група, якою керують як одним» означала б
+    // другу сутність із власним життєвим циклом у чотирьох місцях (виділення,
+    // накази, знімок, checksum) і питання «хто помер, коли вбили одного з
+    // трьох». Натомість зайві стволи ПОГЛИНАЮТЬСЯ: їхнє hp додається до
+    // ведучого, самі вони вибувають, і далі все працює так, ніби гармата
+    // завжди була одна — просто міцніша й голосніша.
+
+    /** Скільки стволів у цій батареї: 1 — звичайна гармата, 3 — межа. */
+    public int stack = 1;
+
+    /** Більше трьох не зводиться. Дуо + дуо теж упреться сюди. */
+    public static final int MAX_STACK = 3;
+
+    /**
+     * Id гармати, до якої ця ЙДЕ на об'єднання; {@code -1} — нікуди.
+     *
+     * <p>Id, а не посилання: наказ переживає ресинк, а посилання довелось би
+     * розв'язувати другим проходом, як {@link #manualTarget}. Ведуча гармата
+     * несе тут {@code -1} — вона стоїть і чекає.
+     */
+    public int mergeWithId = -1;
+
+    /**
+     * Тік, раніше за який не перебудовувати маршрут до ведучої.
+     *
+     * <p>Маршрут доводиться перебудовувати, бо ведуча могла зрушити після
+     * наказу: та, що йшла до неї, дійде до порожнього місця й стане. Але
+     * робити це щотіку не можна — недосяжна ведуча (інший берег річки)
+     * означала б пошук шляху 40 разів на секунду. Тому раз на пів секунди.
+     */
+    public int mergeRepathTick = 0;
+
+    /** Пауза між спробами перекласти маршрут до ведучої, у тіках. */
+    public static final int MERGE_REPATH_PERIOD = TickRate.TICKS_PER_SECOND / 2;
+
+    /**
+     * Чи цю гармату поглинула інша.
+     *
+     * <p>Поглинута лишається в списку з {@code alive == false} (id мусять
+     * лишатись валідними), і без цієї ознаки {@code VictoryTracker} порахував
+     * би її ВТРАТОЮ: він рахує саме мертвих скануванням списку. Об'єднання —
+     * не втрата, і підсумок матчу не має цього плутати.
+     */
+    public boolean absorbed = false;
+
+    @Override public boolean absorbed() { return absorbed; }
+
+    /**
+     * Скільки стволів стріляє залпом — рівно стільки, скільки їх на спрайті.
+     *
+     * <p>Батарея НЕ множить урон одного снаряда: вона випускає окремий снаряд
+     * з кожного ствола, кожен зі своїм розкидом. Різниця не косметична —
+     * три окремі вибухи накривають ширшу смугу, ніж один потрійний, і саме так
+     * батарея й мусить працювати проти строю.
+     */
+    public int barrels() { return stack; }
+
+    /**
+     * Зсув ствола {@code i} ВБІК від центру фігури (Q47.16, додатне — праворуч
+     * від напрямку пострілу).
+     *
+     * <p>Числа зняті зі спрайтів: у дуо (19 пікселів) стволи стоять на 4.5 і
+     * 14.5, у тріо (29) — на 5, 14.5 і 24. Тобто крок між ними ≈ 9.5, а весь
+     * ряд симетричний відносно центру. Це підбір на око, як і просили: щоб
+     * спалах вилітав зі ствола, а не з порожнечі поруч.
+     */
+    public long barrelOffset(int i) {
+        if (stack <= 1) return 0;
+        // Ряд симетричний: (i - (n-1)/2) кроків від центру.
+        long steps = Fixed.fromFloat(i - (stack - 1) / 2f);
+        return Fixed.mul(steps, BARREL_SPACING);
+    }
+
+    /** Відстань між сусідніми стволами на спрайті. */
+    private static final long BARREL_SPACING = Fixed.fromFloat(9.5f);
+
     /**
      * Мораль обслуги — 60 проти сотні в піхоти.
      *
@@ -167,6 +254,10 @@ public class Artillery extends Unit {
         out.writeInt(aimTicks);
         out.writeInt(manualTarget == null ? -1 : manualTarget.id);
         out.writeInt(aimTarget    == null ? -1 : aimTarget.id);
+        out.writeInt(stack);
+        out.writeInt(mergeWithId);
+        out.writeInt(mergeRepathTick);
+        out.writeBoolean(absorbed);
     }
 
     @Override
@@ -178,6 +269,10 @@ public class Artillery extends Unit {
         pendingManualTargetId = in.readInt();
         aimTarget = null;
         pendingAimTargetId = in.readInt();
+        stack       = in.readInt();
+        mergeWithId     = in.readInt();
+        mergeRepathTick = in.readInt();
+        absorbed        = in.readBoolean();
     }
 
     // ── Віддача (чистий візуал) ──────────────────────────────────────────
@@ -194,6 +289,8 @@ public class Artillery extends Unit {
     private static final float RECOIL_KICK_FRAC = 0.16f;
     /** Від центру до зрізу ствола — звідти вилітає спалах. */
     public static final float MUZZLE_OFFSET = 9f;
+    /** Те саме для симуляції: снаряд вилітає саме зі зрізу, а не з центру. */
+    public static final long  MUZZLE_OFFSET_FIXED = Fixed.fromFloat(MUZZLE_OFFSET);
 
     private float recoilTimer = 0f;
 
@@ -227,13 +324,47 @@ public class Artillery extends Unit {
     @Override public float  spriteFacingOffsetDeg() { return ART_SPRITE_FACING_OFFSET; }
 
     @Override public long   sizeFixed()      { return ART_SIZE_FIXED; }
-    @Override public float  renderSizePx()   { return ART_RENDER_SIZE; }
+
+    // ── Габарит батареї ───────────────────────────────────────────────────
+    //
+    // У дуо і тріо власні спрайти (19×17 і 29×18), і фігура на них ШИРША за
+    // високу — ряд гармат, а не одна. Тому і картинка, і хітбокс беруться
+    // просто з розмірів файлу: батарея займає рівно те місце, яке видно.
+    //
+    // Хітбокс тут ПРЯМОКУТНИЙ і не повертається разом зі спрайтом. Це свідоме
+    // спрощення, те саме, що в легкої піхоти: обертати рамку означало б
+    // перевести розштовхування й пікінг на OBB заради одного юніта, а різниця
+    // видима лише на межі, коли батарея стоїть боком.
+
+    private static final float DUO_W  = 19f, DUO_H  = 17f;
+    private static final float TRIO_W = 29f, TRIO_H = 18f;
+
+    @Override public float renderSizePx()   { return renderWidthPx(); }
+
+    @Override public float renderWidthPx() {
+        return stack >= 3 ? TRIO_W : stack == 2 ? DUO_W : ART_RENDER_SIZE;
+    }
+
+    @Override public float renderHeightPx() {
+        return stack >= 3 ? TRIO_H : stack == 2 ? DUO_H : ART_RENDER_SIZE;
+    }
+
+    @Override public long halfWidthFixed() {
+        return stack >= 3 ? Fixed.fromFloat(TRIO_W / 2f)
+             : stack == 2 ? Fixed.fromFloat(DUO_W  / 2f)
+                          : ART_HIT_RADIUS;
+    }
+
+    @Override public long halfHeightFixed() {
+        return stack >= 3 ? Fixed.fromFloat(TRIO_H / 2f)
+             : stack == 2 ? Fixed.fromFloat(DUO_H  / 2f)
+                          : ART_HIT_RADIUS;
+    }
     @Override public long   hitRadiusFixed() { return ART_HIT_RADIUS; }
     @Override public float  hpBarOffsetX()   { return ART_HP_BAR_OFFSET_X; }
     @Override public String getTexturePath() {
-        return team == Team.PLAYER
-            ? "units/artillery_player.png"
-            : "units/artillery_enemy.png";
+        String kind = stack >= 3 ? "artillery_trio" : stack == 2 ? "artillery_duo" : "artillery";
+        return "units/" + kind + (team == Team.PLAYER ? "_player.png" : "_enemy.png");
     }
 
     @Override public UnitType type() { return UnitType.ARTILLERY; }

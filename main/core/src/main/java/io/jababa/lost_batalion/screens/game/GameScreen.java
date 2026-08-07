@@ -37,6 +37,7 @@ import io.jababa.lost_batalion.economy.PendingSpawn;
 import io.jababa.lost_batalion.net.commands.AttackCommand;
 import io.jababa.lost_batalion.net.commands.CancelSpawnCommand;
 import io.jababa.lost_batalion.net.commands.CurveFormationCommand;
+import io.jababa.lost_batalion.net.commands.MergeArtilleryCommand;
 import io.jababa.lost_batalion.net.commands.MoveCommand;
 import io.jababa.lost_batalion.net.commands.MoveLineCommand;
 import io.jababa.lost_batalion.net.commands.PathMoveCommand;
@@ -441,6 +442,9 @@ public class GameScreen implements Screen {
                     selectionPanel.setFormationActive(true);
                 }
             }
+
+            @Override
+            public void onMergeArtillery() { issueMergeArtillery(); }
         });
 
         buildUiAndInput();
@@ -948,6 +952,11 @@ public class GameScreen implements Screen {
 
         // Консоль — над усім, зокрема над вікном результату: якщо матч уже
         // дограно, а перевірити щось треба, іншого шляху немає.
+        // Годинник сценарію тікає НЕЗАЛЕЖНО від того, чи відкрита панель:
+        // відкладена команда з -Dlb.devCmd мусить спрацювати й тоді, коли
+        // консолі на екрані немає (а на автознімку її зазвичай і немає).
+        if (devConsole != null) devConsole.updateScript(delta);
+
         // Малюємо не лише при відкритій консолі: картинка-жарт живе кілька
         // секунд і після того, як консоль закрили.
         if (devStage != null && (devOpen() || (gag != null && gag.isActive()))) {
@@ -1185,6 +1194,21 @@ public class GameScreen implements Screen {
         }
 
         @Override
+        public void mergeGuns() {
+            // Список збирається тут, а не в консолі: та не має доступу до
+            // юнітів і не мусить його мати. Наказ іде звичайним шляхом, тож
+            // ведучу так само обирає симуляція.
+            Array<Unit> all = unitManager.getAllUnits();
+            com.badlogic.gdx.utils.IntArray ids = new com.badlogic.gdx.utils.IntArray();
+            for (int i = 0; i < all.size; i++) {
+                Unit u = all.get(i);
+                if (u.alive && u.team == localTeam && u instanceof Artillery) ids.add(u.id);
+            }
+            if (ids.size < 2) { devConsole.print("своїх гармат менше двох"); return; }
+            runner.issue(new MergeArtilleryCommand(runner.getLocalPlayerId(), ids.toArray()));
+        }
+
+        @Override
         public void killArmy(int playerId) {
             sim.removeArmy(Team.forPlayer(playerId));
         }
@@ -1339,6 +1363,20 @@ public class GameScreen implements Screen {
         runner.issue(new PathMoveCommand(runner.getLocalPlayerId(), unitManager.selectedIds(),
                                          Fixed.fromFloat(worldX), Fixed.fromFloat(worldY)));
         moveMarker.show(worldX, worldY, MoveMarker.MarkerType.MOVE);
+    }
+
+    /**
+     * Звести виділені гармати в батарею.
+     *
+     * <p>Іде тим самим шляхом, що й решта наказів — через {@code runner.issue},
+     * а не прямою зміною стану: об'єднання міняє hp і склад армії, тобто це
+     * симуляція, і в мережевому матчі вона мусить статись на однаковому тіку в
+     * обох. Кого з ким зводити, вирішує вже {@code GameSimulation}.
+     */
+    public void issueMergeArtillery() {
+        if (!unitManager.hasSelection()) return;
+        runner.issue(new MergeArtilleryCommand(runner.getLocalPlayerId(),
+                                               unitManager.selectedIds()));
     }
 
     public void issueMoveLine(float x1, float y1, float x2, float y2) {

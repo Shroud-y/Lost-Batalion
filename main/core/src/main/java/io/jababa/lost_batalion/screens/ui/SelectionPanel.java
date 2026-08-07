@@ -81,6 +81,8 @@ public class SelectionPanel {
 
     public interface CommandListener {
         void onCurvedFormation();
+        /** Кнопка «звести гармати». Показується лише коли є що зводити. */
+        void onMergeArtillery();
     }
     private CommandListener listener;
 
@@ -88,6 +90,8 @@ public class SelectionPanel {
     private final Texture portraitBg;
     private final Texture cmdFormation;
     private final Texture cmdArtillery;
+    /** Немає в ассетах — тоді кнопка малює власний знак (див. drawMergeGlyph). */
+    private final Texture cmdMerge;
 
     private final Array<Texture> portraitTextures = new Array<>();
     private final Array<String>  portraitPaths    = new Array<>();
@@ -96,11 +100,23 @@ public class SelectionPanel {
     private boolean formationActive = false;
     private boolean artilleryActive = false;
 
+    /**
+     * Чи є що зводити в батарею — рахується разом зі зміною виділення.
+     *
+     * <p>Кнопка не просто гасне, а ЗНИКАЄ: об'єднання доступне рідко (треба дві
+     * гармати в одному виділенні), і постійно згасла кнопка в кутку панелі
+     * читалась би як щось поламане. Це той рідкий випадок, коли §7 DESIGN
+     * («недоступний пункт гасне, а не зникає») не діє: там ідеться про пункт
+     * СПИСКУ, чия відсутність зсуває сусідів, а тут кнопка крайня в ряду.
+     */
+    private boolean mergeAvailable = false;
+
     public SelectionPanel() {
         panelBg      = loadTex("ui/panel_bg.png");
         portraitBg   = loadTex("ui/portrait_bg.png");
         cmdFormation = loadTex("ui/cmd_formation.png");
         cmdArtillery = loadTex("ui/cmd_artillery.png");
+        cmdMerge     = loadTex("ui/cmd_merge.png");
     }
 
     public void setListener(CommandListener l) { this.listener = l; }
@@ -119,6 +135,7 @@ public class SelectionPanel {
             for (int i = 0; i < selectedUnits.size; i++) {
                 if (selectedUnits.get(i) instanceof Artillery) { hasArtillery = true; break; }
             }
+            mergeAvailable = calcMergeAvailable();
         }
 
         float target = visible ? 1f : 0f;
@@ -235,6 +252,12 @@ public class SelectionPanel {
         float cy = panelY + CMD_PAD;
         drawCmdButton(batch, cmdFormation, cx, cy, formationActive);
 
+        // Друга в ряду — зведення гармат, і лише коли є що зводити.
+        if (mergeAvailable) {
+            drawCmdButton(batch, cmdMerge, cx + CMD_SIZE + CMD_PAD, cy, false);
+            if (cmdMerge == null) drawMergeGlyph(batch, cx + CMD_SIZE + CMD_PAD, cy);
+        }
+
         batch.end();
     }
 
@@ -263,6 +286,13 @@ public class SelectionPanel {
             return true;
         }
 
+        if (mergeAvailable && hitBtn(sx, syFromBottom, cx + CMD_SIZE + CMD_PAD, cy)) {
+            // Кнопка разова, а не перемикач: наказ віддається одразу, а далі
+            // гармати сходяться самі — тримати «активний» стан нема на чому.
+            if (listener != null) listener.onMergeArtillery();
+            return true;
+        }
+
         return true;
     }
 
@@ -276,6 +306,7 @@ public class SelectionPanel {
         if (portraitBg   != null) portraitBg.dispose();
         if (cmdFormation != null) cmdFormation.dispose();
         if (cmdArtillery != null) cmdArtillery.dispose();
+        if (cmdMerge     != null) cmdMerge.dispose();
         for (Texture t : portraitTextures) t.dispose();
         portraitTextures.clear();
         if (fallbackTex  != null) fallbackTex.dispose();
@@ -348,6 +379,40 @@ public class SelectionPanel {
             portraitTextures.add(t); portraitPaths.add(path); return t;
         }
         return null;
+    }
+
+    /**
+     * Чи можна звести бодай дві виділені гармати.
+     *
+     * <p>Умова та сама, за якою наказ виконає симуляція: дві найменші батареї
+     * у виділенні мусять разом влізти в {@link Artillery#MAX_STACK}. Тому дуо
+     * плюс дуо кнопки не дає — 2 + 2 не влазить у 3, і кнопка, яка нічого не
+     * робить, гірша за відсутню.
+     */
+    private boolean calcMergeAvailable() {
+        int smallest = Integer.MAX_VALUE, second = Integer.MAX_VALUE;
+        for (int i = 0; i < selectedUnits.size; i++) {
+            Unit u = selectedUnits.get(i);
+            if (!(u instanceof Artillery)) continue;
+            int s = ((Artillery) u).stack;
+            if (s < smallest) { second = smallest; smallest = s; }
+            else if (s < second) second = s;
+        }
+        if (second == Integer.MAX_VALUE) return false;   // менше двох гармат
+        return smallest + second <= Artillery.MAX_STACK;
+    }
+
+    /**
+     * Замінник іконки зведення, поки немає {@code ui/cmd_merge.png}: два
+     * квадрати, що заходять один на одного. Мальований, а не текстовий, бо в
+     * {@code main.ttf} немає жодного знака, схожого на «злити» (DESIGN §3).
+     */
+    private void drawMergeGlyph(SpriteBatch batch, float bx, float by) {
+        float s = CMD_SIZE * 0.30f;
+        float x = bx + CMD_SIZE * 0.22f;
+        float y = by + CMD_SIZE * 0.24f;
+        fill(batch, x, y, s, s, UIFactory.COLOR_HUD_SLOT_EDGE);
+        fill(batch, x + s * 0.62f, y + s * 0.62f, s, s, UIFactory.COLOR_ACCENT);
     }
 
     private boolean sameSelection(Array<Unit> other) {

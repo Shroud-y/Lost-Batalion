@@ -174,6 +174,9 @@ public class GameSimulation implements CommandContext {
         tickNumber++;
 
         unitManager.tick(terrain, mapW, mapH);
+        // Батареї — між рухом і боєм: гармати сходяться рухом, а стріляти
+        // цього ж тіку мусить уже зведена батарея, а не два окремі стволи.
+        resolveMerges();
         combatManager.tick();
         // Мораль — одразу після бою: шок від влучань уже списаний усередині
         // takeDamage, лишилось порахувати тиск і наслідки. Зламаним тут же
@@ -423,6 +426,172 @@ public class GameSimulation implements CommandContext {
     public void cancelSpawn(int playerId, int spawnId) {
         PendingSpawn cancelled = spawnQueue.cancel(playerId, spawnId);
         if (cancelled != null) economy.refund(playerId, cancelled.type.cost);
+    }
+
+    // ── Батарея ───────────────────────────────────────────────────────────
+
+    /**
+     * Наказ звести гармати.
+     *
+     * <p>Ведуча обирається ТУТ, а не в інтерфейсі: вибір мусить бути однаковим
+     * у всіх клієнтів, а команда несе лише список id. Правило — найбільша
+     * батарея, за рівності менший id; тобто дуо плюс одиночна дає тріо, а не
+     * навпаки, і жодного «в кого стволів більше, той і йде».
+     *
+     * <p>Саме злиття тут НЕ відбувається: гармати спершу сходяться (див.
+     * {@link #resolveMerges()}). Наказ живе на них у полі
+     * {@code Artillery.mergeWithId} і скасовується будь-яким наказом руху —
+     * як і ручна ціль.
+     */
+    @Override
+    public void mergeArtillery(int playerId, int[] unitIds) {
+        Array<Unit> units = own(playerId, unitIds);
+        if (units.size < 2) return;
+
+        Artillery lead = null;
+        for (int i = 0; i < units.size; i++) {
+            Unit u = units.get(i);
+            if (!(u instanceof Artillery)) continue;
+            Artillery a = (Artillery) u;
+            if (lead == null || a.stack > lead.stack
+                             || (a.stack == lead.stack && a.id < lead.id)) lead = a;
+        }
+        if (lead == null || lead.stack >= Artillery.MAX_STACK) return;
+
+        // Скільки стволів ведуча ще прийме. Решта лишається як була: наказ,
+        // який не влазить у межу, не має тихо перетворюватись на інший наказ.
+        int room = Artillery.MAX_STACK - lead.stack;
+
+        // Спершу відбір: хто саме йде. Точка зустрічі рахується вже по
+        // ВІДІБРАНИХ — інакше гармата, яка в батарею не влізла, тягнула б
+        // середину на себе.
+        Array<Unit> joining = new Array<>();
+        for (int i = 0; i < units.size && room > 0; i++) {
+            Unit u = units.get(i);
+            if (u == lead || !(u instanceof Artillery)) continue;
+            Artillery a = (Artillery) u;
+            if (a.stack > room) continue;
+            joining.add(a);
+            room -= a.stack;
+        }
+        if (joining.size == 0) return;
+
+        // Сходяться ВСІ, включно з ведучою: зустріч посередині вдвічі коротша
+        // за похід одного до іншого, і гармата не лишається сама під вогнем,
+        // поки сусідка їде через пів поля. Ведуча при цьому лишається ведучою
+        // — вона визначає, ЧИЄЮ стає батарея, а не хто куди йде.
+        long mx = lead.x, my = lead.y;
+        for (int i = 0; i < joining.size; i++) { mx += joining.get(i).x; my += joining.get(i).y; }
+        mx /= (joining.size + 1);
+        my /= (joining.size + 1);
+
+        for (int i = 0; i < joining.size; i++) {
+            Artillery a = (Artillery) joining.get(i);
+            a.mergeWithId = lead.id;
+            marchToMeet(a, mx, my);
+        }
+        marchToMeet(lead, mx, my);
+    }
+
+    /**
+     * Вирушити до точки зустрічі — з пошуком шляху, як і будь-який рух
+     * гармати: батарея збирається в бою, і лізти заради цього в річку не
+     * треба.
+     */
+    private void marchToMeet(Artillery a, long tx, long ty) {
+        ensureNavigation();
+        long[] path = pathFinder.findPath(a.x, a.y, tx, ty);
+        if (path != null) a.followPath(path, tx, ty);
+        else              a.moveTo(tx, ty);
+    }
+
+    /**
+     * Звести тих, хто вже зійшовся.
+     *
+     * <p>Викликається раз на тік ПІСЛЯ руху й ДО бою: гармата, що злилась
+     * цього тіку, мусить стріляти вже як батарея, а поглинута — не встигнути
+     * вистрілити окремо.
+     *
+     * <p>Поглинута не видаляється зі списку: id мають лишатись валідними для
+     * наказів, які ще їдуть по мережі. Вона лишається мертвою з ознакою
+     * {@code absorbed} — саме за нею {@code VictoryTracker} відрізняє її від
+     * втрати.
+     */
+    private void resolveMerges() {
+        Array<Unit> all = unitManager.getAllUnits();
+        for (int i = 0; i < all.size; i++) {
+            Unit u = all.get(i);
+            if (!u.alive || !(u instanceof Artillery)) continue;
+            Artillery a = (Artillery) u;
+            if (a.mergeWithId < 0) continue;
+
+            Unit target = unitManager.findById(a.mergeWithId);
+            if (!(target instanceof Artillery) || !target.alive || target == a) {
+                a.mergeWithId = -1;    // ведучу вбили — наказ вичерпано
+                continue;
+            }
+            Artillery lead = (Artillery) target;
+            if (lead.stack + a.stack > Artillery.MAX_STACK) {
+                a.mergeWithId = -1;    // хтось устиг зайняти місце раніше
+                continue;
+            }
+
+            // «Впритул» — сума хітбоксів плюс запас: ближче їх не пустить
+            // розштовхування, і без запасу вони товклися б поруч вічно.
+            // Мірка — ПІВШИРИНИ, а не радіуси влучання: у дуо й тріо хітбокс
+            // прямокутний і ширший за радіус, тож розштовхування тримає їх
+            // далі, ніж «два радіуси». Із радіусами вони товклися б поруч і не
+            // зводились би ніколи.
+            long contact = a.halfWidthFixed() + lead.halfWidthFixed() + MERGE_CONTACT_PAD;
+            if (Fixed.dstSq(a.x, a.y, lead.x, lead.y) > Fixed.mul(contact, contact)) {
+                // Не дійшла і вже стоїть — значить, ведуча відтоді зрушила
+                // (її міг повести гравець або підхід до цілі). Маршрут
+                // будується від НОВОГО місця; без цього гармата чекала б на
+                // порожньому клапті до кінця матчу.
+                if (!a.isMoving() && tickNumber >= a.mergeRepathTick) {
+                    a.mergeRepathTick = tickNumber + Artillery.MERGE_REPATH_PERIOD;
+                    ensureNavigation();
+                    long[] path = pathFinder.findPath(a.x, a.y, lead.x, lead.y);
+                    if (path != null) a.followPath(path, lead.x, lead.y);
+                    else              a.moveTo(lead.x, lead.y);
+                }
+                continue;
+            }
+
+            absorb(lead, a);
+        }
+    }
+
+    /** Запас до суми хітбоксів, на якому гармати вважаються зійшовшимися. */
+    private static final long MERGE_CONTACT_PAD = Fixed.fromInt(6);
+
+    /**
+     * Влити гармату {@code gone} у батарею {@code lead}.
+     *
+     * <p>Здоров'я СУМУЄТЬСЯ (дві побиті гармати дають побиту батарею), а межа
+     * рахується від базової: {@code ART_HP × stack}. Тому дуо з двох цілих
+     * гармат виходить із повною смугою, а з двох напівживих — із половиною.
+     *
+     * <p>Мораль НЕ додається: боєздатність обслуги — це стан людей, а не
+     * ресурс, який можна злити докупи. Три перелякані обслуги не дають однієї
+     * хороброї, тож батарея лишається з мораллю ведучої і з тією самою межею,
+     * що й одна гармата.
+     */
+    private void absorb(Artillery lead, Artillery gone) {
+        lead.stack += gone.stack;
+        lead.hp    += gone.hp;
+        lead.maxHp  = Artillery.ART_HP * lead.stack;
+        if (lead.hp > lead.maxHp) lead.hp = lead.maxHp;
+
+        Array<Unit> one = new Array<>();
+        one.add(gone);
+        combatManager.stopUnits(one);
+
+        gone.mergeWithId = -1;
+        gone.absorbed    = true;
+        gone.alive       = false;
+        gone.hp          = 0;
+        gone.selected    = false;
     }
 
     private Array<Unit> own(int playerId, int[] unitIds) {

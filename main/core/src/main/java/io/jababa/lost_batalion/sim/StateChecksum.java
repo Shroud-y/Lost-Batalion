@@ -136,6 +136,12 @@ public final class StateChecksum {
                 // Ціль наведення теж стан: вона тримається між тіками, і саме
                 // від неї залежить, куди полетить наступний снаряд.
                 timers = mix(timers, a.aimTarget == null ? -1 : a.aimTarget.id);
+                // Батарея: від числа стволів залежить урон залпу, а від наміру
+                // об'єднатись — куди гармата поїде наступного тіку.
+                timers = mix(timers, a.stack);
+                timers = mix(timers, a.mergeWithId);
+                timers = mix(timers, a.mergeRepathTick);
+                timers = mix(timers, a.absorbed);
             }
 
             visible = mix(visible, u.id);

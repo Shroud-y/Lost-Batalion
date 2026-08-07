@@ -865,6 +865,16 @@ public abstract class Unit {
     public long hitRadiusFixed() { return sizeFixed() >> 1; }
 
     /**
+     * Чи юніт зник не від смерті, а тому, що його поглинув інший.
+     *
+     * <p>Зараз так вибувають лише гармати, зведені в батарею
+     * ({@code Artillery.absorbed}). Питання стоїть на {@code Unit}, бо його
+     * ставить {@code VictoryTracker}, рахуючи ВТРАТИ: мертвий і поглинутий
+     * виглядають однаково ({@code alive == false}), а означають протилежне.
+     */
+    public boolean absorbed() { return false; }
+
+    /**
      * Півширина хітбокса (Q47.16).
      *
      * <p>Типово хітбокс КВАДРАТНИЙ і збігається з {@link #hitRadiusFixed()} —

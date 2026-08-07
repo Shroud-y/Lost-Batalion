@@ -164,6 +164,10 @@ public class CombatManager {
         for (int i = groups.size - 1; i >= 0; i--)
             if (groups.get(i).isEmpty()) groups.removeIndex(i);
 
+        // Наказ атаки скасовує намір об'єднатись: гармата не може одночасно
+        // сходитись із сусідкою і йти на позицію по цілі.
+        cancelMerge(units);
+
         // Артилерія не біжить на ціль — їй виставляємо ручну ціль (ПКМ по ворогу).
         Array<Unit> attackers = new Array<>();
         for (int i = 0; i < units.size; i++) {
@@ -243,8 +247,19 @@ public class CombatManager {
             Unit u = units.get(i);
             if (u instanceof Artillery) ((Artillery) u).manualTarget = null;
         }
+        // Наказ об'єднатись — теж наказ, і він теж помирає від наказу руху:
+        // гармата, якій сказали йти в інше місце, більше нікуди не зводиться.
+        cancelMerge(units);
         for (int i = groups.size - 1; i >= 0; i--)
             if (groups.get(i).isEmpty()) groups.removeIndex(i);
+    }
+
+    /** Зняти намір об'єднатись. Окремо, бо його скасовує і наказ атаки. */
+    public void cancelMerge(Array<Unit> units) {
+        for (int i = 0; i < units.size; i++) {
+            Unit u = units.get(i);
+            if (u instanceof Artillery) ((Artillery) u).mergeWithId = -1;
+        }
     }
 
     /**
@@ -992,34 +1007,46 @@ public class CombatManager {
         // пагорб. Стріляти по тому, чого гармата вже не бачить, вона не має.
         if (!canSee(art, target)) return;
 
-        // Два смикання RNG рівно на кожен постріл, у сталому порядку —
-        // саме це тримає послідовність однаковою на всіх клієнтах.
-        long angle  = random.nextAngle();
-        long spread = random.nextFixed(Artillery.STRIKE_SPREAD);
-        long impX = target.x + Fixed.mul(Fixed.cos(angle), spread);
-        long impY = target.y + Fixed.mul(Fixed.sin(angle), spread);
-
-        ArtilleryShell shell = new ArtilleryShell(art.x, art.y, impX, impY,
-                                                  Artillery.STRIKE_SPLASH_RADIUS,
-                                                  Artillery.STRIKE_DAMAGE);
-        shells.add(shell);
-
-        // Дульний спалах — на зрізі ствола, тобто зі зсувом уздовж напрямку.
+        // Напрямок пострілу і перпендикуляр до нього — уздовж першого лежить
+        // зріз ствола, уздовж другого стоїть сам ряд гармат.
+        long fx = Fixed.cos(art.facing), fy = Fixed.sin(art.facing);
+        long rx = fy, ry = -fx;                     // «праворуч» від напрямку
         float facingRad = Fixed.toFloat(art.facing);
-        Fx.muzzleBlast(
-            Fixed.toFloat(art.x) + (float) Math.cos(facingRad) * Artillery.MUZZLE_OFFSET,
-            Fixed.toFloat(art.y) + (float) Math.sin(facingRad) * Artillery.MUZZLE_OFFSET,
-            facingRad);
-        art.kickRecoil();
 
         ArtilleryStrikeEffect.loadAssets();
-        ArtilleryStrikeEffect eff = new ArtilleryStrikeEffect();
-        eff.showIncoming(Fixed.toFloat(art.x), Fixed.toFloat(art.y),
-                         Fixed.toFloat(impX), Fixed.toFloat(impY),
-                         Fixed.toFloat(Artillery.STRIKE_SPLASH_RADIUS),
-                         shell.angleDegrees());
-        shellVisuals.add(eff);
 
+        // Кожен ствол стріляє СВОЇМ снарядом: у батареї їх стільки, скільки
+        // намальовано на спрайті. Порядок стволів сталий (зліва направо), і
+        // кожен смикає RNG рівно двічі — тим самим послідовність лишається
+        // однаковою на всіх клієнтах, скільки б стволів не було.
+        for (int b = 0; b < art.barrels(); b++) {
+            long side = art.barrelOffset(b);
+            long muzzleX = art.x + Fixed.mul(fx, Artillery.MUZZLE_OFFSET_FIXED)
+                                 + Fixed.mul(rx, side);
+            long muzzleY = art.y + Fixed.mul(fy, Artillery.MUZZLE_OFFSET_FIXED)
+                                 + Fixed.mul(ry, side);
+
+            long angle  = random.nextAngle();
+            long spread = random.nextFixed(Artillery.STRIKE_SPREAD);
+            long impX = target.x + Fixed.mul(Fixed.cos(angle), spread);
+            long impY = target.y + Fixed.mul(Fixed.sin(angle), spread);
+
+            ArtilleryShell shell = new ArtilleryShell(muzzleX, muzzleY, impX, impY,
+                                                      Artillery.STRIKE_SPLASH_RADIUS,
+                                                      Artillery.STRIKE_DAMAGE);
+            shells.add(shell);
+
+            Fx.muzzleBlast(Fixed.toFloat(muzzleX), Fixed.toFloat(muzzleY), facingRad);
+
+            ArtilleryStrikeEffect eff = new ArtilleryStrikeEffect();
+            eff.showIncoming(Fixed.toFloat(muzzleX), Fixed.toFloat(muzzleY),
+                             Fixed.toFloat(impX), Fixed.toFloat(impY),
+                             Fixed.toFloat(Artillery.STRIKE_SPLASH_RADIUS),
+                             shell.angleDegrees());
+            shellVisuals.add(eff);
+        }
+
+        art.kickRecoil();
         art.startReload();
         playShot();
     }

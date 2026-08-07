@@ -86,6 +86,7 @@ public final class NetworkProtocol {
         kryo.register(io.jababa.lost_batalion.net.commands.PathMoveCommand.class);
         kryo.register(io.jababa.lost_batalion.net.commands.SpawnCommand.class);
         kryo.register(io.jababa.lost_batalion.net.commands.CancelSpawnCommand.class);
+        kryo.register(io.jababa.lost_batalion.net.commands.MergeArtilleryCommand.class);
     }
 
     // ── Дискаверi лоббі ───────────────────────────────────────────────────
