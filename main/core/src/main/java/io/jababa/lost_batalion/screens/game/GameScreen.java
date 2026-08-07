@@ -375,10 +375,94 @@ public class GameScreen implements Screen {
         }
     }
 
+    /** Підготовка матчу; {@code null} після її завершення. */
+    private MatchLoader    loader;
+    private LoadingOverlay loadingOverlay;
+    /** Скільки секунд уже чекаємо на суперника — для другого рядка на смузі. */
+    private float syncWaitSeconds;
+
+    /**
+     * Кадр екрана завантаження.
+     *
+     * <p>Дві фази, і друга — суть усієї задачі. Спершу виконуються кроки
+     * підготовки. Коли вони скінчились, у мережевому матчі ЩЕ НЕ ПОЧИНАЄМО:
+     * чекаємо, поки прийдуть накази суперника на перший тік. Той, хто
+     * завантажився швидше, чекав і раніше — просто це виглядало як завислий
+     * бій із написом «гравець гальмує», а тепер як чесне «очікуємо суперника».
+     *
+     * <p>Окремого рукостискання для цього не треба й НЕ додано: розігрівні
+     * накази, які кожен клієнт шле при створенні матчу, самі є свідченням
+     * готовності. Менше повідомлень — менше версій протоколу.
+     *
+     * @return чи можна малювати матч
+     */
+    private boolean renderLoading(float delta) {
+        boolean stepsDone = loader.advance();
+
+        boolean ready = stepsDone;
+        String note = "";
+
+        if (stepsDone && multiplayer && runner != null) {
+            // Годинник під час очікування стоїть, інакше матч почався б із
+            // боргу тіків, накопиченого поки ми дивились на смугу.
+            runner.pumpTransport();
+            if (runner.isSynced()) {
+                ready = true;
+            } else if (runner.isDisconnected()) {
+                // Суперник зник ще до першого тіку. Далі розбереться сам матч —
+                // тримати гравця на смузі назавжди не можна.
+                ready = true;
+            } else {
+                ready = false;
+                syncWaitSeconds += delta;
+                note = "Очікуємо суперника… " + (int) syncWaitSeconds + " с";
+            }
+        }
+
+        if (!ready) {
+            // Смуга стоїть на 100% лише тоді, коли КРОКИ скінчились: інакше
+            // повний індикатор із написом «очікуємо» читався б як зависання.
+            loadingOverlay.render(loader.progress(),
+                stepsDone ? "СИНХРОНІЗАЦІЯ" : loader.currentLabel(), note);
+            return false;
+        }
+
+        io.jababa.lost_batalion.net.NetLog.info("Підготовка матчу: "
+            + loader.elapsedMillis() + " мс"
+            + (syncWaitSeconds > 0f
+                ? String.format(", очікування суперника %.1f с", syncWaitSeconds) : ""));
+
+        loader = null;
+        loadingOverlay.dispose();
+        loadingOverlay = null;
+
+        // Час, витрачений на підготовку й очікування, НЕ перетворюється на
+        // пачку наздоганяючих тіків.
+        if (runner != null) runner.resetClock();
+        return true;
+    }
+
     @Override
     public void show() {
         if (game.music() != null) game.music().setContext(MusicManager.Context.BATTLE);
 
+        // Підготовка розкладена на кроки й виконується в render(), поки на
+        // екрані смуга. Порядок кроків — той самий, що був у суцільному
+        // show(): кожен наступний спирається на попередній.
+        loadingOverlay = new LoadingOverlay();
+        loader = new MatchLoader()
+            .add("КАРТА", 1f, this::loadMap)
+            .add("МІСЦЕВІСТЬ", 2f, this::loadTerrain)
+            .add("СИМУЛЯЦІЯ", 1f, this::loadSimulation)
+            .add("ШЛЯХИ", 3f, this::loadNavigation)
+            .add("ВІЙСЬКА", 1f, this::loadForces)
+            .add("ГРАФІКА", 2f, this::loadRenderers)
+            .add("ІНТЕРФЕЙС", 2f, this::buildUiAndInput);
+    }
+
+    // ── Кроки підготовки ──────────────────────────────────────────────────
+
+    private void loadMap() {
         batch      = new SpriteBatch();
         uiBatch    = new SpriteBatch();
         panelBatch = new SpriteBatch();
@@ -394,13 +478,32 @@ public class GameScreen implements Screen {
         gameViewport = new ExtendViewport(REF_WORLD_W, REF_WORLD_H, camera);
         gameViewport.update(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), true);
         applyZoom();
+    }
 
+    private void loadTerrain() {
         String maskPath = buildMaskPath(scenario.maskPath, scenario.texturePath);
         terrainMask      = new TerrainMaskManager(maskPath);                    // ліс + річки
         terrainCombatMask= new TerrainMaskManager(scenario.terrainMaskPath);    // яруси висот
         terrain          = new TerrainQuery(terrainMask, terrainCombatMask);
+    }
 
+    private void loadSimulation() {
         sim = new GameSimulation(terrain, mapWidth, mapHeight, rngSeed, scenario.captureZones);
+    }
+
+    /**
+     * Сітка навігації будується ТУТ, а не при першому наказі руху.
+     *
+     * <p>Вона лінива ({@code GameSimulation.ensureNavigation}), і через це
+     * її побудова падала на випадковий тік уже в бою — тобто на всіх одразу
+     * (бо наказ виконують усі) і саме тоді, коли хтось повів роту. У логах це
+     * ті самі затримки на сотні мілісекунд. Тепер це видимий крок смуги.
+     */
+    private void loadNavigation() {
+        sim.buildNavigation();
+    }
+
+    private void loadForces() {
         sim.spawnInitialForces();
 
         // Одиночна гра — це матч проти бота. Він підключається як другий
@@ -433,7 +536,9 @@ public class GameScreen implements Screen {
         camera.position.set(localTeam == Team.PLAYER ? mapWidth * 0.25f : mapWidth * 0.75f,
                             mapHeight / 2f, 0);
         camera.update();
+    }
 
+    private void loadRenderers() {
         unitRenderer      = new UnitRenderer();
         terrainIndicators = new TerrainIndicatorRenderer();
         topography        = new TopographyOverlay(terrain, mapWidth, mapHeight);
@@ -467,8 +572,6 @@ public class GameScreen implements Screen {
             @Override
             public void onMergeArtillery() { issueMergeArtillery(); }
         });
-
-        buildUiAndInput();
     }
 
     /**
@@ -735,6 +838,13 @@ public class GameScreen implements Screen {
         // звільняє GameScreen негайно, разом із батчами й текстурами —
         // усе, що після цього, малювало б уже нічим.
         if (disposed) return;
+
+        // Поки триває підготовка — на екрані смуга, і нічого з матчу ще не
+        // існує. Вихід звідси лише один: renderLoading() повертає true, коли
+        // все готово І суперник теж готовий.
+        if (loader != null) {
+            if (!renderLoading(delta)) return;
+        }
 
         Gdx.gl.glClearColor(0f, 0f, 0f, 1f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
@@ -1635,6 +1745,10 @@ public class GameScreen implements Screen {
     }
 
     @Override public void resize(int w, int h) {
+        // Вікно можуть змінити просто під час завантаження — а тоді половини
+        // цих об'єктів ще не існує. Смуга сама читає розмір екрана щокадру,
+        // тож їй перерахунок не потрібен.
+        if (gameViewport == null) return;
         gameViewport.update(w, h, false);
         // Форма вікна змінилась — поправка масштабу разом із нею, інакше площа
         // видимого світу поїде рівно на те, від чого ця поправка й рятує.
@@ -1698,6 +1812,7 @@ public class GameScreen implements Screen {
         if (disposed) return;
         disposed = true;
 
+        if (loadingOverlay  != null) loadingOverlay.dispose();
         if (runner          != null) runner.close();
         if (batch           != null) batch.dispose();
         if (uiBatch         != null) uiBatch.dispose();

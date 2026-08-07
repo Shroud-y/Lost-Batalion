@@ -354,6 +354,19 @@ public class GameSimulation implements CommandContext {
         return off < lo ? lo : (off > hi ? hi : off);
     }
 
+    /**
+     * Побудувати сітку навігації НАПЕРЕД, з екрана завантаження.
+     *
+     * <p>Сама сітка лінива навмисно — матч цілком може пройти без жодного
+     * наказу з пошуком шляху. Але коли він таки лунає, побудова стається
+     * посеред бою й на всіх клієнтах одразу (наказ виконують усі), тобто
+     * виглядає як спільний ривок. Дешевше збудувати її там, де на неї й так
+     * чекають.
+     */
+    public void buildNavigation() {
+        ensureNavigation();
+    }
+
     private void ensureNavigation() {
         if (navGrid == null) {
             navGrid    = new NavGrid(terrain, mapWidth, mapHeight);
