@@ -33,6 +33,14 @@ public interface CommandContext {
      */
     void pathMoveUnits(int playerId, int[] unitIds, long targetX, long targetY);
 
+    /**
+     * Зсунути виділених на однаковий вектор, зберігши стрій.
+     *
+     * <p>Цілі тут немає: ціль у кожного своя — його ж позиція плюс зсув.
+     * Рахується вона на тіку виконання, тобто з однакових чисел у всіх.
+     */
+    void offsetMoveUnits(int playerId, int[] unitIds, long dx, long dy);
+
     /** Наказ шикуватись у лінію між двома точками (ПКМ-драг). */
     void moveUnitsToLine(int playerId, int[] unitIds, long x1, long y1, long x2, long y2);
 

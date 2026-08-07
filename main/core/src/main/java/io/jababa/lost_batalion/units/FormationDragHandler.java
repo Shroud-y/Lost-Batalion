@@ -11,7 +11,23 @@ public class FormationDragHandler {
 
     private static final float MIN_LINE_LENGTH = 8f;
 
-    private static final float LINE_R = 1f, LINE_G = 0.85f, LINE_B = 0f;
+    /**
+     * Білий, а не акцентне золото.
+     *
+     * <p>Той самий виняток, що для рамки видимої ділянки на мінікарті
+     * (DESIGN §2): лінія наказу лежить ПОВЕРХ карти, постійно рухається і
+     * мусить читатись однаково над травою, ріллею й водою. Жовта губилась на
+     * жовтуватих ділянках саме тоді, коли на неї дивишся.
+     */
+    private static final float LINE_R = 1f, LINE_G = 1f, LINE_B = 1f;
+
+    /**
+     * Товщина в ЕКРАННИХ пікселях. Множиться на zoom камери, бо {@code
+     * ShapeRenderer} малює у світових одиницях: без цього лінія на віддаленій
+     * камері ставала волосиною, тобто товщою вона була б рівно там, де й так
+     * усе видно.
+     */
+    private static final float LINE_PX = 3f;
 
     private float startX, startY;
     private float endX, endY;
@@ -70,25 +86,25 @@ public class FormationDragHandler {
         if (pressed) active = true;
     }
 
-    public void draw(ShapeRenderer shapes) {
+    public void draw(ShapeRenderer shapes, float zoom) {
         if (!active) return;
 
         float len = lineLength();
         if (len < 1f) return;
 
+        float thickness = LINE_PX * zoom;
+
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
 
-        shapes.begin(ShapeRenderer.ShapeType.Line);
-        shapes.setColor(LINE_R, LINE_G, LINE_B, 0.9f);
-        shapes.line(startX, startY, endX, endY);
-        shapes.end();
-
+        // rectLine, а не line: товщину лінії GL задає glLineWidth, який на
+        // сучасних драйверах або обмежений одиницею, або ігнорується зовсім.
+        // Прямокутник уздовж вектора — єдиний надійний спосіб.
         shapes.begin(ShapeRenderer.ShapeType.Filled);
-        shapes.setColor(LINE_R, LINE_G, LINE_B, 0.8f);
-        shapes.circle(startX, startY, 2f, 12);
-        shapes.circle(endX, endY, 2f,12);
-        shapes.end();
+        shapes.setColor(LINE_R, LINE_G, LINE_B, 0.95f);
+        shapes.rectLine(startX, startY, endX, endY, thickness);
+        shapes.circle(startX, startY, thickness, 12);
+        shapes.circle(endX, endY, thickness, 12);
 
         float dx  = endX - startX;
         float dy  = endY - startY;
@@ -98,14 +114,11 @@ public class FormationDragHandler {
         float px = -ny;
         float py = nx;
 
-        float arrowSize = 4f;
+        float arrowSize = LINE_PX * 3f * zoom;
         float ax1 = endX - nx * arrowSize + px * arrowSize * 0.5f;
         float ay1 = endY - ny * arrowSize + py * arrowSize * 0.5f;
         float ax2 = endX - nx * arrowSize - px * arrowSize * 0.5f;
         float ay2 = endY - ny * arrowSize - py * arrowSize * 0.5f;
-
-        shapes.begin(ShapeRenderer.ShapeType.Filled);
-        shapes.setColor(LINE_R, LINE_G, LINE_B, 0.9f);
         shapes.triangle(endX, endY, ax1, ay1, ax2, ay2);
         shapes.end();
 

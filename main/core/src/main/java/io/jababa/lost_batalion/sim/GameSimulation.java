@@ -289,6 +289,14 @@ public class GameSimulation implements CommandContext {
         unitManager.moveUnitsTo(units, targetX, targetY, mapW, mapH);
     }
 
+    @Override
+    public void offsetMoveUnits(int playerId, int[] unitIds, long dx, long dy) {
+        Array<Unit> units = own(playerId, unitIds);
+        if (units.size == 0) return;
+        combatManager.cancelAttackOrders(units);
+        unitManager.offsetUnits(units, dx, dy, mapW, mapH);
+    }
+
     /**
      * Рух із пошуком найшвидшого шляху — ОДИН маршрут на всю групу.
      *

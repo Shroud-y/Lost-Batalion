@@ -56,6 +56,31 @@ public class DevConsole {
          * механіку об'єднання неможливо ні побачити, ні прогнати без людини.
          */
         void mergeGuns();
+
+        /**
+         * Зсунути ВСЮ армію гравця на вектор — тим самим наказом, що й
+         * Shift + протяг ПКМ. Потрібне, щоб цей наказ можна було прогнати без
+         * людини за мишею: він єдиний, чий результат залежить від позиції
+         * кожного юніта окремо, і перевірити його очима на знімку — єдиний
+         * спосіб побачити, що стрій ПЕРЕЇХАВ, а не зібрався в купу.
+         */
+        void offsetArmy(int playerId, float dx, float dy);
+
+        /**
+         * Увімкнути прев'ю протягу ПКМ і лишити його висіти.
+         *
+         * <p>Інструмент для роботи над ВИГЛЯДОМ наказу: лінію протягу видно
+         * лише поки тримаєш кнопку, тож зняти її автознімком інакше
+         * неможливо — а перевіряти товщину й колір по опису марно.
+         */
+        void previewDrag(String kind, float x1, float y1, float x2, float y2);
+
+        /**
+         * Наказ руху з пошуком шляху для ВСІЄЇ своєї армії — те саме, що
+         * подвійний ПКМ. Потрібне, щоб зняти маршрут із поворотами: пряму
+         * лінію дає будь-який наказ, а обхід лісу й річки — лише цей.
+         */
+        void pathMoveArmy(float x, float y);
         /** Рядок стану матчу. */
         String describeState();
     }
@@ -289,6 +314,31 @@ public class DevConsole {
                 host.spawn(Integer.parseInt(a[2]), a[1],
                            a.length > 3 ? Integer.parseInt(a[3]) : 1);
                 print("замовлено");
+                break;
+
+            case "offset":
+                if (a.length < 4) { print("offset <0|1> <dx> <dy>"); break; }
+                host.offsetArmy(Integer.parseInt(a[1]),
+                                Float.parseFloat(a[2]), Float.parseFloat(a[3]));
+                print("зсув віддано");
+                break;
+
+            case "pathmove":
+                if (a.length < 3) { print("pathmove <x> <y>"); break; }
+                host.pathMoveArmy(Float.parseFloat(a[1]), Float.parseFloat(a[2]));
+                print("наказ із пошуком шляху віддано");
+                break;
+
+            case "drag":
+                if ("off".equals(a.length > 1 ? a[1] : "")) {
+                    host.previewDrag("off", 0f, 0f, 0f, 0f);
+                    print("прев'ю знято");
+                    break;
+                }
+                if (a.length < 6) { print("drag <offset|line|off> <x1> <y1> <x2> <y2>"); break; }
+                host.previewDrag(a[1], Float.parseFloat(a[2]), Float.parseFloat(a[3]),
+                                       Float.parseFloat(a[4]), Float.parseFloat(a[5]));
+                print("прев'ю протягу увімкнено");
                 break;
 
             case "merge":

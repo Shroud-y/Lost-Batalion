@@ -351,6 +351,29 @@ public abstract class Unit {
     public int     getPathIndex() { return pathIndex; }
     public long[]  getPath()      { return path; }
 
+    /**
+     * Скільки точок маршруту ще попереду, разом із поточною ціллю.
+     *
+     * <p>Для показу маршруту виділеного юніта. Сам {@link #getPath()} для
+     * цього не годиться: у ньому лежать СИРІ вузли, а юніт іде до вузла плюс
+     * зсув смуги ({@link #pathOffX}) — тобто намальована по сирих числах
+     * лінія проходила б повз те місце, куди юніт справді прийде.
+     */
+    public int remainingRoutePoints() {
+        if (path == null) return 0;
+        int total = path.length / 2;
+        return Math.max(0, total - pathIndex);
+    }
+
+    /** @param i 0 — поточна ціль, далі за маршрутом */
+    public float routeX(int i) {
+        return Fixed.toFloat(path[(pathIndex + i) * 2] + pathOffX);
+    }
+
+    public float routeY(int i) {
+        return Fixed.toFloat(path[(pathIndex + i) * 2 + 1] + pathOffY);
+    }
+
     /** Запам'ятати, звідки юніт стартував цей тік. Викликається перед {@link #tick}. */
     public void beginTick() {
         prevX = x;

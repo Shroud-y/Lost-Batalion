@@ -31,9 +31,13 @@ public final class NetConfig {
      * {@code CancelSpawnCommand} у реєстрі Kryo, ще один компонент хеша і два
      * нові блоки у знімку.
      *
+     * <p>7 — зсув строю (Shift + протяг ПКМ): {@code OffsetMoveCommand} у
+     * реєстрі Kryo. Новий клас зсуває нумерацію id, тож клієнт зі старим
+     * реєстром розпакував би наступні повідомлення як сміття.
+     *
      * <p>Старі збірки мають відвалюватись ще в лоббі.
      */
-    public static final int PROTOCOL_VERSION = 6;
+    public static final int PROTOCOL_VERSION = 7;
 
     /** TCP-порт хоста (ігровий трафік). */
     public static final int TCP_PORT = 54555;

@@ -287,6 +287,10 @@ public class GameScreen implements Screen {
     /** Пост-обробка світіння для позначки наказу і кіл точок. */
     private BloomEffect bloom;
     private FormationDragHandler formationDrag;
+    /** Shift + протяг ПКМ: зсув строю на однаковий вектор. */
+    private io.jababa.lost_batalion.units.OffsetDragHandler offsetDrag;
+    /** Маршрут виділених юнітів. */
+    private io.jababa.lost_batalion.screens.renderer.OrderRouteRenderer orderRoutes;
 
     private SelectionPanel selectionPanel;
     /** Золото, прибуток і меню замовлення військ — лівий верхній кут. */
@@ -548,6 +552,8 @@ public class GameScreen implements Screen {
         spawnGhosts     = new SpawnGhostRenderer();
         bloom           = new BloomEffect(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         formationDrag   = new FormationDragHandler();
+        offsetDrag      = new io.jababa.lost_batalion.units.OffsetDragHandler();
+        orderRoutes     = new io.jababa.lost_batalion.screens.renderer.OrderRouteRenderer();
         curvedFormation = new CurvedFormationCommand();
 
         selectionPanel   = new SelectionPanel();
@@ -912,9 +918,15 @@ public class GameScreen implements Screen {
                     formationModeActive = false;
                     formationBtn.setText(FORMATION_OFF);
                     formationDrag.cancel();
+                    offsetDrag.cancel();
                 }
             }
 
+            if (offsetDrag.isPressed()) {
+                Vector3 cur = camera.unproject(new Vector3(
+                    Gdx.input.getX(), Gdx.input.getY(), 0));
+                offsetDrag.update(cur.x, cur.y);
+            }
             if (formationDrag.isPressed()) {
                 Vector3 cur = camera.unproject(new Vector3(Gdx.input.getX(), Gdx.input.getY(), 0));
                 formationDrag.update(delta, cur.x, cur.y);
@@ -956,7 +968,14 @@ public class GameScreen implements Screen {
         unitRenderer.drawOverlays(unitManager.getAllUnits(), renderAlpha, localTeam);
 
         combatManager.drawShots(shapes);
-        formationDrag.draw(shapes);
+        // Маршрут — ПІД лініями наказу: наказ, який гравець малює просто
+        // зараз, має лежати поверх довідки про вже віддані.
+        orderRoutes.render(shapes, unitManager.getSelectedUnits(), camera.zoom);
+
+        // Товщина ліній наказу задається в екранних пікселях, тож обидва
+        // обробники отримують масштаб камери.
+        formationDrag.draw(shapes, camera.zoom);
+        offsetDrag.draw(shapes, unitManager.getSelectedUnits(), camera.zoom);
 
         if (curvedFormation.isDrawing()) {
             batch.setProjectionMatrix(camera.combined);
@@ -1327,6 +1346,51 @@ public class GameScreen implements Screen {
         }
 
         @Override
+        public void offsetArmy(int playerId, float dx, float dy) {
+            Array<Unit> all = unitManager.getAllUnits();
+            Team side = Team.forPlayer(playerId);
+            com.badlogic.gdx.utils.IntArray ids = new com.badlogic.gdx.utils.IntArray();
+            for (int i = 0; i < all.size; i++) {
+                Unit u = all.get(i);
+                if (u.alive && u.team == side) ids.add(u.id);
+            }
+            if (ids.size == 0) { devConsole.print("нема кого зсувати"); return; }
+            // Той самий наказ, що й від миші: консоль не чіпає стан повз
+            // командний канал (інакше в мережевому матчі це був би десинк).
+            runner.issue(new io.jababa.lost_batalion.net.commands.OffsetMoveCommand(
+                playerId, ids.toArray(), Fixed.fromFloat(dx), Fixed.fromFloat(dy)));
+        }
+
+        @Override
+        public void pathMoveArmy(float x, float y) {
+            // Виділяємо всю армію тією ж рамкою, що й миша, і віддаємо
+            // звичайний наказ — консоль стан повз командний канал не чіпає.
+            unitManager.selectInRect(0f, 0f, mapWidth, mapHeight, false, localTeam);
+            issuePathMove(x, y);
+        }
+
+        @Override
+        public void previewDrag(String kind, float x1, float y1, float x2, float y2) {
+            if ("off".equals(kind)) {
+                formationDrag.cancel();
+                offsetDrag.cancel();
+                return;
+            }
+            if ("line".equals(kind)) {
+                formationDrag.onRmbDown(x1, y1);
+                formationDrag.update(0f, x2, y2);
+                formationDrag.forceActivate();   // без утримання пів секунди
+            } else {
+                // Виділити всю свою армію — інакше привидів не буде видно.
+                // Через ту саму рамку, що й миша: окремого «виділити все»
+                // немає, і заводити його заради дев-команди зайве.
+                unitManager.selectInRect(0f, 0f, mapWidth, mapHeight, false, localTeam);
+                offsetDrag.onRmbDown(x1, y1);
+                offsetDrag.update(x2, y2);
+            }
+        }
+
+        @Override
         public void mergeGuns() {
             // Список збирається тут, а не в консолі: та не має доступу до
             // юнітів і не мусить його мати. Наказ іде звичайним шляхом, тож
@@ -1667,6 +1731,33 @@ public class GameScreen implements Screen {
     public float getMapWidth()                         { return mapWidth; }
     public float getMapHeight()                        { return mapHeight; }
     public FormationDragHandler getFormationDrag()     { return formationDrag; }
+
+    /**
+     * Чи затиснутий Shift.
+     *
+     * <p>Опитування, а не подія: клавіша могла бути натиснута ще до того, як
+     * гравець торкнувся миші, тож ловити її {@code keyDown} нема сенсу. За
+     * правилом із CLAUDE.md опитуваний ввід сам питає, чи не відкрита консоль
+     * — але тут не питає навмисно: Shift нічого не робить сам по собі, він
+     * лише уточнює вже прийнятий клік мишею.
+     */
+    private boolean shiftHeld() {
+        return Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT)
+            || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT);
+    }
+
+    /** Наказ зсуву: усі виділені роблять однаковий крок у бік протягу. */
+    private void issueOffsetMove(float dx, float dy) {
+        if (!unitManager.hasSelection()) return;
+        runner.issue(new io.jababa.lost_batalion.net.commands.OffsetMoveCommand(
+            runner.getLocalPlayerId(), unitManager.selectedIds(),
+            Fixed.fromFloat(dx), Fixed.fromFloat(dy)));
+        // Маркер ставиться на КОЖНОГО: спільної точки призначення тут немає,
+        // і один хрестик посеред поля брехав би про те, куди йде загін.
+        for (Unit u : unitManager.getSelectedUnits()) {
+            if (u.alive) moveMarker.show(u.worldX() + dx, u.worldY() + dy, MoveMarker.MarkerType.MOVE);
+        }
+    }
     public CombatManager getCombatManager()            { return combatManager; }
     public CurvedFormationCommand getCurvedFormation() { return curvedFormation; }
 
@@ -2159,7 +2250,15 @@ public class GameScreen implements Screen {
                     if (placingType != null) { cancelPlacing(); return true; }
                     if (curvedFormation.isDrawing()) { curvedFormation.cancel(); selectionPanel.setFormationActive(false); awaitingDrawStart=false; return true; }
                     Vector3 w = camera.unproject(new Vector3(sx, sy, 0));
-                    formationDrag.onRmbDown(w.x, w.y); return true;
+                    // Shift розводить два різні протяги ПКМ: зі Shift — зсув
+                    // строю на вектор, без нього — шикування в лінію. Обидва
+                    // одночасно неможливі, тож вибір робиться тут, на натиску.
+                    if (shiftHeld() && unitManager != null && unitManager.hasSelection()) {
+                        offsetDrag.onRmbDown(w.x, w.y);
+                    } else {
+                        formationDrag.onRmbDown(w.x, w.y);
+                    }
+                    return true;
                 }
                 return false;
             }
@@ -2203,6 +2302,18 @@ public class GameScreen implements Screen {
 
                 if (btn == Input.Buttons.RIGHT) {
                     Vector3 w = camera.unproject(new Vector3(sx,sy,0));
+                    // Зсув розбирається першим: якщо він був, звичайний наказ
+                    // руху віддавати не можна — вийшло б два накази на один жест.
+                    if (offsetDrag.isPressed()) {
+                        boolean ordered = offsetDrag.onRmbUp();
+                        if (ordered && unitManager.hasSelection()) {
+                            issueOffsetMove(offsetDrag.deltaX(), offsetDrag.deltaY());
+                            lastRmbTime = 0;   // протяг не рахується за клік
+                            return true;
+                        }
+                        // Протяг був заміцний короткий — це звичайний ПКМ,
+                        // і далі він обробляється як завжди.
+                    }
                     boolean wasForm = formationDrag.onRmbUp();
                     if (unitManager.hasSelection()) {
                         if (wasForm) {
