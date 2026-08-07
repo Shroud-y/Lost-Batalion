@@ -1,0 +1,23 @@
+[compileJava, compileTestJava]*.options*.encoding = 'UTF-8'
+eclipse.project.name = appName + '-steam'
+
+dependencies {
+  api project(':core')
+
+  // Steamworks через JNI. 'steamworks4j-gdx' потрібен рівно заради
+  // SteamLibraryLoaderGdx: з версії 1.10 loadLibraries() вимагає передати
+  // завантажувач нативів, а власного тут писати нема сенсу.
+  api "com.code-disaster.steamworks4j:steamworks4j:$steamworks4jVersion"
+  api "com.code-disaster.steamworks4j:steamworks4j-gdx:$steamworks4jVersion"
+}
+
+configurations.all {
+  // steamworks4j-gdx тягне свою версію gdx. Версія гри задається одним місцем —
+  // gdxVersion у gradle.properties, — і транзитивна залежність не має права її
+  // зсувати: різні gdx у класпасі це UnsatisfiedLinkError у найгіршу мить.
+  resolutionStrategy.force "com.badlogicgames.gdx:gdx:$gdxVersion"
+}
+
+jar {
+  duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}

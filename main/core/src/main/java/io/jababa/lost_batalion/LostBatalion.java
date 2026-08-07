@@ -63,6 +63,16 @@ public class LostBatalion extends Game {
         ScreenResolution.applyMode(Settings.getWindowMode(),
                                       Settings.getResWidth(), Settings.getResHeight());
 
+        // Обраний мережевий бекенд — теж із Preferences, і теж не в лаунчері.
+        // Сама реєстрація до цього моменту вже сталась (лаунчер додає свої
+        // бекенди до створення гри), тож тут лишається лише вибрати.
+        // -Dlb.netBackend=steam перекриває збережений вибір на один запуск.
+        // Потрібне рівно для того ж, що й lb.screen: зняти екран або прогнати
+        // мережу без людини, яка натискає кнопки.
+        String backendOverride = System.getProperty("lb.netBackend");
+        io.jababa.lost_batalion.net.api.MultiplayerServices.select(
+            backendOverride != null ? backendOverride : Settings.getNetBackend());
+
         inputMultiplexer = new InputMultiplexer();
         inputMultiplexer.addProcessor(buildGlobalInput());
         Gdx.input.setInputProcessor(inputMultiplexer);
@@ -106,6 +116,8 @@ public class LostBatalion extends Game {
         switch (want) {
             case "scenario": return new io.jababa.lost_batalion.screens.scenario.ScenarioScreen(this);
             case "settings": return new io.jababa.lost_batalion.screens.SettingsScreen(this);
+            case "multiplayer":
+                return new io.jababa.lost_batalion.screens.multiplayer.MultiplayerScreen(this);
             default:         return new MainMenuScreen(this);
         }
     }
@@ -117,11 +129,15 @@ public class LostBatalion extends Game {
      * Кадр гри плюс фейди музики.
      *
      * <p>Оновлення музики стоїть саме тут, а не в екрані: воно має відбуватись
-     * на КОЖНОМУ екрані й не перериватись на переходах між ними.
+     * на КОЖНОМУ екрані й не перериватись на переходах між ними. З тієї ж
+     * причини тут і такт мережевого бекенда: Steam віддає і події лоббі, і
+     * пакети матчу лише зсередини своїх колбеків, тож прив'язка до екрана
+     * лоббі означала б, що в матчі не приходить нічого.
      */
     @Override
     public void render() {
         if (music != null) music.update(Gdx.graphics.getDeltaTime());
+        io.jababa.lost_batalion.net.api.MultiplayerServices.pumpBackend();
         super.render();
         // Після super.render(): знімається намальований кадр, а не порожній
         // буфер від попереднього.
@@ -300,6 +316,25 @@ public class LostBatalion extends Game {
         public static String getBotDifficulty() { return getPrefs().getString("botDifficulty", "NORMAL"); }
         public static void setBotDifficulty(String val) {
             getPrefs().putString("botDifficulty", val == null ? "NORMAL" : val).flush();
+        }
+
+        /**
+         * Обраний мережевий бекенд ({@code NetBackend.id}).
+         *
+         * <p>Зберігається id, а не номер у списку: склад списку залежить від
+         * того, що зареєстрував лаунчер, і на збірці без Steam індекс означав
+         * би вже інший бекенд. Невідомий чи недоступний id
+         * {@code MultiplayerServices.select} мовчки відкидає — гравець із
+         * записаним «steam» на машині без Steam просто отримає локальну мережу.
+         */
+        public static String getNetBackend() {
+            return getPrefs().getString("netBackend",
+                io.jababa.lost_batalion.net.api.LanBackend.ID);
+        }
+
+        public static void setNetBackend(String val) {
+            getPrefs().putString("netBackend",
+                val == null ? io.jababa.lost_batalion.net.api.LanBackend.ID : val).flush();
         }
     }
 

@@ -8,11 +8,55 @@ import io.jababa.lost_batalion.LostBatalion;
 public class Lwjgl3Launcher {
     public static void main(String[] args) {
         try {
+            registerSteamBackend();
             createApplication();
         } catch (Throwable t) {
             t.printStackTrace(); // Це виведе помилку червоним у консоль
             writeCrashReport(t);
             System.exit(1);
+        } finally {
+            shutdownSteam();
+        }
+    }
+
+    /**
+     * Додати мережевий бекенд Steam, якщо модуль {@code :steam} є в класпасі.
+     *
+     * <p>Саме через рефлексію, а не прямим {@code new SteamBackend()}: тоді
+     * збірка без Steam (DRM-free) робиться видаленням ОДНОГО рядка залежності
+     * в {@code lwjgl3/build.gradle} і не потребує правок коду. Відсутній клас —
+     * штатна ситуація, а не помилка.
+     *
+     * <p>Тут лише реєстрація. Самі нативи Steamworks піднімаються пізніше й
+     * ліниво: їх завантажувач ходить у {@code Gdx.files}, якого до старту
+     * {@code Lwjgl3Application} ще не існує.
+     */
+    private static void registerSteamBackend() {
+        try {
+            Class<?> type = Class.forName("io.jababa.lost_batalion.steam.SteamBackend");
+            io.jababa.lost_batalion.net.api.MultiplayerServices.register(
+                (io.jababa.lost_batalion.net.api.NetBackend)
+                    type.getDeclaredConstructor().newInstance());
+        } catch (ClassNotFoundException e) {
+            // Збірка без Steam — лишається локальна мережа.
+        } catch (Throwable t) {
+            System.err.println("Steam-бекенд не зареєстровано: " + t);
+        }
+    }
+
+    /**
+     * {@code SteamAPI.shutdown()} на виході.
+     *
+     * <p>У {@code finally}, а не в {@code LostBatalion.dispose()}: гру можуть
+     * закрити й падінням, а незакритий Steamworks лишає по собі фонові потоки,
+     * через які процес не вмирає до кінця.
+     */
+    private static void shutdownSteam() {
+        try {
+            Class.forName("io.jababa.lost_batalion.steam.SteamBoot")
+                 .getMethod("shutdown").invoke(null);
+        } catch (Throwable ignored) {
+            // Немає модуля або він і не піднімався — нічого закривати.
         }
     }
 

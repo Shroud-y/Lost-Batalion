@@ -138,6 +138,18 @@ public class LobbyScreen extends BaseScreen {
         row.add(mapLabel).left();
         row.add(new Label("·", hintStyle)).left().padLeft(12f).padRight(12f);
         row.add(new Label(role, hintStyle)).left();
+
+        // Ключ кімнати — тільки хосту й тільки в мережах, які його мають.
+        // Гостю він ні до чого: гість ключ ВВОДИТЬ на екрані пошуку, а тут уже
+        // знайшов кімнату. Акцентом, бо це єдине на екрані, що треба
+        // продиктувати вголос.
+        String key = io.jababa.lost_batalion.net.api.MultiplayerServices.current().hostedRoomKey();
+        if (session.isHost() && key != null && !key.isEmpty()) {
+            row.add(new Label("·", hintStyle)).left().padLeft(12f).padRight(12f);
+            row.add(new Label("КЛЮЧ КІМНАТИ", hintStyle)).left().padRight(10f);
+            row.add(new Label(key, accentStyle)).left();
+        }
+
         row.add().expandX();
         return row;
     }

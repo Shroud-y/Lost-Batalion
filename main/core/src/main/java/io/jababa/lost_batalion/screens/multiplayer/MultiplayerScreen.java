@@ -14,6 +14,7 @@ import io.jababa.lost_batalion.net.api.DiscoveredLobby;
 import io.jababa.lost_batalion.net.api.LobbyDirectory;
 import io.jababa.lost_batalion.net.api.LobbySession;
 import io.jababa.lost_batalion.net.api.MultiplayerServices;
+import io.jababa.lost_batalion.net.api.NetBackend;
 import io.jababa.lost_batalion.screens.BaseScreen;
 import io.jababa.lost_batalion.screens.MainMenuScreen;
 import io.jababa.lost_batalion.ui.PlateButton;
@@ -42,16 +43,28 @@ public class MultiplayerScreen extends BaseScreen {
     private static final float ACTION_H    = 42f;
     private static final float ROW_H       = 46f;
 
-    private final LobbyDirectory directory = MultiplayerServices.createDirectory();
+    /**
+     * Активна мережа і її каталог. Не final: перемикач унизу міняє і те, і те.
+     * Каталог належить бекенду, тож при зміні старий обов'язково спиняється —
+     * інакше він і далі сканував би мережу, якої гравець уже не бачить.
+     */
+    private NetBackend    backend = MultiplayerServices.current();
+    private LobbyDirectory directory = backend.createDirectory();
 
     // Стан, що переживає перебудову сцени
     private String nick;
+    private String roomKey = "";
     private String directAddress = "";
     private String message       = "";
     private boolean messageIsError;
 
     // Віджети поточної сцени
     private Table  lobbyListTable;
+    private Table  keyRow;
+    private com.badlogic.gdx.scenes.scene2d.ui.Cell<Table> keyCell;
+    private TextField addressField;
+    private final java.util.List<PlateButton> backendButtons = new java.util.ArrayList<>();
+    private final java.util.List<NetBackend>  backendOptions = new java.util.ArrayList<>();
     private Button createBtn;
     private Button directJoinBtn;
     private Label  messageLabel;
@@ -75,6 +88,9 @@ public class MultiplayerScreen extends BaseScreen {
     public MultiplayerScreen(LostBatalion game) {
         super(game);
         this.nick = LostBatalion.Settings.getNick();
+        // Нік із мережі — лише як заготовка в порожнє поле: у Steam це персона
+        // гравця, і змушувати його вигадувати ім'я вдруге нема за що.
+        if (this.nick == null || this.nick.trim().isEmpty()) this.nick = backend.defaultNick();
     }
 
     @Override
@@ -113,7 +129,11 @@ public class MultiplayerScreen extends BaseScreen {
                                   () -> game.setScreen(new MainMenuScreen(game))))
             .growX().row();
 
-        root.add(buildNickRow()).growX().padTop(22f).row();
+        root.add(buildBackendRow()).growX().padTop(18f).row();
+        root.add(buildNickRow()).growX().padTop(14f).row();
+        keyCell = root.add(buildKeyRow()).growX();
+        keyCell.row();
+        applyKeyRowVisibility();
 
         messageLabel = new Label(message, messageIsError ? errorStyle : hintStyle);
         root.add(messageLabel).left().padTop(8f).row();
@@ -128,6 +148,148 @@ public class MultiplayerScreen extends BaseScreen {
     }
 
     // ── Секції ────────────────────────────────────────────────────────────
+
+    /**
+     * Вибір мережі: локальна чи Steam.
+     *
+     * <p>Недоступний бекенд НЕ зникає, а гасне (DESIGN §7) і при натисканні
+     * пояснює причину: «Steam не запущено» гравець виправить сам, а зниклий
+     * рядок читався б як поломка гри. Один бекенд у списку — ряду немає
+     * взагалі: вибір з одного це не вибір.
+     */
+    private Table buildBackendRow() {
+        // Обидва списки, а не лише кнопки: сцена перебудовується на кожну зміну
+        // розміру вікна, і напівочищений список зсунув би відповідність
+        // «кнопка ↔ мережа».
+        backendButtons.clear();
+        backendOptions.clear();
+
+        Table row = new Table();
+        final java.util.List<NetBackend> all = MultiplayerServices.getBackends();
+        if (all.size() < 2) return row;   // вибір з одного — не вибір
+
+        row.add(new Label("МЕРЕЖА", hintStyle)).padRight(14f);
+
+        for (int i = 0; i < all.size(); i++) {
+            final NetBackend option = all.get(i);
+            final PlateButton button = PlateButton.action(actionStyle, option.label());
+
+            if (!option.isAvailable()) button.setMuted(true);
+            button.addListener(new ChangeListener() {
+                @Override public void changed(ChangeEvent e, Actor a) {
+                    selectBackend(option);
+                }
+            });
+
+            backendButtons.add(button);
+            backendOptions.add(option);
+            row.add(button).width(200f).height(38f).padRight(8f);
+        }
+
+        row.add().expandX();
+        markSelectedBackend();
+        return row;
+    }
+
+    /**
+     * Обраний бекенд позначається гільметами навколо назви.
+     *
+     * <p>Не підміною тла: {@code PlateButton} малює стани шарами вручну саме
+     * тому, що підміна драбла зсуває напис на кадр (DESIGN §6). І не
+     * піктограмою — у {@code main.ttf} їх немає, а гільмети є (DESIGN §3).
+     */
+    private void markSelectedBackend() {
+        for (int i = 0; i < backendButtons.size(); i++) {
+            NetBackend option = backendOptions.get(i);
+            boolean active = option.id().equals(backend.id());
+            backendButtons.get(i).setText(active ? "«" + option.label() + "»" : option.label());
+        }
+    }
+
+    /**
+     * Перемкнути мережу.
+     *
+     * <p>Сцена НЕ перебудовується: повна перебудова тягне за собою появу
+     * екрана з фейдом на 0.55 с, а натиск за DESIGN §5 мусить бути миттєвим.
+     * Тому все, що залежить від мережі, живе у віджетах, які тут просто
+     * оновлюються.
+     */
+    private void selectBackend(NetBackend option) {
+        if (option.id().equals(backend.id())) return;
+
+        if (!option.isAvailable()) {
+            String reason = option.unavailableReason();
+            setMessage(option.label() + ": " + (reason == null ? "недоступно" : reason), true);
+            return;
+        }
+
+        // Спершу спинити старий каталог, потім перемкнутись: інакше він
+        // лишився б сканувати мережу, якої на екрані вже немає.
+        directory.stop();
+        MultiplayerServices.select(option.id());
+        LostBatalion.Settings.setNetBackend(option.id());
+
+        backend   = option;
+        directory = backend.createDirectory();
+        backend.setSearchKey(roomKey);
+        directory.start();
+
+        markSelectedBackend();
+        applyKeyRowVisibility();
+        if (addressField != null) addressField.setMessageText(backend.addressHint());
+
+        renderedListSignature = "";   // список належить іншій мережі
+        setMessage("", false);
+    }
+
+    /**
+     * Показати або сховати рядок ключа.
+     *
+     * <p>Через комірку, а не {@code setVisible}: невидимий актор усе одно
+     * віддає {@code Table} свій бажаний розмір, і в локальній мережі під ніком
+     * зяяла б порожня смуга заввишки з поле вводу.
+     */
+    private void applyKeyRowVisibility() {
+        if (keyCell == null) return;
+        boolean show = backend.usesRoomKey();
+        keyCell.setActor(show ? keyRow : null);
+        keyCell.padTop(show ? 10f : 0f);
+        keyCell.getTable().invalidateHierarchy();
+    }
+
+    /**
+     * Ключ кімнати: звужує пошук до однієї кімнати.
+     *
+     * <p>Рядок існує завжди, але ховається в мережах, які ключів не мають —
+     * так перемикання не перебудовує сцену. Введене одразу нормалізується до
+     * верхнього регістру: Steam порівнює ключ точним збігом рядка, і «k7x2qm»
+     * не знайшло б нічого без жодного пояснення.
+     */
+    private Table buildKeyRow() {
+        final TextField keyField = new TextField(roomKey, UIFactory.createTextFieldStyle());
+        keyField.setMessageText("ключ від хоста");
+        keyField.setMaxLength(12);
+        keyField.addListener(new ChangeListener() {
+            @Override public void changed(ChangeEvent e, Actor a) {
+                String typed = keyField.getText().toUpperCase(java.util.Locale.ROOT);
+                if (!typed.equals(keyField.getText())) {
+                    keyField.setText(typed);
+                    keyField.setCursorPosition(typed.length());
+                }
+                roomKey = typed;
+                backend.setSearchKey(roomKey);
+                renderedListSignature = "";
+            }
+        });
+
+        keyRow = new Table();
+        keyRow.add(new Label("КЛЮЧ КІМНАТИ", hintStyle)).padRight(14f);
+        keyRow.add(keyField).width(180f).height(FIELD_H).left();
+        keyRow.add(new Label("порожньо — показувати всі кімнати", hintStyle))
+              .left().padLeft(14f);
+        keyRow.add().expandX();
+        return keyRow;
+    }
 
     private Table buildNickRow() {
         final TextField nickField = new TextField(nick, UIFactory.createTextFieldStyle());
@@ -154,7 +316,7 @@ public class MultiplayerScreen extends BaseScreen {
         refresh.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) {
                 directory.refresh();
-                setMessage("Сканую локальну мережу…", false);
+                setMessage("Шукаю лоббі…", false);
             }
         });
 
@@ -185,11 +347,13 @@ public class MultiplayerScreen extends BaseScreen {
     }
 
     private Table buildBottomBar() {
-        final TextField addressField = new TextField(directAddress, UIFactory.createTextFieldStyle());
-        addressField.setMessageText("192.168.0.5");
+        addressField = new TextField(directAddress, UIFactory.createTextFieldStyle());
+        // Підказку дає мережа: для локальної це IP, для Steam — SteamID64 лоббі.
+        addressField.setMessageText(backend.addressHint());
+        final TextField field = addressField;
         addressField.addListener(new ChangeListener() {
             @Override public void changed(ChangeEvent e, Actor a) {
-                directAddress = addressField.getText();
+                directAddress = field.getText();
                 refreshEnabledState();
             }
         });
@@ -265,10 +429,10 @@ public class MultiplayerScreen extends BaseScreen {
         List<DiscoveredLobby> lobbies = directory.getLobbies();
 
         if (lobbies.isEmpty()) {
-            String hint = MultiplayerServices.isNetworkingAvailable()
-                ? "Лоббі не знайдено. Хост має бути в тій самій локальній мережі —\nінакше підключайся напряму за IP."
-                : "Мережевий шар ще не підключено (етап 3).\nСтворити лоббі можна вже зараз — воно відкриється локально.";
-            Label empty = new Label(hint, hintStyle);
+            // Текст дає МЕРЕЖА: «хост має бути в тій самій підмережі» і
+            // «перевір ключ кімнати» — поради про різні речі, і екран не має
+            // вибирати між ними за назвою бекенда.
+            Label empty = new Label(backend.emptyListHint(), hintStyle);
             empty.setAlignment(com.badlogic.gdx.utils.Align.center);
             lobbyListTable.add(empty).expandX().center().padTop(28f).row();
             return;

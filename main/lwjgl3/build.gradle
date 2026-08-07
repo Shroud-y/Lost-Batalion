@@ -34,6 +34,10 @@ dependencies {
   implementation "com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-desktop"
   implementation "com.badlogicgames.gdx:gdx-freetype-platform:$gdxVersion:natives-desktop"
   implementation project(':core')
+  // Мережевий бекенд Steam. Прибрати цей рядок = зібрати гру без Steam
+  // (лишиться локальна мережа); більше ніде на нього посилань немає, крім
+  // однієї реєстрації в Lwjgl3Launcher.
+  implementation project(':steam')
 
   if(enableGraalNative == 'true') {
     implementation "io.github.berstanio:gdx-svmhelper-backend-lwjgl3:$graalHelperVersion"

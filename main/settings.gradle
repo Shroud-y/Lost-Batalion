@@ -5,4 +5,8 @@ plugins {
 // A list of which subprojects to load as part of the same larger project.
 // You can remove Strings from the list and reload the Gradle project
 // if you want to temporarily disable a subproject.
-include 'lwjgl3', 'android', 'server', 'core'
+// 'steam' — десктопний мережевий бекенд поверх Steamworks. Окремим модулем, бо
+// в 'core' його класти не можна: від core залежить 'android', а нативів Steam
+// на Android не існує. Ще й тому, що збірка без Steam (DRM-free) робиться
+// видаленням однієї залежності в 'lwjgl3'.
+include 'lwjgl3', 'android', 'server', 'core', 'steam'
