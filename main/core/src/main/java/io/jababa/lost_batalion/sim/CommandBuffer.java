@@ -42,6 +42,18 @@ public class CommandBuffer {
      */
     private int generation;
 
+    /**
+     * Найбільший тік, який уже виконано. Усе, що приходить на нього або
+     * раніше, — запізніла копія.
+     *
+     * <p>Потрібне відколи транспорт шле накази НАДЛИШКОВО (кілька копій на
+     * різних тіках, щоб одна втрачена датаграма не спиняла матч). Без цієї
+     * межі копія, що прийшла після виконання свого тіку, знову створювала б
+     * комірку в {@code byTick} — і мапа росла б до кінця матчу, бо забрати
+     * ту комірку вже нікому.
+     */
+    private int lastExecutedTick = -1;
+
     public int getGeneration() { return generation; }
 
     /**
@@ -52,6 +64,9 @@ public class CommandBuffer {
         generation = newGeneration;
         byTick.clear();
         pendingLocal.clear();
+        // Нове покоління починає нумерацію тіків заново заповнюватись — межа
+        // старого покоління до неї не застосовна.
+        lastExecutedTick = -1;
         // Вибулі гравці НЕ забуваються: ресинк лікує розбіжність стану, а не
         // повертає в матч того, хто вийшов.
     }
@@ -86,6 +101,9 @@ public class CommandBuffer {
      */
     public void receive(TickCommands message) {
         if (message == null) return;
+        // Запізніла надлишкова копія вже виконаного тіку. Мовчки викидаємо:
+        // на стан вона вплинути не може, а комірку створила б назавжди.
+        if (message.tick <= lastExecutedTick) return;
         // Відлуння минулого покоління: ті самі тіки вже заповнюються заново
         // після ресинку, і взяти старе означало б розійтись знову.
         if (message.generation != generation) return;
@@ -171,6 +189,7 @@ public class CommandBuffer {
      * у хоста і в гостя — і це десинхрон.
      */
     public List<GameCommand> take(int tick, int[] playerIds) {
+        if (tick > lastExecutedTick) lastExecutedTick = tick;
         Map<Integer, List<GameCommand>> slot = byTick.remove(tick);
         List<GameCommand> ordered = new ArrayList<>();
         if (slot == null) return ordered;
@@ -195,5 +214,6 @@ public class CommandBuffer {
         byTick.clear();
         pendingLocal.clear();
         dropEffectiveTick.clear();
+        lastExecutedTick = -1;
     }
 }

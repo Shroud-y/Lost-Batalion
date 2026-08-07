@@ -15,6 +15,10 @@ gradle-app.setting
 /headless/build/
 /server/build/
 /shared/build/
+# Модуль Steam — список тек збірки тут ПОМОДУЛЬНИЙ, тож новий модуль треба
+# дописувати руками. Без цього рядка його build/ уже потрапив у коміт
+# (19 файлів у steam/build/tmp/compileJava/).
+/steam/build/
 
 ## Java:
 *.class
@@ -79,6 +83,7 @@ www-test/
 /headless/bin/
 /server/bin/
 /shared/bin/
+/steam/bin/
 *.tmp
 *.bak
 *.swp
@@ -149,6 +154,26 @@ nb-configuration.xml
 ## OS-Specific:
 .DS_Store
 Thumbs.db
+
+## Steam:
+# Нативи Steamworks розпаковує з jar-а сам steamworks4j — зазвичай у системну
+# тимчасову теку, але шлях залежить від завантажувача, а робоча тека при
+# запуску через Gradle це assets/. Якщо вони колись розпакуються туди,
+# generateAssetList занесе їх в assets.txt і запакує в jar кожної збірки.
+steam_api.dll
+steam_api64.dll
+steamworks4j.dll
+steamworks4j64.dll
+libsteam_api.so
+libsteam_api.dylib
+libsteamworks4j.so
+libsteamworks4j.dylib
+# Пише сама гра (SteamBoot) у робочу теку процесу. Продубльовано з кореневого
+# .gitignore навмисно: тека assets/ під цим файлом, і одного пропущеного місця
+# досить, щоб чужий AppID поїхав у збірку.
+steam_appid.txt
+# Журнал нативного шару Steamworks, якщо його ввімкнути.
+steam_log.txt
 
 ## Miscellaneous:
 *~

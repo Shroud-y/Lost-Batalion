@@ -78,6 +78,13 @@ public class MatchRunner implements MatchTransport.Listener {
      */
     private int pendingTicks;
 
+    /**
+     * Від якої тривалості затримка потрапляє в лог. 80 мс — приблизно межа, з
+     * якої око бачить ривок; дрібніші коливання мережі писати щосекунди немає
+     * сенсу.
+     */
+    private static final float STALL_LOG_MILLIS = 80f;
+
     /** Чи цього кадру довелось зупинитись через відсутні команди. */
     private boolean waiting;
     /** Номер гравця, чиїх наказів бракує; -1 коли все гаразд. */
@@ -183,6 +190,14 @@ public class MatchRunner implements MatchTransport.Listener {
             waitingFrames++;
             waitingMillis += delta * 1000f;
         } else {
+            // Затримка щойно скінчилась. Помітну — записати: саме з таких
+            // рядків видно, чи ривок був поодиноким (загублена датаграма) чи
+            // рівним (не вистачає затримки вводу для цього з'єднання).
+            if (waitingMillis >= STALL_LOG_MILLIS) {
+                NetLog.info(String.format(
+                    "Затримка %.0f мс на тіку %d, чекали гравця %d",
+                    waitingMillis, sim.getTickNumber() + 1, waitingForPlayer));
+            }
             waitingFrames = 0;
             waitingMillis = 0f;
             waitingForPlayer = -1;

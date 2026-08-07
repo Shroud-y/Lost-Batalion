@@ -70,6 +70,36 @@ public class SteamMatchTransport implements MatchTransport, SteamNetworkingCallb
 
     private boolean open = true;
 
+    /**
+     * Скільки НЕДАВНІХ пакетів наказів довкладається до кожної відправки.
+     *
+     * <p>Це і є ліки від поодиноких ривків. Надійна доставка Steam гарантує,
+     * що пакет дійде, але робить це ретрансмітом через час обігу — і, гірше,
+     * тримає за собою всі наступні пакети потоку (head-of-line). Одна
+     * загублена датаграма означає застиглий матч на кілька сотень
+     * мілісекунд, після чого симуляція надолужує пачкою тіків. Саме так
+     * ривок і виглядає зсередини.
+     *
+     * <p>Тому накази йдуть ДВІЧІ: ненадійно (швидко, повз чергу надійного
+     * потоку) з копіями двох попередніх тіків, і надійно — як остаточна
+     * гарантія. Зазвичай перемагає ненадійна копія, і затримки не видно
+     * взагалі; якщо ж загубились усі три поспіль, матч урятує надійна.
+     *
+     * <p>Ціна: замість 40 пакетів на секунду близько 160, по три десятки
+     * байтів. Дублікати нешкідливі — {@code CommandBuffer.receive} бере лише
+     * перше повідомлення на пару (тік, гравець).
+     */
+    private static final int REDUNDANT_COPIES = 2;
+
+    /**
+     * Ненадійне повідомлення в Steam обмежене приблизно 1200 байтами. Більший
+     * пакет (наказ на сотню юнітів) поїде лише надійним шляхом.
+     */
+    private static final int UNRELIABLE_LIMIT = 1100;
+
+    /** Останні відправлені пакети наказів — найсвіжіший у кінці. */
+    private final java.util.ArrayDeque<byte[]> recentCommands = new java.util.ArrayDeque<>();
+
     private static final class Peer {
         final int     playerId;
         final SteamID id;
@@ -118,10 +148,36 @@ public class SteamMatchTransport implements MatchTransport, SteamNetworkingCallb
     public void sendCommands(TickCommands commands) {
         if (!open) return;
         commands.playerId = localPlayerId;
-        broadcast(commands);
+        sendWithRedundancy(commands);
         // Свої накази — у власну чергу тим самим шляхом і в ту саму мить, що й
         // ретрансльовані: послідовність не має залежати від авторства.
         events.postCommands(commands);
+    }
+
+    /**
+     * Надіслати накази надійно ОДИН раз і ненадійно — разом із копіями
+     * попередніх тіків. Див. {@link #REDUNDANT_COPIES}.
+     */
+    private void sendWithRedundancy(Object commands) {
+        byte[] data = codec.encode(commands);
+        if (data == null) {
+            events.postDisconnect("Не вдалось надіслати накази — матч неможливо продовжити");
+            return;
+        }
+
+        for (Peer peer : peers) send(peer, data, SteamNetworking.P2PSend.Reliable);
+
+        if (data.length <= UNRELIABLE_LIMIT) {
+            for (Peer peer : peers) {
+                send(peer, data, SteamNetworking.P2PSend.UnreliableNoDelay);
+                for (byte[] old : recentCommands) {
+                    send(peer, old, SteamNetworking.P2PSend.UnreliableNoDelay);
+                }
+            }
+
+            recentCommands.addLast(data);
+            while (recentCommands.size() > REDUNDANT_COPIES) recentCommands.removeFirst();
+        }
     }
 
     @Override
@@ -197,10 +253,10 @@ public class SteamMatchTransport implements MatchTransport, SteamNetworkingCallb
                 + message.getClass().getSimpleName() + " — матч неможливо продовжити");
             return;
         }
-        for (Peer peer : peers) send(peer, data);
+        for (Peer peer : peers) send(peer, data, SteamNetworking.P2PSend.Reliable);
     }
 
-    private void send(Peer peer, byte[] data) {
+    private void send(Peer peer, byte[] data, SteamNetworking.P2PSend mode) {
         try {
             if (outbox.capacity() < data.length) {
                 outbox = ByteBuffer.allocateDirect(
@@ -210,7 +266,7 @@ public class SteamMatchTransport implements MatchTransport, SteamNetworkingCallb
             outbox.clear();
             outbox.put(data, 0, data.length);
             outbox.flip();
-            networking.sendP2PPacket(peer.id, outbox, SteamNetworking.P2PSend.Reliable, CHANNEL);
+            networking.sendP2PPacket(peer.id, outbox, mode, CHANNEL);
         } catch (Exception e) {
             SteamMatchmakingHub.log("не вдалось надіслати гравцю " + peer.playerId + ": " + e);
         }
@@ -259,13 +315,16 @@ public class SteamMatchTransport implements MatchTransport, SteamNetworkingCallb
         if (message instanceof TickCommands) {
             TickCommands commands = (TickCommands) message;
             commands.playerId = peer.playerId;
-            if (host) relay(peer, commands);
+            // Ретрансляція чужих наказів теж надлишкова: у грі на трьох
+            // втрата на ділянці «хост → інший гість» коштувала б рівно того
+            // самого ривка, що й на першій.
+            if (host && peers.size() > 1) relay(peer, commands);
             events.postCommands(commands);
 
         } else if (message instanceof TickChecksum) {
             TickChecksum checksum = (TickChecksum) message;
             checksum.playerId = peer.playerId;
-            if (host) relay(peer, checksum);
+            if (host && peers.size() > 1) relay(peer, checksum);
             events.postChecksum(checksum);
 
         } else if (message instanceof ResyncAck) {
@@ -288,7 +347,11 @@ public class SteamMatchTransport implements MatchTransport, SteamNetworkingCallb
         byte[] data = codec.encode(message);
         if (data == null) return;
         for (Peer peer : peers) {
-            if (peer.playerId != from.playerId) send(peer, data);
+            if (peer.playerId == from.playerId) continue;
+            send(peer, data, SteamNetworking.P2PSend.Reliable);
+            if (data.length <= UNRELIABLE_LIMIT) {
+                send(peer, data, SteamNetworking.P2PSend.UnreliableNoDelay);
+            }
         }
     }
 
