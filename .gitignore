@@ -33,3 +33,7 @@ replay_pid*
 # звідти вони потрапляли в assets.txt, у зібраний jar і в репозиторій.
 desktop_crash.txt
 crash-*.txt
+
+# Кладе сама гра в робочу теку процесу (див. SteamBoot). При запуску через
+# Gradle робоча тека — main/assets/, тож файл опиняється серед асетів.
+steam_appid.txt

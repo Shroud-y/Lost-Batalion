@@ -47,8 +47,14 @@ configure(subprojects - project(':android')) {
     // iterate through all files inside that folder
     // convert it to a relative path
     // and append it to the file assets.txt
+    // steam_appid.txt сюди кладе САМА ГРА: нативний Steamworks читає його лише
+    // з робочої теки процесу, а при запуску через Gradle це і є assets/.
+    // Без цього виключення generateAssetList вніс би його в assets.txt і
+    // запакував у jar кожної збірки — тобто гра в покупця запускалась би як
+    // чужий застосунок. Та сама пастка, що колись зі знімками екрана й
+    // desktop_crash.txt.
     fileTree(assetsFolder).collect { assetsFolder.relativePath(it) }.sort().each {
-      assetsFile.append(it + "\n")
+      if (it != 'steam_appid.txt') assetsFile.append(it + "\n")
     }
   }
   processResources.dependsOn 'generateAssetList'

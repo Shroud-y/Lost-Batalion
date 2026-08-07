@@ -36,15 +36,24 @@ public final class SteamBoot {
     public static final int SPACEWAR_APP_ID = 480;
 
     /**
-     * {@code -Dlb.steamAppId=480} — увімкнути Steam у сеансі розробки.
+     * {@code -Dlb.steamAppId=<id>} — перекрити AppID на один запуск.
      *
-     * <p>Без цієї властивості файл {@code steam_appid.txt} не створюється, і
-     * {@code SteamAPI.init()} впаде для всіх, хто запустив гру не зі Steam.
-     * Саме така поведінка й потрібна: у релізній збірці appid приходить від
-     * самого клієнта Steam, а файл поруч із грою — це якраз те, що НЕ має
-     * поїхати гравцям (з ним гра запуститься як Spacewar).
+     * <p>Поки власного застосунку в Steamworks немає, за замовчуванням береться
+     * {@link #SPACEWAR_APP_ID}: без {@code steam_appid.txt} у робочій теці
+     * {@code SteamAPI.init()} падає для всіх, хто запустив гру НЕ зі Steam, —
+     * тобто для всіх, хто зараз її розробляє. Вимагати властивість вручну
+     * означало б, що Steam не працює «просто так» і кожен натикається на
+     * «Steam не запущено» при живому клієнті.
+     *
+     * <p><b>ЩО ЗРОБИТИ, коли з'явиться власний AppID:</b> прибрати
+     * {@link #DEFAULT_APP_ID} (лишити лише властивість) — інакше релізна збірка
+     * покладе поруч із грою файл із чужим id, і гра в покупця запуститься як
+     * Spacewar.
      */
     public static final String APP_ID_PROPERTY = "lb.steamAppId";
+
+    /** Тимчасово, до власного застосунку в Steamworks. Див. {@link #APP_ID_PROPERTY}. */
+    private static final String DEFAULT_APP_ID = String.valueOf(SPACEWAR_APP_ID);
 
     private static boolean attempted;
     private static boolean running;
@@ -70,12 +79,12 @@ public final class SteamBoot {
             // казало «Steam не запущено»). Краще одне чесне речення, ніж
             // впевнена неправда.
             if (!SteamAPI.init()) {
-                return fail("Steam не запущено або не знає AppID гри");
+                return fail("Steam не запущено (робоча тека: "
+                    + Paths.get("").toAbsolutePath() + ")");
             }
 
             running = true;
-            Gdx.app.log("STEAM", "Steamworks піднято, AppID="
-                + System.getProperty(APP_ID_PROPERTY, "<від клієнта>"));
+            log("Steamworks піднято, AppID=" + System.getProperty(APP_ID_PROPERTY, DEFAULT_APP_ID));
             return true;
 
         } catch (SteamException e) {
@@ -118,25 +127,36 @@ public final class SteamBoot {
      * його в {@code assets.txt} і запакував у jar кожної збірки.
      */
     private static void writeAppIdFile() {
-        String appId = System.getProperty(APP_ID_PROPERTY);
-        if (appId == null || appId.isEmpty()) return;
+        String appId = System.getProperty(APP_ID_PROPERTY, DEFAULT_APP_ID);
+        if (appId.isEmpty()) return;
 
         try {
             Path file = Paths.get("steam_appid.txt").toAbsolutePath();
             if (Files.exists(file)) return;
             Files.write(file, appId.trim().getBytes(StandardCharsets.UTF_8));
-            Gdx.app.log("STEAM", "створено " + file + " з AppID " + appId);
+            log("створено " + file + " з AppID " + appId);
         } catch (Exception e) {
             // Не привід зупинятись: файл міг уже лежати поруч із грою, а тека
             // бути тільки для читання. init() однаково скаже правду.
-            Gdx.app.log("STEAM", "не вдалось записати steam_appid.txt: " + e);
+            log("не вдалось записати steam_appid.txt: " + e);
         }
     }
 
     private static boolean fail(String reason) {
         failure = reason;
         running = false;
-        if (Gdx.app != null) Gdx.app.log("STEAM", "не піднявся: " + reason);
+        log("не піднявся: " + reason);
         return false;
+    }
+
+    /**
+     * Лог, який виживає без libGDX: {@code ensureBooted()} кличеться і з
+     * {@code create()}, і з зондів, а {@code Gdx.app} у момент падіння цілком
+     * може бути ще не готовим — і тоді причина зникала б саме тоді, коли
+     * потрібна найбільше.
+     */
+    private static void log(String message) {
+        if (Gdx.app != null) Gdx.app.log("STEAM", message);
+        else System.out.println("[STEAM] " + message);
     }
 }
