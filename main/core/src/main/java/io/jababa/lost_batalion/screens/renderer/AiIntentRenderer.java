@@ -59,7 +59,7 @@ public class AiIntentRenderer {
     }
 
     private void drawShapes(TacticalBrain brain, Array<Unit> allUnits) {
-        Team team = Team.forPlayer(brain.getPlayerId());
+        Team team = brain.getTeam();
         Color c = team == Team.PLAYER ? UIFactory.COLOR_TEAM_SELF : UIFactory.COLOR_TEAM_FOE;
         shapes.setColor(c.r, c.g, c.b, 0.85f);
 
@@ -100,7 +100,7 @@ public class AiIntentRenderer {
     }
 
     private void drawLabel(TacticalBrain brain, OrthographicCamera camera) {
-        Team team = Team.forPlayer(brain.getPlayerId());
+        Team team = brain.getTeam();
         Color c = team == Team.PLAYER ? UIFactory.COLOR_TEAM_SELF : UIFactory.COLOR_TEAM_FOE;
 
         String state = brain.isCommitted() ? "ІДЕ" : "ЗБИРАЄТЬСЯ";

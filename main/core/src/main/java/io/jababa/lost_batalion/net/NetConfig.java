@@ -35,9 +35,14 @@ public final class NetConfig {
      * реєстрі Kryo. Новий клас зсуває нумерацію id, тож клієнт зі старим
      * реєстром розпакував би наступні повідомлення як сміття.
      *
+     * <p>8 — команди в лоббі: у {@code PlayerSlot} з'явились сторона, місце,
+     * бот і колір, у {@code LobbyState} — маски закритих місць, а в реєстрі
+     * Kryo сім нових повідомлень. Старий клієнт розпакував би слоти обрізаними
+     * і сів би не в ту команду.
+     *
      * <p>Старі збірки мають відвалюватись ще в лоббі.
      */
-    public static final int PROTOCOL_VERSION = 7;
+    public static final int PROTOCOL_VERSION = 8;
 
     /** TCP-порт хоста (ігровий трафік). */
     public static final int TCP_PORT = 54555;
@@ -94,9 +99,23 @@ public final class NetConfig {
 
     // ── Лоббі ─────────────────────────────────────────────────────────────
 
-    public static final int MAX_PLAYERS      = 2;
+    /** Сторін завжди дві — сині й червоні. Це властивість гри, а не лоббі. */
+    public static final int TEAM_COUNT = 2;
+
+    /**
+     * Скільки місць у КОЖНІЙ команді.
+     *
+     * <p>Місця фіксовані, а не «скільки прийде»: хост закриває зайві, і закрите
+     * місце мусить мати номер, який переживе вихід сусіда. Звідси ж і стеля
+     * гравців — вона похідна, а не окреме число, яке колись розійдеться з цим.
+     */
+    public static final int TEAM_SIZE = 5;
+
+    public static final int MAX_PLAYERS      = TEAM_COUNT * TEAM_SIZE;
     public static final int MAX_NICK_LENGTH  = 20;
     public static final int MAX_LOBBY_NAME_LENGTH = 32;
+    /** Довше повідомлення чат обрізає: рядок має вміщатись у колонку лоббі. */
+    public static final int MAX_CHAT_LENGTH  = 140;
 
     /** Скільки чекати відповідей на широкомовний запит дискаверi. */
     public static final int DISCOVERY_TIMEOUT_MS = 1200;

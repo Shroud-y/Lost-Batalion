@@ -87,8 +87,8 @@ public class LightInfantry extends Unit {
      */
     private static final long LINF_SIZE_FIXED = Fixed.fromInt(18);
 
-    public LightInfantry(Team team, long rawX, long rawY) {
-        super(team);
+    public LightInfantry(Team team, int owner, long rawX, long rawY) {
+        super(team, owner);
         this.maxHp               = LINF_HP;
         this.hp                  = LINF_HP;
         this.maxMorale           = LINF_MORALE;

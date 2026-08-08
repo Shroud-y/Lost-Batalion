@@ -38,6 +38,34 @@ public class ClientMatchTransport implements MatchTransport {
         client.addListener(new MatchListener());
     }
 
+    /**
+     * Розібрати повідомлення матчу, що прийшли ДО створення цього каналу.
+     *
+     * <p>Між тим, як лоббі-сесія побачила {@code StartMatch}, і тим, як екран
+     * лоббі створив цей транспорт, минає щонайменше кадр — а хост за цей час уже
+     * міг надіслати свій розігрів. Ті пакети приходять у те саме з'єднання, але
+     * слухача матчу ще немає, і вони гинуть мовчки: гість чекає на тіки, яких
+     * більше ніхто не надішле, і матч не починається НІКОЛИ. Тому лоббі-сесія
+     * складає їх убік, а тут вони доганяють чергу — у тому ж порядку, у якому
+     * прийшли по TCP.
+     *
+     * <p>Дублікат тут нешкідливий: {@code CommandBuffer.receive} бере лише перше
+     * повідомлення на пару (тік, гравець), а книга хешів — {@code putIfAbsent}.
+     */
+    public void replay(java.util.List<Object> backlog) {
+        if (backlog == null) return;
+        for (int i = 0; i < backlog.size(); i++) dispatch(backlog.get(i));
+    }
+
+    private void dispatch(Object object) {
+        if (object instanceof TickCommands)      events.postCommands((TickCommands) object);
+        else if (object instanceof TickChecksum) events.postChecksum((TickChecksum) object);
+        else if (object instanceof DesyncAlert)  events.postDesyncAlert((DesyncAlert) object);
+        else if (object instanceof ResyncSnapshot) events.postSnapshot((ResyncSnapshot) object);
+        else if (object instanceof ResumeMatch)    events.postResume((ResumeMatch) object);
+        else if (object instanceof PlayerDropped)  events.postPlayerDropped((PlayerDropped) object);
+    }
+
     @Override public int getLocalPlayerId() { return localPlayerId; }
     @Override public int[] getPlayerIds()   { return playerIds; }
     @Override public boolean isHost()       { return false; }
@@ -96,12 +124,7 @@ public class ClientMatchTransport implements MatchTransport {
         @Override
         public void received(Connection connection, Object object) {
             if (!open) return;
-            if (object instanceof TickCommands)      events.postCommands((TickCommands) object);
-            else if (object instanceof TickChecksum) events.postChecksum((TickChecksum) object);
-            else if (object instanceof DesyncAlert)  events.postDesyncAlert((DesyncAlert) object);
-            else if (object instanceof ResyncSnapshot) events.postSnapshot((ResyncSnapshot) object);
-            else if (object instanceof ResumeMatch)    events.postResume((ResumeMatch) object);
-            else if (object instanceof PlayerDropped)  events.postPlayerDropped((PlayerDropped) object);
+            dispatch(object);
         }
 
         @Override

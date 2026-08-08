@@ -11,11 +11,13 @@ import io.jababa.lost_batalion.net.NetConfig;
 import io.jababa.lost_batalion.net.api.LobbySession;
 import io.jababa.lost_batalion.net.api.MatchTransport;
 import io.jababa.lost_batalion.net.kryo.SessionEventQueue;
+import io.jababa.lost_batalion.net.messages.ChatMessage;
 import io.jababa.lost_batalion.net.messages.LobbyState;
 import io.jababa.lost_batalion.net.messages.LobbyStatus;
 import io.jababa.lost_batalion.net.messages.PlayerSlot;
 import io.jababa.lost_batalion.net.messages.StartMatch;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -160,6 +162,113 @@ public class SteamLobbySession implements LobbySession, SteamMatchmakingCallback
     }
 
     @Override
+    public void setTeam(int team, int seat) {
+        if (!alive || lobby == null || status != LobbyStatus.WAITING) return;
+        hub.api().setLobbyMemberData(lobby, SteamLobbyKeys.SEAT,
+            team == PlayerSlot.TEAM_NONE ? "" : (team + ":" + seat));
+        // Власні членські дані не завжди вертаються колбеком у тому ж кадрі, а
+        // натиснута кнопка мусить відгукнутись одразу.
+        publish();
+    }
+
+    @Override
+    public void setSlotClosed(int team, int seat, boolean closed) {
+        if (!alive || !host || lobby == null || status != LobbyStatus.WAITING) return;
+        if (team < 0 || team >= NetConfig.TEAM_COUNT
+            || seat < 0 || seat >= NetConfig.TEAM_SIZE) return;
+        if (closed && occupantOf(published, team, seat) != null) return;
+
+        int[] masks = parseClosed(hub.getData(lobby, SteamLobbyKeys.CLOSED));
+        if (closed) masks[team] |=  (1 << seat);
+        else        masks[team] &= ~(1 << seat);
+        hub.api().setLobbyData(lobby, SteamLobbyKeys.CLOSED, masks[0] + "," + masks[1]);
+        publish();
+    }
+
+    @Override
+    public void addBot(int team, int seat, String difficulty) {
+        if (!alive || !host || lobby == null || status != LobbyStatus.WAITING) return;
+        LobbyState state = published;
+        if (state != null && !state.isOpen(team, seat)) return;
+
+        String raw = hub.getData(lobby, SteamLobbyKeys.BOTS);
+        String entry = team + ":" + seat + ":" + (difficulty == null ? "" : difficulty);
+        hub.api().setLobbyData(lobby, SteamLobbyKeys.BOTS,
+                               raw.isEmpty() ? entry : raw + ";" + entry);
+        publish();
+    }
+
+    @Override
+    public void removeBot(int playerId) {
+        editBot(playerId, null, true);
+    }
+
+    @Override
+    public void setBotDifficulty(int playerId, String difficulty) {
+        editBot(playerId, difficulty, false);
+    }
+
+    /**
+     * Правка рядка ботів за НОМЕРОМ гравця.
+     *
+     * <p>Номер бота — похідний (люди, далі боти в порядку рядка), тож спершу
+     * треба знайти, який це запис. Рядок перезбирається цілком: часткова правка
+     * метаданих у Steam неможлива, ключ пишеться повністю.
+     */
+    private void editBot(int playerId, String difficulty, boolean remove) {
+        if (!alive || !host || lobby == null || status != LobbyStatus.WAITING) return;
+
+        String[] entries = splitBots(hub.getData(lobby, SteamLobbyKeys.BOTS));
+        int humans = members().size();
+        int index  = playerId - humans;
+        if (index < 0 || index >= entries.length) return;
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < entries.length; i++) {
+            String entry = entries[i];
+            if (i == index) {
+                if (remove) continue;
+                String[] parts = entry.split(":");
+                if (parts.length < 2) continue;
+                entry = parts[0] + ":" + parts[1] + ":" + (difficulty == null ? "" : difficulty);
+            }
+            if (sb.length() > 0) sb.append(';');
+            sb.append(entry);
+        }
+        hub.api().setLobbyData(lobby, SteamLobbyKeys.BOTS, sb.toString());
+        publish();
+    }
+
+    @Override
+    public void kick(int playerId) {
+        if (!alive || !host || lobby == null || status != LobbyStatus.WAITING) return;
+        if (playerId == HOST_PLAYER_ID) return;
+
+        List<SteamID> people = members();
+        if (playerId >= people.size()) { removeBot(playerId); return; }
+
+        String victim = SteamMatchmakingHub.toAddress(people.get(playerId));
+        String raw    = hub.getData(lobby, SteamLobbyKeys.KICKED);
+        if (!raw.isEmpty() && ("," + raw + ",").contains("," + victim + ",")) return;
+        hub.api().setLobbyData(lobby, SteamLobbyKeys.KICKED,
+                               raw.isEmpty() ? victim : raw + "," + victim);
+        publish();
+    }
+
+    @Override
+    public void sendChat(String text) {
+        if (!alive || lobby == null || text == null) return;
+        String trimmed = text.trim();
+        if (trimmed.isEmpty()) return;
+        if (trimmed.length() > NetConfig.MAX_CHAT_LENGTH) {
+            trimmed = trimmed.substring(0, NetConfig.MAX_CHAT_LENGTH);
+        }
+        // Своє повідомлення НЕ показуємо одразу: Steam повертає його тим самим
+        // колбеком, що й чуже, і показ на місці дав би два однакові рядки.
+        hub.api().sendLobbyChatMsg(lobby, trimmed);
+    }
+
+    @Override
     public void setScenario(String newScenarioId) {
         if (!alive || !host || lobby == null || status != LobbyStatus.WAITING) return;
         scenarioId = newScenarioId;
@@ -183,10 +292,13 @@ public class SteamLobbySession implements LobbySession, SteamMatchmakingCallback
         api.setLobbyJoinable(lobby, false);
         api.setLobbyData(lobby, SteamLobbyKeys.STATUS, status.name());
 
-        List<SteamID> members = members();
-        api.setLobbyData(lobby, SteamLobbyKeys.MEMBERS, joinIds(members));
+        // У склад матчу йдуть ЛИШЕ ті, хто сидить у команді. Список очікування
+        // не грає: lockstep чекає наказів від кожного зі складу, і глядач без
+        // симуляції зупинив би матч на першому ж тіку.
+        List<SteamID> seated = seatedMembers();
+        api.setLobbyData(lobby, SteamLobbyKeys.MEMBERS, joinIds(seated));
 
-        StartMatch start = buildStart(members);
+        StartMatch start = buildStart(seated);
         // Seed із системного часу — єдине місце, де це доречно: до симуляції він
         // не належить, а все, що з нього розгорнеться, буде однаковим у всіх,
         // бо приїде готовим числом.
@@ -236,14 +348,19 @@ public class SteamLobbySession implements LobbySession, SteamMatchmakingCallback
             return null;
         }
 
-        int[] playerIds = new int[members.size()];
-        for (int i = 0; i < playerIds.length; i++) playerIds[i] = i;
+        // Учасники беруться зі СКЛАДУ, а не з lb_members: у метаданих лежать
+        // самі люди, а бот — теж повноцінний учасник lockstep, від якого щотіку
+        // чекають наказів. Пропустити його тут означало б, що всі тихо не
+        // чекають бота, а хост його накази шле — і буфер повниться пакетами на
+        // номер, якого ніхто не питає.
+        int[] playerIds = new int[start.slots.size()];
+        for (int i = 0; i < playerIds.length; i++) playerIds[i] = start.slots.get(i).playerId;
 
         status = LobbyStatus.IN_GAME;
         if (host) hub.api().setLobbyData(lobby, SteamLobbyKeys.STATUS, status.name());
 
-        SteamMatchmakingHub.log("матч почався: гравців " + members.size()
-            + ", я #" + localId);
+        SteamMatchmakingHub.log("матч почався: учасників " + playerIds.length
+            + ", з них людей " + members.size() + ", я #" + localId);
         return new SteamMatchTransport(members, localId, playerIds, this::leave);
     }
 
@@ -297,6 +414,10 @@ public class SteamLobbySession implements LobbySession, SteamMatchmakingCallback
         api.setLobbyData(lobby, SteamLobbyKeys.MAX,      String.valueOf(maxPlayers));
         api.setLobbyData(lobby, SteamLobbyKeys.COUNT,    "1");
         api.setLobbyMemberData(lobby, SteamLobbyKeys.NICK, nick);
+        // Хост одразу сідає на перше місце синіх. Без цього він лишався б у
+        // списку очікування — місце ж читається з членських даних, — і
+        // «Старт» не вмикався б ніколи, бо одна зі сторін порожня.
+        api.setLobbyMemberData(lobby, SteamLobbyKeys.SEAT, "0:0");
 
         SteamMatchmakingHub.log("лоббі створено: " + SteamMatchmakingHub.toAddress(lobby)
             + ", ключ кімнати " + roomKey);
@@ -324,6 +445,7 @@ public class SteamLobbySession implements LobbySession, SteamMatchmakingCallback
     @Override
     public void onLobbyDataUpdate(SteamID steamIDLobby, SteamID steamIDMember, boolean success) {
         if (!alive || !sameLobby(steamIDLobby)) return;
+        if (kickedMe()) { fail("Хост виключив тебе з лоббі."); return; }
         publish();
         checkStart();
     }
@@ -352,6 +474,55 @@ public class SteamLobbySession implements LobbySession, SteamMatchmakingCallback
         }
 
         publish();
+    }
+
+    /**
+     * Повідомлення чату. Steam не віддає текст у колбеку — лише номер запису,
+     * за яким його треба забрати окремим викликом.
+     */
+    @Override
+    public void onLobbyChatMessage(SteamID steamIDLobby, SteamID steamIDUser,
+                                   SteamMatchmaking.ChatEntryType entryType, int chatID) {
+        if (!alive || !sameLobby(steamIDLobby)) return;
+        if (entryType != SteamMatchmaking.ChatEntryType.ChatMsg) return;
+
+        try {
+            ByteBuffer buffer = ByteBuffer.allocateDirect(4096);
+            SteamMatchmaking.ChatEntry entry = new SteamMatchmaking.ChatEntry();
+            int size = hub.api().getLobbyChatEntry(lobby, chatID, entry, buffer);
+            if (size <= 0) return;
+
+            byte[] bytes = new byte[size];
+            buffer.position(0);
+            buffer.get(bytes, 0, size);
+            String text = new String(bytes, java.nio.charset.StandardCharsets.UTF_8).trim();
+            if (text.isEmpty()) return;
+
+            String author = steamIDUser == null ? "" : SteamMatchmakingHub.toAddress(steamIDUser);
+            ChatMessage message = new ChatMessage(playerIdBySteamId(author),
+                                                  nickBySteamId(author), text);
+            events.post(l -> l.onChat(message));
+        } catch (Exception e) {
+            SteamMatchmakingHub.log("не вдалось прочитати повідомлення чату: " + e);
+        }
+    }
+
+    private int playerIdBySteamId(String steamId) {
+        LobbyState state = published;
+        if (state == null) return -1;
+        for (int i = 0; i < state.slots.size(); i++) {
+            if (steamId.equals(state.slots.get(i).steamId)) return state.slots.get(i).playerId;
+        }
+        return -1;
+    }
+
+    private String nickBySteamId(String steamId) {
+        LobbyState state = published;
+        if (state == null) return "гравець";
+        for (int i = 0; i < state.slots.size(); i++) {
+            if (steamId.equals(state.slots.get(i).steamId)) return state.slots.get(i).nick;
+        }
+        return "гравець";
     }
 
     @Override
@@ -395,6 +566,60 @@ public class SteamLobbySession implements LobbySession, SteamMatchmakingCallback
 
     private int playerIdOf(List<SteamID> ordered, int index) { return index; }
 
+    /**
+     * Посадити гравця на місце, яке він оголосив у членських даних.
+     *
+     * <p>Тут-таки розв'язується конфлікт: якщо на місце претендують двоє,
+     * лишається той, чий номер менший, — а він завжди опиняється в списку
+     * раніше, бо обхід іде за зростанням. Правило чисте: обидві сторони
+     * читають ті самі дані в тому самому порядку й отримують той самий склад,
+     * без жодного арбітражу. Хто не оголосив місця або спізнився — у списку
+     * очікування.
+     */
+    private void applySeat(LobbyState state, PlayerSlot slot, String raw) {
+        slot.team = PlayerSlot.TEAM_NONE;
+        slot.seat = -1;
+        if (raw == null || raw.isEmpty()) return;
+
+        String[] parts = raw.split(":");
+        if (parts.length < 2) return;
+        int team = parseInt(parts[0], -1);
+        int seat = parseInt(parts[1], -1);
+        if (team < 0 || team >= NetConfig.TEAM_COUNT
+            || seat < 0 || seat >= NetConfig.TEAM_SIZE) return;
+        if (state.isClosed(team, seat) || occupantOf(state, team, seat) != null) return;
+
+        slot.team = team;
+        slot.seat = seat;
+    }
+
+    private static PlayerSlot occupantOf(LobbyState state, int team, int seat) {
+        return state == null ? null : state.occupant(team, seat);
+    }
+
+    private static int[] parseClosed(String raw) {
+        int[] masks = new int[NetConfig.TEAM_COUNT];
+        if (raw == null || raw.isEmpty()) return masks;
+        String[] parts = raw.split(",");
+        for (int i = 0; i < masks.length && i < parts.length; i++) {
+            masks[i] = parseInt(parts[i], 0);
+        }
+        return masks;
+    }
+
+    private static String[] splitBots(String raw) {
+        if (raw == null || raw.isEmpty()) return new String[0];
+        return raw.split(";");
+    }
+
+    /** Чи мене вигнали. Читається з метаданих; вихід робить сам вигнаний. */
+    private boolean kickedMe() {
+        if (host || lobby == null || me == null) return false;
+        String raw = hub.getData(lobby, SteamLobbyKeys.KICKED);
+        if (raw.isEmpty()) return false;
+        return ("," + raw + ",").contains("," + SteamMatchmakingHub.toAddress(me) + ",");
+    }
+
     private void publish() {
         if (lobby == null) return;
 
@@ -403,6 +628,7 @@ public class SteamLobbySession implements LobbySession, SteamMatchmakingCallback
         state.scenarioId = host ? scenarioId : emptyToNull(hub.getData(lobby, SteamLobbyKeys.SCENARIO));
         state.maxPlayers = host ? maxPlayers : parseInt(hub.getData(lobby, SteamLobbyKeys.MAX), maxPlayers);
         state.status     = status;
+        state.closedMask = parseClosed(hub.getData(lobby, SteamLobbyKeys.CLOSED));
 
         List<SteamID> members = members();
         for (int i = 0; i < members.size(); i++) {
@@ -418,7 +644,32 @@ public class SteamLobbySession implements LobbySession, SteamMatchmakingCallback
             slot.ready = isOwner
                 || "1".equals(hub.api().getLobbyMemberData(lobby, id, SteamLobbyKeys.READY));
             slot.connected = true;
+            slot.colorIndex = i;
+            slot.steamId    = SteamMatchmakingHub.toAddress(id);
+            applySeat(state, slot,
+                      hub.api().getLobbyMemberData(lobby, id, SteamLobbyKeys.SEAT));
             state.slots.add(slot);
+        }
+
+        // Боти йдуть ПІСЛЯ людей і отримують номери за порядком рядка. Обидві
+        // сторони читають той самий ключ і той самий список учасників, тож
+        // номери збігаються без жодного узгодження.
+        String[] bots = splitBots(hub.getData(lobby, SteamLobbyKeys.BOTS));
+        for (int i = 0; i < bots.length; i++) {
+            String[] parts = bots[i].split(":");
+            if (parts.length < 2) continue;
+            int team = parseInt(parts[0], -1);
+            int seat = parseInt(parts[1], -1);
+            String level = parts.length > 2 ? parts[2] : null;
+            int id = members.size() + i;
+            if (id >= NetConfig.MAX_PLAYERS) break;
+
+            PlayerSlot bot = PlayerSlot.bot(id, "БОТ", team, seat, level);
+            bot.colorIndex = id;
+            // Місце бота теж перевіряється: хост міг закрити його вже після
+            // того, як бота посадив.
+            if (occupantOf(state, team, seat) != null || state.isClosed(team, seat)) continue;
+            state.slots.add(bot);
         }
 
         published = state;
@@ -456,23 +707,99 @@ public class SteamLobbySession implements LobbySession, SteamMatchmakingCallback
         start.protocolVersion = NetConfig.PROTOCOL_VERSION;
         start.rngSeed    = System.nanoTime() ^ (System.currentTimeMillis() << 21);
         start.scenarioId = scenarioId;
-        start.slots      = buildSlots(members);
+        start.slots      = slotsFrom(members, seatsOf(members),
+                                     hub.getData(lobby, SteamLobbyKeys.BOTS));
         start.tickRate              = NetConfig.TICK_RATE;
         start.inputDelayTicks       = NetConfig.INPUT_DELAY_TICKS;
         start.checksumIntervalTicks = NetConfig.getChecksumIntervalTicks();
         return start;
     }
 
-    private ArrayList<PlayerSlot> buildSlots(List<SteamID> members) {
-        ArrayList<PlayerSlot> slots = new ArrayList<>(members.size());
+    /** Учасники лоббі, які СИДЯТЬ у командах, у канонічному порядку. */
+    private List<SteamID> seatedMembers() {
+        List<SteamID> out = new ArrayList<>();
+        LobbyState state = published;
+        if (state == null) return members();
+
+        List<SteamID> all = members();
+        for (int i = 0; i < all.size(); i++) {
+            String key = SteamMatchmakingHub.toAddress(all.get(i));
+            for (int j = 0; j < state.slots.size(); j++) {
+                PlayerSlot slot = state.slots.get(j);
+                if (slot.seated() && !slot.bot && key.equals(slot.steamId)) { out.add(all.get(i)); break; }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Місця учасників рядком {@code "команда:місце"} через кому, у порядку
+     * переданого списку.
+     *
+     * <p>Місця їдуть у {@code lb_start} РАЗОМ з іншими параметрами матчу, а не
+     * дочитуються з членських даних кожним окремо. Інакше склад команд залежав
+     * би від того, у яку мілісекунду хто встиг прочитати метадані, — а помилка
+     * тут означає, що двоє клієнтів рахують РІЗНІ армії при однакових наказах.
+     */
+    private String seatsOf(List<SteamID> members) {
+        LobbyState state = published;
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < members.size(); i++) {
+            if (i > 0) sb.append(',');
+            String key = SteamMatchmakingHub.toAddress(members.get(i));
+            PlayerSlot found = null;
+            if (state != null) {
+                for (int j = 0; j < state.slots.size(); j++) {
+                    if (key.equals(state.slots.get(j).steamId)) { found = state.slots.get(j); break; }
+                }
+            }
+            sb.append(found == null ? "-1:-1" : (found.team + ":" + found.seat));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Склад матчу з фіксованих хостом даних: люди зі списку {@code members} із
+     * місцями зі {@code seats}, далі боти з {@code bots}.
+     *
+     * <p>Номери гравців — позиція в цьому ж порядку. Обидві сторони отримують
+     * ті самі три рядки й будують той самий склад.
+     */
+    private ArrayList<PlayerSlot> slotsFrom(List<SteamID> members, String seats, String bots) {
+        ArrayList<PlayerSlot> slots = new ArrayList<>();
+        String[] seatParts = seats == null || seats.isEmpty() ? new String[0] : seats.split(",", -1);
+
         for (int i = 0; i < members.size(); i++) {
             SteamID id = members.get(i);
-            String memberNick = hub.api().getLobbyMemberData(lobby, id, SteamLobbyKeys.NICK);
+            String memberNick = lobby == null ? null
+                : hub.api().getLobbyMemberData(lobby, id, SteamLobbyKeys.NICK);
             if (memberNick == null || memberNick.isEmpty()) memberNick = "гравець";
-            PlayerSlot slot = new PlayerSlot(playerIdOf(members, i), memberNick, isOwner(id));
-            slot.ready     = true;
-            slot.connected = true;
+
+            PlayerSlot slot = new PlayerSlot(i, memberNick, i == HOST_PLAYER_ID);
+            slot.ready      = true;
+            slot.connected  = true;
+            slot.colorIndex = i;
+            slot.steamId    = SteamMatchmakingHub.toAddress(id);
+
+            String[] pair = i < seatParts.length ? seatParts[i].split(":") : new String[0];
+            slot.team = pair.length > 0 ? parseInt(pair[0], -1) : -1;
+            slot.seat = pair.length > 1 ? parseInt(pair[1], -1) : -1;
+            if (!slot.seated()) continue;   // глядач у складі матчу не потрібен
+
             slots.add(slot);
+        }
+
+        String[] botEntries = splitBots(bots);
+        for (int i = 0; i < botEntries.length; i++) {
+            String[] parts = botEntries[i].split(":");
+            if (parts.length < 2) continue;
+            int id = slots.size();
+            if (id >= NetConfig.MAX_PLAYERS) break;
+            PlayerSlot bot = PlayerSlot.bot(id, "БОТ", parseInt(parts[0], -1), parseInt(parts[1], -1),
+                                            parts.length > 2 ? parts[2] : null);
+            bot.colorIndex = id;
+            if (!bot.seated()) continue;
+            slots.add(bot);
         }
         return slots;
     }
@@ -481,12 +808,32 @@ public class SteamLobbySession implements LobbySession, SteamMatchmakingCallback
      * Кодування StartMatch неможливо перевірити на одному акаунті інакше —
      * для справжнього обміну потрібні два Steam-клієнти. */
     String encodeStart(StartMatch start) {
+        // Склад теж їде рядком: місця людей у порядку lb_members і боти. Без
+        // цього кожен клієнт дочитував би команди з членських даних сам — і
+        // отримав би різний результат залежно від того, коли Steam устиг йому
+        // їх реплікувати.
+        StringBuilder seats = new StringBuilder();
+        StringBuilder bots  = new StringBuilder();
+        for (int i = 0; i < start.slots.size(); i++) {
+            PlayerSlot slot = start.slots.get(i);
+            if (slot.bot) {
+                if (bots.length() > 0) bots.append(';');
+                bots.append(slot.team).append(':').append(slot.seat).append(':')
+                    .append(slot.botDifficulty == null ? "" : slot.botDifficulty);
+            } else {
+                if (seats.length() > 0) seats.append(',');
+                seats.append(slot.team).append(':').append(slot.seat);
+            }
+        }
+
         return start.protocolVersion
             + "|" + start.rngSeed
             + "|" + (start.scenarioId == null ? "" : start.scenarioId)
             + "|" + start.tickRate
             + "|" + start.inputDelayTicks
-            + "|" + start.checksumIntervalTicks;
+            + "|" + start.checksumIntervalTicks
+            + "|" + seats
+            + "|" + bots;
     }
 
     StartMatch decodeStart(String raw, String memberIds) {
@@ -500,7 +847,9 @@ public class SteamLobbySession implements LobbySession, SteamMatchmakingCallback
             start.tickRate              = Integer.parseInt(parts[3]);
             start.inputDelayTicks       = Integer.parseInt(parts[4]);
             start.checksumIntervalTicks = Integer.parseInt(parts[5]);
-            start.slots = slotsFromIds(memberIds);
+            String seats = parts.length > 6 ? parts[6] : "";
+            String bots  = parts.length > 7 ? parts[7] : "";
+            start.slots = slotsFrom(idsFrom(memberIds), seats, bots);
             return start.slots.isEmpty() ? null : start;
         } catch (NumberFormatException e) {
             return null;
@@ -508,30 +857,20 @@ public class SteamLobbySession implements LobbySession, SteamMatchmakingCallback
     }
 
     /**
-     * Склад із {@code lb_members} — зафіксованого хостом списку SteamID.
+     * Розібрати {@code lb_members} — зафіксований хостом список SteamID.
      *
      * <p>Саме з нього, а не з поточних учасників лоббі: гість, який зайшов між
      * «Старт» і читанням метаданих, зсунув би нумерацію рівно в однієї зі
      * сторін, і симуляція розійшлась би з першого ж наказу.
      */
-    private ArrayList<PlayerSlot> slotsFromIds(String memberIds) {
-        ArrayList<PlayerSlot> slots = new ArrayList<>();
-        if (memberIds == null || memberIds.isEmpty() || lobby == null) return slots;
-
-        String[] ids = memberIds.split(",");
-        for (int i = 0; i < ids.length; i++) {
-            SteamID id = SteamMatchmakingHub.fromAddress(ids[i]);
-            if (id == null || !id.isValid()) continue;
-
-            String memberNick = hub.api().getLobbyMemberData(lobby, id, SteamLobbyKeys.NICK);
-            if (memberNick == null || memberNick.isEmpty()) memberNick = "гравець";
-
-            PlayerSlot slot = new PlayerSlot(i, memberNick, i == HOST_PLAYER_ID);
-            slot.ready     = true;
-            slot.connected = true;
-            slots.add(slot);
+    private List<SteamID> idsFrom(String memberIds) {
+        List<SteamID> list = new ArrayList<>();
+        if (memberIds == null || memberIds.isEmpty()) return list;
+        for (String part : memberIds.split(",")) {
+            SteamID id = SteamMatchmakingHub.fromAddress(part);
+            if (id != null && id.isValid()) list.add(id);
         }
-        return slots;
+        return list;
     }
 
     private String joinIds(List<SteamID> members) {

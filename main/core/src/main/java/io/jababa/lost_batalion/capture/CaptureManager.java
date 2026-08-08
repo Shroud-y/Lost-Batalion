@@ -191,7 +191,7 @@ public class CaptureManager {
         }
     }
 
-    private static int teamCode(Team t) { return t == null ? -1 : t.playerId(); }
+    private static int teamCode(Team t) { return t == null ? -1 : t.index(); }
 
-    private static Team teamOf(int code) { return code < 0 ? null : Team.forPlayer(code); }
+    private static Team teamOf(int code) { return code < 0 ? null : Team.byIndex(code); }
 }

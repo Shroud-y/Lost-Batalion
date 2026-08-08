@@ -82,14 +82,19 @@ public enum UnitType {
         return ordinal >= 0 && ordinal < VALUES.length ? VALUES[ordinal] : null;
     }
 
-    /** Створити юніта цього типу. Єдине місце, де тип перетворюється на клас. */
-    public Unit create(Team team, long rawX, long rawY) {
+    /**
+     * Створити юніта цього типу. Єдине місце, де тип перетворюється на клас.
+     *
+     * @param owner номер гравця, який ним командуватиме; сторона задається
+     *              окремо, бо за одну сторону грає кілька гравців
+     */
+    public Unit create(Team team, int owner, long rawX, long rawY) {
         switch (this) {
-            case ARTILLERY:     return new Artillery(team, rawX, rawY);
-            case CAVALRY:       return new Cavalry(team, rawX, rawY);
-            case HEAVY_CAVALRY: return new HeavyCavalry(team, rawX, rawY);
-            case LIGHT_INFANTRY:return new LightInfantry(team, rawX, rawY);
-            default:            return new Infantry(team, rawX, rawY);
+            case ARTILLERY:     return new Artillery(team, owner, rawX, rawY);
+            case CAVALRY:       return new Cavalry(team, owner, rawX, rawY);
+            case HEAVY_CAVALRY: return new HeavyCavalry(team, owner, rawX, rawY);
+            case LIGHT_INFANTRY:return new LightInfantry(team, owner, rawX, rawY);
+            default:            return new Infantry(team, owner, rawX, rawY);
         }
     }
 

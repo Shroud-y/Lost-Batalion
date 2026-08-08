@@ -19,7 +19,7 @@ import java.io.IOException;
  * <h3>Очки</h3>
  * Раз на {@link #SCORE_PERIOD_TICKS} кожна сторона отримує
  * {@link #POINTS_PER_CAPTURE} очок за кожну утримувану точку. Хто перший
- * набрав {@link #TARGET} — виграв.
+ * набрав {@link #target()} — виграв.
  *
  * <p>Модель саме накопичувальна, а не «захопи всі три й тримай»: на карті з
  * трьома точками друга перетворює матч на один вирішальний ривок, тоді як очки
@@ -46,8 +46,27 @@ import java.io.IOException;
  */
 public class VictoryTracker {
 
-    /** Скільки очок треба набрати для перемоги. */
-    public static final int TARGET = 900;
+    /**
+     * Скільки очок треба набрати для перемоги в матчі один на один.
+     *
+     * <p>Три точки під повним контролем — п'ять хвилин, одна точка — п'ятнадцять.
+     */
+    public static final int TARGET_BASE = 900;
+
+    /**
+     * Наскільки межа росте за кожного ДОДАТКОВОГО гравця в найбільшій команді.
+     *
+     * <p>Потрібно тому, що дохід і рахунок масштабуються по-різному: кожен
+     * гравець команди отримує ПОВНИЙ дохід із кожної точки (див.
+     * {@code Economy}), тобто армія сторони росте кратно її складу, а очки за
+     * ту саму точку сторона отримує ті самі. Без надбавки матч 5 на 5 тривав би
+     * рівно стільки ж, скільки 1 на 1, при вп'ятеро більших арміях — тобто
+     * рахунок вирішував би все ще до того, як армії встигли зустрітись.
+     *
+     * <p>Число першого наближення: 5 на 5 дає 2700, тобто 15 хвилин при повному
+     * контролі. Підбирати його треба вимірюванням, як числа рівнів бота.
+     */
+    public static final int TARGET_PER_EXTRA_PLAYER = 450;
 
     /** Скільки секунд між нарахуваннями. */
     public static final int SCORE_PERIOD_SECONDS = 5;
@@ -66,7 +85,7 @@ public class VictoryTracker {
      * Скільки очок дає одна утримувана точка за нарахування.
      *
      * <p>Рівно період у секундах: сумарна швидкість лишається «очко за точку
-     * за секунду», тож {@link #TARGET} не треба переставляти разом із періодом.
+     * за секунду», тож {@link #target()} не треба переставляти разом із періодом.
      */
     public static final int POINTS_PER_CAPTURE = SCORE_PERIOD_SECONDS;
 
@@ -74,13 +93,19 @@ public class VictoryTracker {
     public enum Reason {
         /** Ще триває. */
         NONE,
-        /** Набрано {@link #TARGET} очок. */
+        /** Набрано {@link #target()} очок. */
         POINTS,
         /** У переможеного не лишилось ні армії, ні коштів на нову. */
         ANNIHILATION
     }
 
-    /** Очки по номеру гравця. У 1v1 сторін рівно дві. */
+    /** Склад матчу: за ним відомо, чиї юніти й золото належать якій стороні. */
+    private final PlayerRoster roster;
+
+    /** Межа очок ЦЬОГО матчу. Похідна від розміру команд, тому не константа. */
+    private final int target;
+
+    /** Очки по індексу СТОРОНИ (0 — сині, 1 — червоні), а не по номеру гравця. */
     private final int[] score = { 0, 0 };
 
     /** Тіків від останнього нарахування. */
@@ -117,6 +142,14 @@ public class VictoryTracker {
      */
     private final int[] lost       = { 0, 0 };
     private final int[] ownedAtEnd = { 0, 0 };
+
+    public VictoryTracker(PlayerRoster roster) {
+        this.roster = roster;
+        this.target = TARGET_BASE + TARGET_PER_EXTRA_PLAYER * (roster.maxTeamSize() - 1);
+    }
+
+    /** Межа очок ЦЬОГО матчу — її називає екран результату. */
+    public int target() { return target; }
 
     /**
      * Найдешевший юніт у каталозі.
@@ -155,10 +188,10 @@ public class VictoryTracker {
         if (++sinceScore < SCORE_PERIOD_TICKS) return;
         sinceScore = 0;
 
-        for (int playerId = 0; playerId < score.length; playerId++) {
-            score[playerId] += points == null
-                             ? 0
-                             : points.countOwned(Team.forPlayer(playerId)) * POINTS_PER_CAPTURE;
+        for (int side = 0; side < score.length; side++) {
+            score[side] += points == null
+                         ? 0
+                         : points.countOwned(Team.byIndex(side)) * POINTS_PER_CAPTURE;
         }
         if (checkPoints(tickNumber, units, points)) return;
 
@@ -174,16 +207,16 @@ public class VictoryTracker {
      * хост вигравав би нічиї самим фактом того, що він хост.
      */
     private boolean checkPoints(int tickNumber, Array<Unit> units, CaptureManager points) {
-        boolean first  = score[0] >= TARGET;
-        boolean second = score[1] >= TARGET;
+        boolean first  = score[0] >= target;
+        boolean second = score[1] >= target;
         if (!first && !second) return false;
 
         if (first && second) {
-            if      (score[0] > score[1]) finish(Team.forPlayer(0), Reason.POINTS, tickNumber, units, points);
-            else if (score[1] > score[0]) finish(Team.forPlayer(1), Reason.POINTS, tickNumber, units, points);
-            else                          finish(null,              Reason.POINTS, tickNumber, units, points);
+            if      (score[0] > score[1]) finish(Team.byIndex(0), Reason.POINTS, tickNumber, units, points);
+            else if (score[1] > score[0]) finish(Team.byIndex(1), Reason.POINTS, tickNumber, units, points);
+            else                          finish(null,            Reason.POINTS, tickNumber, units, points);
         } else {
-            finish(Team.forPlayer(first ? 0 : 1), Reason.POINTS, tickNumber, units, points);
+            finish(Team.byIndex(first ? 0 : 1), Reason.POINTS, tickNumber, units, points);
         }
         return true;
     }
@@ -200,17 +233,24 @@ public class VictoryTracker {
     private void checkAnnihilation(Array<Unit> units, Economy economy,
                                    SpawnQueue queue, int tickNumber, CaptureManager points) {
         boolean[] doomed = new boolean[score.length];
-        for (int playerId = 0; playerId < doomed.length; playerId++) {
-            doomed[playerId] = isDoomed(Team.forPlayer(playerId), playerId, units, economy, queue);
+        for (int side = 0; side < doomed.length; side++) {
+            doomed[side] = isDoomed(Team.byIndex(side), units, economy, queue);
         }
 
         if (doomed[0] && doomed[1])      finish(null, Reason.ANNIHILATION, tickNumber, units, points);
-        else if (doomed[0])              finish(Team.forPlayer(1), Reason.ANNIHILATION, tickNumber, units, points);
-        else if (doomed[1])              finish(Team.forPlayer(0), Reason.ANNIHILATION, tickNumber, units, points);
+        else if (doomed[0])              finish(Team.byIndex(1), Reason.ANNIHILATION, tickNumber, units, points);
+        else if (doomed[1])              finish(Team.byIndex(0), Reason.ANNIHILATION, tickNumber, units, points);
     }
 
-    /** Чи в сторони не лишилось ні армії, ні замовлень, ні грошей на нові. */
-    private boolean isDoomed(Team team, int playerId, Array<Unit> units,
+    /**
+     * Чи в сторони не лишилось ні армії, ні замовлень, ні грошей на нові.
+     *
+     * <p>Рахується по СТОРОНІ цілком, а не по гравцеві: розорений гравець у
+     * команді, яка ще воює, програшем не є — його союзники тримають поле. Тому
+     * досить, щоб хоч у когось із команди лишився юніт, замовлення або гроші на
+     * найдешевше.
+     */
+    private boolean isDoomed(Team team, Array<Unit> units,
                              Economy economy, SpawnQueue queue) {
         if (units != null) {
             for (int i = 0; i < units.size; i++) {
@@ -218,13 +258,20 @@ public class VictoryTracker {
                 if (u.alive && u.team == team) return false;
             }
         }
+        int[] side = roster.playersOf(team);
         if (queue != null) {
             Array<io.jababa.lost_batalion.economy.PendingSpawn> pending = queue.getPending();
             for (int i = 0; i < pending.size; i++) {
-                if (pending.get(i).playerId == playerId) return false;
+                for (int p = 0; p < side.length; p++) {
+                    if (pending.get(i).playerId == side[p]) return false;
+                }
             }
         }
-        return economy == null || economy.gold(playerId) < CHEAPEST_UNIT;
+        if (economy == null) return true;
+        for (int p = 0; p < side.length; p++) {
+            if (economy.gold(side[p]) >= CHEAPEST_UNIT) return false;
+        }
+        return true;
     }
 
     private void finish(Team victor, Reason why, int tickNumber,
@@ -234,8 +281,8 @@ public class VictoryTracker {
         finished    = true;
         decidedTick = tickNumber;
 
-        for (int playerId = 0; playerId < lost.length; playerId++) {
-            Team team = Team.forPlayer(playerId);
+        for (int side = 0; side < lost.length; side++) {
+            Team team = Team.byIndex(side);
             int fallen = 0;
             if (units != null) {
                 for (int i = 0; i < units.size; i++) {
@@ -245,16 +292,19 @@ public class VictoryTracker {
                     if (u != null && !u.alive && !u.absorbed() && u.team == team) fallen++;
                 }
             }
-            lost[playerId]       = fallen;
-            ownedAtEnd[playerId] = points == null ? 0 : points.countOwned(team);
+            lost[side]       = fallen;
+            ownedAtEnd[side] = points == null ? 0 : points.countOwned(team);
         }
     }
 
     // ── Читання ───────────────────────────────────────────────────────────
 
-    public int score(int playerId) {
-        return playerId >= 0 && playerId < score.length ? score[playerId] : 0;
+    /** Очки СТОРОНИ. Аргумент — індекс сторони (0/1), а не номер гравця. */
+    public int score(int side) {
+        return side >= 0 && side < score.length ? score[side] : 0;
     }
+
+    public int score(Team team) { return team == null ? 0 : score(team.index()); }
 
     /** Чи матч завершено — переможцем або внічию. */
     public boolean isFinished() { return finished; }
@@ -269,8 +319,8 @@ public class VictoryTracker {
     public int getDecidedTick() { return decidedTick; }
 
     /** Скільки юнітів сторона втратила за матч. Осмислене лише після завершення. */
-    public int unitsLost(int playerId) {
-        return playerId >= 0 && playerId < lost.length ? lost[playerId] : 0;
+    public int unitsLost(int side) {
+        return side >= 0 && side < lost.length ? lost[side] : 0;
     }
 
     /**
@@ -281,13 +331,13 @@ public class VictoryTracker {
      * лише через помилку, і тоді екран результату показував би два числа, які
      * суперечать одне одному.
      */
-    public int unitsKilled(int playerId) {
-        return unitsLost(playerId == 0 ? 1 : 0);
+    public int unitsKilled(int side) {
+        return unitsLost(side == 0 ? 1 : 0);
     }
 
     /** Скільки точок сторона утримувала в мить завершення матчу. */
-    public int pointsHeldAtEnd(int playerId) {
-        return playerId >= 0 && playerId < ownedAtEnd.length ? ownedAtEnd[playerId] : 0;
+    public int pointsHeldAtEnd(int side) {
+        return side >= 0 && side < ownedAtEnd.length ? ownedAtEnd[side] : 0;
     }
 
     /** Тривалість матчу в секундах — по тіку, а не по годиннику: тіки в усіх однакові. */
@@ -304,7 +354,7 @@ public class VictoryTracker {
         h = StateChecksum.fold(h, finished ? 1 : 0);
         // Саме ordinal, а не сам об'єкт: null-переможець (нічия або матч, що
         // триває) мусить давати стале число, а не хеш посилання.
-        h = StateChecksum.fold(h, winner == null ? -1 : winner.playerId());
+        h = StateChecksum.fold(h, winner == null ? -1 : winner.index());
         h = StateChecksum.fold(h, reason.ordinal());
         // Підсумок теж у checksum: його бачить гравець, і розійтись у числі
         // втрат двом клієнтам не можна.
@@ -318,7 +368,7 @@ public class VictoryTracker {
         for (int i = 0; i < score.length; i++) out.writeInt(score[i]);
         out.writeInt(sinceScore);
         out.writeBoolean(finished);
-        out.writeInt(winner == null ? -1 : winner.playerId());
+        out.writeInt(winner == null ? -1 : winner.index());
         out.writeInt(reason.ordinal());
         out.writeInt(decidedTick);
         for (int i = 0; i < lost.length; i++)       out.writeInt(lost[i]);
@@ -334,7 +384,7 @@ public class VictoryTracker {
         sinceScore  = in.readInt();
         finished    = in.readBoolean();
         int victor  = in.readInt();
-        winner      = victor < 0 ? null : Team.forPlayer(victor);
+        winner      = victor < 0 ? null : Team.byIndex(victor);
         reason      = Reason.values()[in.readInt()];
         decidedTick = in.readInt();
         for (int i = 0; i < lost.length; i++)       lost[i]       = in.readInt();

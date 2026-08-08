@@ -118,8 +118,64 @@ public class LostBatalion extends Game {
             case "settings": return new io.jababa.lost_batalion.screens.SettingsScreen(this);
             case "multiplayer":
                 return new io.jababa.lost_batalion.screens.multiplayer.MultiplayerScreen(this);
+            case "lobby":    return openHostedLobby();
+            case "lobbyguest": return openJoinedLobby();
             default:         return new MainMenuScreen(this);
         }
+    }
+
+    /**
+     * Кімната з живою сесією — для автознімка.
+     *
+     * <p>Лоббі неможливо роздивитись інакше: щоб побачити склад, потрібні
+     * учасники, а вони приходять із другої машини. Тут кімната піднімається
+     * по-справжньому (той самий {@code MultiplayerServices.host}) і заповнюється
+     * ТИМИ Ж публічними викликами, які робить людина, натискаючи кнопки: посадити
+     * бота, закрити місце. Нічого підробленого в стан не пишеться — інакше знімок
+     * показував би розкладку, яку гра не вміє виробляти.
+     */
+    private Screen openingLobbyBots(io.jababa.lost_batalion.net.api.LobbySession session) {
+        // Скільки ботів садити. Нуль потрібен для перевірки 1 на 1 живими
+        // клієнтами: там другу сторону займає гість, і бот на її місці зробив би
+        // матч на трьох.
+        int bots = 3;
+        try {
+            bots = Integer.parseInt(System.getProperty("lb.lobbyBots", "3"));
+        } catch (NumberFormatException ignored) { }
+
+        // Порядок такий, щоб ПЕРШИЙ бот був суперником: із bots=1 виходить
+        // осмислений матч, а місце поруч із хостом лишається під живого гостя.
+        if (bots > 0) session.addBot(1, 0, "NORMAL");
+        if (bots > 1) session.addBot(0, 1, "HARD");
+        if (bots > 2) session.addBot(1, 1, "EASY");
+        session.setSlotClosed(0, 4, true);
+        session.setSlotClosed(1, 4, true);
+        return new io.jababa.lost_batalion.screens.multiplayer.LobbyScreen(this, session);
+    }
+
+    /**
+     * Та сама кімната очима ГОСТЯ — другим процесом до вже піднятої.
+     *
+     * <p>Половина екрана лоббі існує лише в гостя (кнопка «Готовий» замість
+     * «Старт», відсутність хостових дій у рядках), і побачити її з боку хоста
+     * не можна в принципі. Адреса — {@code -Dlb.joinAddress}, типово loopback.
+     */
+    private Screen openJoinedLobby() {
+        String address = System.getProperty("lb.joinAddress", "127.0.0.1");
+        io.jababa.lost_batalion.net.api.LobbySession session =
+            io.jababa.lost_batalion.net.api.MultiplayerServices.joinByAddress(
+                address, System.getProperty("lb.nick", "ГІСТЬ"));
+        if (session == null) return new MainMenuScreen(this);
+        return new io.jababa.lost_batalion.screens.multiplayer.LobbyScreen(this, session);
+    }
+
+    private Screen openHostedLobby() {
+        io.jababa.lost_batalion.net.api.LobbySession session =
+            io.jababa.lost_batalion.net.api.MultiplayerServices.host(
+                "Кімната Андрія", "ХОСТ", ScenarioCatalog.all().first().id,
+                io.jababa.lost_batalion.net.NetConfig.MAX_PLAYERS);
+        if (session == null) return new MainMenuScreen(this);
+        return openingLobbyBots(session);
     }
 
     /** Фонова музика застосунку. Екрани кажуть їй режим у своєму {@code show()}. */
@@ -356,6 +412,10 @@ public class LostBatalion extends Game {
         }
 
         io.jababa.lost_batalion.screens.menu.MenuBackdrop.disposeShared();
+
+        // Аватарки живуть у бекенді, тобто довше за будь-який екран — звільнити
+        // їх нема кому, крім виходу з гри.
+        io.jababa.lost_batalion.net.api.MultiplayerServices.disposeAvatars();
 
         super.dispose();
         batch.dispose();

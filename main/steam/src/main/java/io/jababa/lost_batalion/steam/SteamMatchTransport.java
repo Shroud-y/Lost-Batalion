@@ -3,6 +3,7 @@ package io.jababa.lost_batalion.steam;
 import com.codedisaster.steamworks.SteamID;
 import com.codedisaster.steamworks.SteamNetworking;
 import com.codedisaster.steamworks.SteamNetworkingCallback;
+import io.jababa.lost_batalion.ai.BotPlayer;
 import io.jababa.lost_batalion.net.api.MatchTransport;
 import io.jababa.lost_batalion.net.kryo.MatchEventQueue;
 import io.jababa.lost_batalion.net.messages.DesyncAlert;
@@ -100,6 +101,17 @@ public class SteamMatchTransport implements MatchTransport, SteamNetworkingCallb
     /** Останні відправлені пакети наказів — найсвіжіший у кінці. */
     private final java.util.ArrayDeque<byte[]> recentCommands = new java.util.ArrayDeque<>();
 
+    /**
+     * Скільки пакетів тримати в черзі надлишковості.
+     *
+     * <p>Не константа саме через ботів: за один тік хост відправляє не один
+     * пакет, а {@code 1 + кількість ботів}, і при сталій межі в дві штуки черга
+     * встигала б наповнитись накзами ботів ТОГО САМОГО тіку. Тобто дублювався б
+     * той самий тік замість двох попередніх, і захист від поодинокої втрати
+     * зникав би рівно там, де боти його не стосуються.
+     */
+    private int redundancyBudget() { return (1 + bots.length) * REDUNDANT_COPIES; }
+
     private static final class Peer {
         final int     playerId;
         final SteamID id;
@@ -144,6 +156,16 @@ public class SteamMatchTransport implements MatchTransport, SteamNetworkingCallb
     @Override public boolean isHost()           { return host; }
     @Override public boolean isConnected()      { return open; }
 
+    /** Боти, за яких відповідає хост. Порожньо в гостя і в матчі без ботів. */
+    private BotPlayer[] bots = NO_BOTS;
+
+    private static final BotPlayer[] NO_BOTS = new BotPlayer[0];
+
+    @Override
+    public void setBots(BotPlayer[] next) {
+        this.bots = next == null ? NO_BOTS : next;
+    }
+
     @Override
     public void sendCommands(TickCommands commands) {
         if (!open) return;
@@ -152,6 +174,15 @@ public class SteamMatchTransport implements MatchTransport, SteamNetworkingCallb
         // Свої накази — у власну чергу тим самим шляхом і в ту саму мить, що й
         // ретрансльовані: послідовність не має залежати від авторства.
         events.postCommands(commands);
+
+        // Накази ботів народжуються РАЗОМ із цим флешем і на той самий тік —
+        // див. MatchTransport.setBots. Для гостя вони нічим не відрізняються від
+        // людських, тож ідуть тим самим шляхом, включно з надлишковими копіями.
+        for (int i = 0; i < bots.length; i++) {
+            TickCommands botCommands = bots[i].commandsFor(commands.tick, commands.generation);
+            sendWithRedundancy(botCommands);
+            events.postCommands(botCommands);
+        }
     }
 
     /**
@@ -176,7 +207,7 @@ public class SteamMatchTransport implements MatchTransport, SteamNetworkingCallb
             }
 
             recentCommands.addLast(data);
-            while (recentCommands.size() > REDUNDANT_COPIES) recentCommands.removeFirst();
+            while (recentCommands.size() > redundancyBudget()) recentCommands.removeFirst();
         }
     }
 

@@ -39,7 +39,22 @@ public abstract class Unit {
      */
     public int id = -1;
 
+    /**
+     * Сторона: за неї рахуються бій, видимість, точки й перемога.
+     *
+     * <p>Не власник. За одну сторону грає до п'яти гравців, і союзник — це
+     * {@code team == моя}, але {@code owner != мій}.
+     */
     public final Team team;
+
+    /**
+     * Хто цим юнітом КОМАНДУЄ. Номер гравця з ростера матчу.
+     *
+     * <p>Окремо від {@link #team} саме тому, що союзник бачить юніта своїм за
+     * стороною, але наказу йому віддати не може. Уся перевірка стоїть в одному
+     * місці — {@code UnitManager.collectOwned}, через яке проходять усі накази.
+     */
+    public final int owner;
 
     // ── Характеристики (Q47.16) ───────────────────────────────────────────
 
@@ -252,7 +267,10 @@ public abstract class Unit {
         visibleTo[observer.ordinal()] = visible;
     }
 
-    protected Unit(Team team) { this.team = team; }
+    protected Unit(Team team, int owner) {
+        this.team  = team;
+        this.owner = owner;
+    }
 
     /** Поставити юніта в точку (Q47.16). Використовується лише при створенні. */
     protected void setPosition(long rawX, long rawY) {

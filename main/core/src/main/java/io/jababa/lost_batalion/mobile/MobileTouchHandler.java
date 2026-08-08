@@ -143,7 +143,7 @@ public class MobileTouchHandler extends InputAdapter {
             }
 
             screen.getUnitManager()
-                  .trySelectAtPoint(world.x, world.y, false, screen.getLocalTeam());
+                  .trySelectAtPoint(world.x, world.y, false, screen.getLocalPlayerId());
 
             lastTapTime = now;
             lastTapX = screenX;

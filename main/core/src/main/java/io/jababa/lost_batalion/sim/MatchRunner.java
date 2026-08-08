@@ -60,6 +60,16 @@ public class MatchRunner implements MatchTransport.Listener {
 
     private final int   localPlayerId;
     private final int[] playerIds;
+    /**
+     * Учасники, від яких чекаємо хеш стану, — усі, крім ботів.
+     *
+     * <p>Окремий список, а не {@link #playerIds}, саме через ботів. Наказів від
+     * бота чекають нарівні з людськими (без них тік не виконається), а от хешів
+     * він не шле взагалі: він не окрема симуляція, а джерело наказів у цій
+     * самій. Якби звірка чекала й на нього, комірка тіку не збиралась би ніколи
+     * — і один бот у складі тихо вимикав би виявлення десинхрону на весь матч.
+     */
+    private final int[] checksumPlayers;
     private final boolean host;
 
     /** Як часто рахувати хеш. Фіксується на старті — змінювати його посеред матчу не можна. */
@@ -111,6 +121,11 @@ public class MatchRunner implements MatchTransport.Listener {
         this.host          = transport.isHost();
         this.checksumInterval = Math.max(1, NetConfig.getChecksumIntervalTicks());
 
+        // Хто бот — знає ростер, і це не стан симуляції: склад незмінний від
+        // старту й однаковий у всіх, тож відсіювання дає однаковий список у
+        // кожного клієнта без жодного узгодження.
+        this.checksumPlayers = withoutBots(sim.getRoster(), playerIds);
+
         // Затримка вводу тепер різна для різних мереж, тож вона мусить бути
         // видимою: з неї починається розбір будь-якої скарги на «гру ривками».
         NetLog.info("Матч: гравець " + localPlayerId + " з " + playerIds.length
@@ -118,6 +133,29 @@ public class MatchRunner implements MatchTransport.Listener {
             + (NetConfig.getInputDelayTicks() * TickRate.TICK_MILLIS) + " мс)");
 
         sendWarmup();
+    }
+
+    /**
+     * Список без ботів. Порожній результат (усі учасники — боти, тобто матч
+     * ботів у дев-консолі) повертає вхідний список: звірка з самим собою завжди
+     * сходиться і нікому не заважає, а порожній список зламав би {@code compare}.
+     */
+    private static int[] withoutBots(PlayerRoster roster, int[] ids) {
+        if (roster == null) return ids;
+        int n = 0;
+        for (int i = 0; i < ids.length; i++) if (!roster.isBot(ids[i])) n++;
+        if (n == 0 || n == ids.length) return ids;
+
+        int[] out = new int[n];
+        n = 0;
+        for (int i = 0; i < ids.length; i++) if (!roster.isBot(ids[i])) out[n++] = ids[i];
+        return out;
+    }
+
+    /** Чи цей учасник — бот, тобто не шле ні хешів, ні підтверджень ресинку. */
+    private boolean isBot(int playerId) {
+        PlayerRoster roster = sim.getRoster();
+        return roster != null && roster.isBot(playerId);
     }
 
     /**
@@ -236,7 +274,7 @@ public class MatchRunner implements MatchTransport.Listener {
     /** Спільний шлях для свого й чужого хеша: записати, звірити, оголосити. */
     private void recordChecksum(int tick, int playerId, long checksum, long[] components) {
         ChecksumLedger.Mismatch found =
-            ledger.record(tick, playerId, checksum, components, localPlayerId, playerIds);
+            ledger.record(tick, playerId, checksum, components, localPlayerId, checksumPlayers);
         if (found == null) return;
 
         NetLog.error(found + " (мій хеш " + Long.toHexString(found.localChecksum) + ")");
@@ -384,7 +422,7 @@ public class MatchRunner implements MatchTransport.Listener {
     private void applyPendingRemovals(int tick) {
         Integer playerId = pendingUnitRemoval.remove(tick);
         if (playerId == null) return;
-        sim.removeArmy(io.jababa.lost_batalion.Team.forPlayer(playerId));
+        sim.removeArmy(playerId);
     }
 
     // ── Ресинк ────────────────────────────────────────────────────────────
@@ -414,7 +452,8 @@ public class MatchRunner implements MatchTransport.Listener {
 
     /** Скільки підтверджень уже є і скільки треба — для індикатора. */
     public int getAckCount()    { return acks.size(); }
-    public int getAckExpected() { return playerIds.length; }
+    /** Ботів тут немає: індикатор рахує тих, від кого підтвердження справді прийде. */
+    public int getAckExpected() { return checksumPlayers.length; }
 
     /**
      * Хост: роздати свій стан як еталонний.
@@ -501,6 +540,10 @@ public class MatchRunner implements MatchTransport.Listener {
     private void tryFinishResync() {
         for (int i = 0; i < playerIds.length; i++) {
             if (dropped.containsKey(playerIds[i])) continue;
+            // Бот власної симуляції не має — він живе в хостовій, і відновлювати
+            // йому нічого. Чекати його підтвердження означало б не завершити
+            // ресинк ніколи.
+            if (isBot(playerIds[i])) continue;
             if (!acks.contains(playerIds[i])) return;
         }
         transport.sendResumeMatch(new ResumeMatch(resyncTick, generation + 1));

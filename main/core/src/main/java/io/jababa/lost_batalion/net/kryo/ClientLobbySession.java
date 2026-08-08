@@ -7,7 +7,10 @@ import io.jababa.lost_batalion.net.NetConfig;
 import io.jababa.lost_batalion.net.NetworkProtocol;
 import io.jababa.lost_batalion.net.api.LobbySession;
 import io.jababa.lost_batalion.net.api.MatchTransport;
+import io.jababa.lost_batalion.net.messages.ChatMessage;
 import io.jababa.lost_batalion.net.messages.JoinRequest;
+import io.jababa.lost_batalion.net.messages.KickPlayer;
+import io.jababa.lost_batalion.net.messages.SetTeam;
 import io.jababa.lost_batalion.net.messages.JoinResponse;
 import io.jababa.lost_batalion.net.messages.LeaveLobby;
 import io.jababa.lost_batalion.net.messages.LobbyState;
@@ -88,11 +91,35 @@ public class ClientLobbySession implements LobbySession {
         client.sendTCP(new SetReady(ready));
     }
 
+    @Override
+    public void setTeam(int team, int seat) {
+        if (!isConnected()) return;
+        // Локально нічого не міняється: місце міг щойно зайняти інший, і
+        // єдина правда про склад — та, яку пришле хост.
+        client.sendTCP(new SetTeam(team, seat));
+    }
+
+    @Override
+    public void sendChat(String text) {
+        if (!isConnected() || text == null || text.trim().isEmpty()) return;
+        client.sendTCP(new ChatMessage(text.trim()));
+    }
+
+    // Усе нижче — хостові дії. Гість їх не надсилає взагалі: хост однаково
+    // ігнорує такі повідомлення від гостей, а мовчазний метод чесніше показує,
+    // що кнопки цих дій гостю просто не малюються.
+
     /** Карту обирає хост. */
     @Override public void setScenario(String scenarioId) { }
 
     /** Старт натискає хост. */
     @Override public void startMatch() { }
+
+    @Override public void setSlotClosed(int team, int seat, boolean closed) { }
+    @Override public void addBot(int team, int seat, String difficulty) { }
+    @Override public void removeBot(int playerId) { }
+    @Override public void setBotDifficulty(int playerId, String difficulty) { }
+    @Override public void kick(int playerId) { }
 
     @Override
     public void leave() {
@@ -114,6 +141,25 @@ public class ClientLobbySession implements LobbySession {
         events.drain(listener);
     }
 
+    /**
+     * Повідомлення матчу, що прийшли ДО того, як екран створив канал матчу.
+     *
+     * <p>Між прибуттям {@code StartMatch} і створенням {@code
+     * ClientMatchTransport} минає щонайменше кадр: подія лоббі спершу лягає в
+     * чергу, а розбирає її вже екран у своєму {@code render}. Хост за цей час
+     * встигає надіслати розігрів — і той приходить у це саме з'єднання, коли
+     * слухача матчу ще немає.
+     *
+     * <p><b>Це не теоретична гонка — вона стріляла.</b> Виміряно на двох живих
+     * клієнтах: хост надсилав розігрів на 19 мс раніше, ніж гість реєстрував
+     * слухача. Пакети гинули мовчки, гість назавжди лишався на «Очікуємо
+     * суперника», а хост — на «гравець гальмує матч». Жодної помилки при цьому
+     * ніде не з'являлось.
+     */
+    private final java.util.ArrayList<Object> matchBacklog = new java.util.ArrayList<>();
+    /** Чи канал матчу вже існує — далі складати вбік нема потреби. */
+    private boolean matchOpened;
+
     @Override
     public MatchTransport openMatch(StartMatch start) {
         if (client == null || !isConnected()) return null;
@@ -121,7 +167,18 @@ public class ClientLobbySession implements LobbySession {
         int[] playerIds = new int[start.slots.size()];
         for (int i = 0; i < start.slots.size(); i++) playerIds[i] = start.slots.get(i).playerId;
 
-        return new ClientMatchTransport(client, localPlayerId, playerIds, this::leave);
+        ClientMatchTransport transport =
+            new ClientMatchTransport(client, localPlayerId, playerIds, this::leave);
+
+        // Слухач уже стоїть, тож пакет, що прийде саме зараз, може продублюватись
+        // із відкладеним. Це нешкідливо: буфер команд бере лише перше
+        // повідомлення на пару (тік, гравець).
+        synchronized (matchBacklog) {
+            matchOpened = true;
+            transport.replay(matchBacklog);
+            matchBacklog.clear();
+        }
+        return transport;
     }
 
     // ── Мережеві події ────────────────────────────────────────────────────
@@ -142,6 +199,26 @@ public class ClientLobbySession implements LobbySession {
             } else if (object instanceof StartMatch) {
                 StartMatch start = (StartMatch) object;
                 events.post(l -> l.onMatchStarting(start));
+            } else if (object instanceof ChatMessage) {
+                ChatMessage message = (ChatMessage) object;
+                events.post(l -> l.onChat(message));
+            } else if (object instanceof KickPlayer) {
+                // Причина приходить ДО розриву — інакше вигнаний побачив би
+                // звичайне «зв'язок втрачено» і думав би на свою мережу.
+                // closed виставляється тут-таки, щоб наступний disconnected
+                // не перезаписав повідомлення.
+                KickPlayer kick = (KickPlayer) object;
+                closed = true;
+                connected = false;
+                String reason = kick.reason == null || kick.reason.isEmpty()
+                              ? "Хост виключив тебе з лоббі." : kick.reason;
+                events.post(l -> l.onDisconnected(reason));
+            } else {
+                // Усе інше — це вже трафік МАТЧУ, який випередив створення його
+                // каналу. Складаємо вбік, див. matchBacklog.
+                synchronized (matchBacklog) {
+                    if (!matchOpened) matchBacklog.add(object);
+                }
             }
         }
 

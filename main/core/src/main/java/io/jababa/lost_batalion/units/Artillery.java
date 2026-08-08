@@ -216,8 +216,8 @@ public class Artillery extends Unit {
      */
     public static final long ART_MORALE_SHOCK = Fixed.fromInt(2);
 
-    public Artillery(Team team, long rawX, long rawY) {
-        super(team);
+    public Artillery(Team team, int owner, long rawX, long rawY) {
+        super(team, owner);
         maxHp               = ART_HP;
         hp                  = ART_HP;
         maxMorale           = ART_MORALE;

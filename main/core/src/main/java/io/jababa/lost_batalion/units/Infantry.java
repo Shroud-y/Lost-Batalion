@@ -50,8 +50,8 @@ public class Infantry extends Unit {
      */
     private static final long INF_MORALE = Fixed.fromInt(100);
 
-    public Infantry(Team team, long rawX, long rawY) {
-        super(team);
+    public Infantry(Team team, int owner, long rawX, long rawY) {
+        super(team, owner);
         this.maxHp               = INF_HP;
         this.hp                  = INF_HP;
         this.maxMorale           = INF_MORALE;

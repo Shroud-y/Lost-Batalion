@@ -1,7 +1,5 @@
 package io.jababa.lost_batalion.steam;
 
-import com.codedisaster.steamworks.SteamFriends;
-import com.codedisaster.steamworks.SteamFriendsCallback;
 import io.jababa.lost_batalion.net.api.DiscoveredLobby;
 import io.jababa.lost_batalion.net.api.LobbyDirectory;
 import io.jababa.lost_batalion.net.api.LobbySession;
@@ -32,7 +30,15 @@ public class SteamBackend implements NetBackend {
      */
     private static final boolean MATCHMAKING_READY = true;
 
-    private SteamFriends        friends;
+    /**
+     * Аватарки — і заразом ЄДИНИЙ на процес {@code SteamFriends}.
+     *
+     * <p>Ім'я персони теж питається в нього: колбек {@code SteamFriends}
+     * потрібен саме аватаркам, а два екземпляри означали б дві підписки на ті
+     * самі події заради одного рядка з іменем.
+     */
+    private final SteamAvatarSource avatarSource = new SteamAvatarSource();
+
     private SteamLobbyDirectory directory;
 
     /**
@@ -109,18 +115,15 @@ public class SteamBackend implements NetBackend {
 
     @Override
     public String defaultNick() {
-        if (!SteamBoot.isRunning()) return "";
-        try {
-            // Усі методи SteamFriendsCallback — default, тож порожня реалізація
-            // законна. Саме сюди пізніше ляже onGameLobbyJoinRequested — вхід
-            // за запрошенням через оверлей Steam.
-            if (friends == null) friends = new SteamFriends(new SteamFriendsCallback() {});
-            return friends.getPersonaName();
-        } catch (Throwable t) {
-            // Ім'я персони — зручність, а не умова гри: не вийшло, то гравець
-            // впише сам.
-            return "";
-        }
+        // Ім'я персони — зручність, а не умова гри: не вийшло, то гравець
+        // впише сам. Саме в цей же SteamFriends пізніше ляже
+        // onGameLobbyJoinRequested — вхід за запрошенням через оверлей Steam.
+        return SteamBoot.isRunning() ? avatarSource.personaName() : "";
+    }
+
+    @Override
+    public io.jababa.lost_batalion.net.api.AvatarSource avatars() {
+        return avatarSource;
     }
 
     /**
@@ -140,6 +143,10 @@ public class SteamBackend implements NetBackend {
         // Порядок важливий: спершу колбеки, потім розклад запитів. Інакше
         // відповідь на щойно замовлений пошук чекала б зайвий кадр.
         SteamBoot.runCallbacks();
+
+        // Після колбеків, бо частина аватарок приїжджає саме ними, — а решта
+        // не приїжджає взагалі, і тоді їх ловить цей опит (див. update()).
+        avatarSource.update();
 
         if (directory != null) directory.tick();
 

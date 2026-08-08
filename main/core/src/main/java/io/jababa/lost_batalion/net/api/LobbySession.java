@@ -1,5 +1,6 @@
 package io.jababa.lost_batalion.net.api;
 
+import io.jababa.lost_batalion.net.messages.ChatMessage;
 import io.jababa.lost_batalion.net.messages.LobbyState;
 import io.jababa.lost_batalion.net.messages.StartMatch;
 
@@ -30,6 +31,39 @@ public interface LobbySession {
 
     /** Гість повідомляє про готовність. Для хоста не робить нічого. */
     void setReady(boolean ready);
+
+    /**
+     * Сісти на місце або вийти в список очікування ({@code team ==
+     * PlayerSlot.TEAM_NONE}).
+     *
+     * <p>Це ПРОХАННЯ, а не факт: місце міг щойно зайняти інший або закрити
+     * хост. Результат приходить наступним {@link LobbyState}, і саме його
+     * показує екран — гадати локально не можна.
+     */
+    void setTeam(int team, int seat);
+
+    /** Тільки хост: закрити або відкрити місце. */
+    void setSlotClosed(int team, int seat, boolean closed);
+
+    /** Тільки хост: посадити бота. {@code difficulty} — ім'я константи {@code Difficulty}. */
+    void addBot(int team, int seat, String difficulty);
+
+    /** Тільки хост: прибрати бота. */
+    void removeBot(int playerId);
+
+    /** Тільки хост: змінити рівень бота, який уже сидить. */
+    void setBotDifficulty(int playerId, String difficulty);
+
+    /** Тільки хост: виключити гравця з лоббі. */
+    void kick(int playerId);
+
+    /**
+     * Написати в чат лоббі. Доступно всім, зокрема тим, хто чекає.
+     *
+     * <p>Автора підставляє ХОСТ зі свого списку — присланому номеру не
+     * довіряють, інакше будь-хто пише від чужого імені.
+     */
+    void sendChat(String text);
 
     /** Тільки хост: змінити карту. */
     void setScenario(String scenarioId);
@@ -68,6 +102,9 @@ public interface LobbySession {
         /** Хост натиснув Старт: параметри матчу отримані, час завантажувати карту. */
         void onMatchStarting(StartMatch start);
 
+        /** Нове повідомлення в чаті — і своє власне теж, уже після хоста. */
+        void onChat(ChatMessage message);
+
         /** Помилка, після якої лоббі ще живе (наприклад «нік зайнятий»). */
         void onError(String message);
 
@@ -79,6 +116,7 @@ public interface LobbySession {
     abstract class Adapter implements Listener {
         @Override public void onLobbyState(LobbyState state) {}
         @Override public void onMatchStarting(StartMatch start) {}
+        @Override public void onChat(ChatMessage message) {}
         @Override public void onError(String message) {}
         @Override public void onDisconnected(String reason) {}
     }

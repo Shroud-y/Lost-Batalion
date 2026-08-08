@@ -97,14 +97,21 @@ public class SpawnGhostRenderer {
         uiBatch.setColor(1f, 1f, 1f, 1f);
     }
 
-    /** Привиди замовлень цього гравця на карті. Координати світові. */
-    public void drawPending(SpriteBatch batch, SpawnQueue queue, Team viewer) {
+    /**
+     * Привиди ВЛАСНИХ замовлень на карті. Координати світові.
+     *
+     * <p>Фільтр по номеру гравця, а не по стороні: замовлення союзника — його
+     * справа, і показувати чуже місце висадки означало б захаращувати поле
+     * тим, на що гравець усе одно не впливає.
+     */
+    public void drawPending(SpriteBatch batch, SpawnQueue queue,
+                            int viewerPlayerId, Team viewer) {
         if (queue == null) return;
         Array<PendingSpawn> all = queue.getPending();
 
         for (int i = 0; i < all.size; i++) {
             PendingSpawn s = all.get(i);
-            if (s.playerId != viewer.playerId()) continue;
+            if (s.playerId != viewerPlayerId) continue;
 
             float w = s.type.sizePx();
             float h = s.type.heightPx();

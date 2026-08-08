@@ -179,13 +179,17 @@ public class TacticalBrain implements BotBrain {
         this.sim      = sim;
         this.playerId = playerId;
         this.level    = level;
-        this.me       = Team.forPlayer(playerId);
-        this.foe      = Team.forPlayer(playerId == 0 ? 1 : 0);
+        // Сторону бота дає склад матчу, а не його номер: за одну сторону може
+        // грати кілька гравців, і бот цілком може стояти в команді з людиною.
+        this.me       = sim.getRoster().team(playerId);
+        this.foe      = me == null ? Team.ENEMY : me.opponent();
 
     }
 
     public Difficulty getLevel() { return level; }
     public int getPlayerId()     { return playerId; }
+    /** Сторона, за яку грає цей мозок. Її бере оверлей намірів. */
+    public Team getTeam()        { return me; }
 
     // ── Намір назовні (для налагоджувального оверлея) ─────────────────────
     //

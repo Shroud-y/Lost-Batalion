@@ -12,6 +12,8 @@ import com.badlogic.gdx.utils.ObjectMap;
 import io.jababa.lost_batalion.debug.DevView;
 import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.math.Fixed;
+import io.jababa.lost_batalion.sim.PlayerRoster;
+import io.jababa.lost_batalion.ui.UIFactory;
 import io.jababa.lost_batalion.units.Artillery;
 import io.jababa.lost_batalion.units.Unit;
 
@@ -43,8 +45,45 @@ public class UnitRenderer {
      */
     private static final float MORALE_BAR_GAP = 0.4f;
 
+    /**
+     * Склад матчу й номер того, хто дивиться, — для обводки союзників.
+     *
+     * <p>Ставиться один раз на матч: обидва незмінні від старту. {@code null}
+     * означає «нікого розрізняти» і вимикає обводку цілком — так працює
+     * одиночна гра, поки {@code setViewer} ніхто не викликав.
+     */
+    private PlayerRoster roster;
+    private int localPlayerId = -1;
+
     public UnitRenderer() {
         shapes = new ShapeRenderer();
+    }
+
+    public void setViewer(PlayerRoster roster, int localPlayerId) {
+        this.roster        = roster;
+        this.localPlayerId = localPlayerId;
+    }
+
+    /**
+     * Чи носить цей юніт кольорову позначку власника.
+     *
+     * <p>Рівно три правила, і кожне зі своєї причини:
+     * <ul>
+     *   <li><b>Союзник — так.</b> Це єдиний випадок, коли треба знати ЧИЄ
+     *       військо: наказу йому не віддаси, а рахувати на нього в бою
+     *       доводиться.</li>
+     *   <li><b>Свої — ні.</b> Гравець і так знає, що його; обводка на кожному
+     *       власному юніті зробила б поле строкатим і знецінила б обводку
+     *       ВИДІЛЕННЯ, яка справді щось повідомляє.</li>
+     *   <li><b>Вороги — ні.</b> Розрізняти чужих гравців між собою гравцеві
+     *       нічим не допоможе: наказів він їм не віддає, а сторону вже показує
+     *       спрайт.</li>
+     * </ul>
+     */
+    private boolean marksOwner(Unit u) {
+        return roster != null
+            && u.owner != localPlayerId
+            && roster.allied(u.owner, localPlayerId);
     }
 
     /**
@@ -118,7 +157,11 @@ public class UnitRenderer {
         for (Unit u : units) {
             if (!u.alive) continue;
             if (!DevView.visible(u, viewer)) continue;
-            if (u.selected) drawOutline(u, alpha);
+            // else-if безпечний: союзного юніта виділити НЕ можна взагалі
+            // (UnitManager.collectOwned фільтрує накази й виділення за owner),
+            // тож два стани зійтись на одному юніті не можуть.
+            if (u.selected)        drawOutline(u, alpha);
+            else if (marksOwner(u)) drawOwnerMark(u, alpha);
         }
         shapes.end();
 
@@ -168,6 +211,39 @@ public class UnitRenderer {
         shapes.setColor(1f, 1f, 1f, 0.9f);
         shapes.rect(x, y, w, h);
 
+    }
+
+    /**
+     * Наскільки позначка власника стоїть ДАЛІ від фігури, ніж обводка виділення.
+     *
+     * <p>Не декор: обводка виділення йде впритул до хітбокса, і позначка на тому
+     * самому місці читалась би як «цей юніт виділений, тільки іншим кольором».
+     * Відступ у пару одиниць робить її кільцем НАВКОЛО фігури — іншим знаком, а
+     * не іншим тоном того самого.
+     */
+    private static final float OWNER_MARK_PAD = 2.5f;
+
+    /** Прозорість позначки. Нижча за обводку виділення: вона стоїть постійно. */
+    private static final float OWNER_MARK_ALPHA = 0.75f;
+
+    /**
+     * Кільце кольору власника навколо союзного юніта.
+     *
+     * <p>Колір береться з того самого {@code UIFactory.playerColor}, що й
+     * обводка аватарки в HUD. Це не зручність, а умова: гравець зіставляє тон на
+     * полі з тоном угорі, і два незалежні джерела кольору рано чи пізно дали б
+     * різні відтінки для одного гравця.
+     */
+    private void drawOwnerMark(Unit u, float alpha) {
+        float halfW = u.getHalfWidthPx();
+        float halfH = u.getHalfHeightPx();
+        float pad   = OWNER_MARK_PAD;
+        float x     = u.renderX(alpha) - halfW - pad;
+        float y     = u.renderY(alpha) - halfH - pad;
+
+        Color c = UIFactory.playerColor(roster.colorIndex(u.owner));
+        shapes.setColor(c.r, c.g, c.b, OWNER_MARK_ALPHA);
+        shapes.rect(x, y, halfW * 2f + pad * 2f, halfH * 2f + pad * 2f);
     }
 
     /**

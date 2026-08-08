@@ -25,21 +25,29 @@ import io.jababa.lost_batalion.net.messages.TickCommands;
  */
 public class LocalMatchTransport implements MatchTransport {
 
-    private static final int[] SOLO     = { 0 };
-    private static final int[] WITH_BOT = { 0, BotPlayer.PLAYER_ID };
+    private static final int[] SOLO = { 0 };
 
     private final MatchEventQueue events = new MatchEventQueue();
     private final BotPlayer bot;
+    /**
+     * Склад матчу. Номер бота береться з нього самого, а не з константи: список
+     * учасників і підпис під наказами МУСЯТЬ бути одним і тим самим числом,
+     * інакше lockstep чекає одного номера, а отримує інший.
+     */
+    private final int[] playerIds;
     private boolean open = true;
 
     /** Канал без супротивника: ворожа армія стоїть як мішені. */
     public LocalMatchTransport() { this(null); }
 
     /** @param bot супротивник-бот або {@code null} */
-    public LocalMatchTransport(BotPlayer bot) { this.bot = bot; }
+    public LocalMatchTransport(BotPlayer bot) {
+        this.bot       = bot;
+        this.playerIds = bot == null ? SOLO : new int[] { 0, bot.getPlayerId() };
+    }
 
     @Override public int getLocalPlayerId() { return 0; }
-    @Override public int[] getPlayerIds()   { return bot == null ? SOLO : WITH_BOT; }
+    @Override public int[] getPlayerIds()   { return playerIds; }
     @Override public boolean isHost()       { return true; }
 
     /**

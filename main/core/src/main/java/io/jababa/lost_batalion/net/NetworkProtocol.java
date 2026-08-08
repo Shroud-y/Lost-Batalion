@@ -88,6 +88,16 @@ public final class NetworkProtocol {
         kryo.register(io.jababa.lost_batalion.net.commands.CancelSpawnCommand.class);
         kryo.register(io.jababa.lost_batalion.net.commands.MergeArtilleryCommand.class);
         kryo.register(io.jababa.lost_batalion.net.commands.OffsetMoveCommand.class);
+
+        // Команди в лоббі (протокол 8). Усе це ходить ЛИШЕ до старту матчу,
+        // але реєстр один на з'єднання: лоббі й матч ідуть тим самим каналом.
+        kryo.register(SetTeam.class);
+        kryo.register(SetSlotClosed.class);
+        kryo.register(AddBot.class);
+        kryo.register(RemoveBot.class);
+        kryo.register(SetBotDifficulty.class);
+        kryo.register(KickPlayer.class);
+        kryo.register(ChatMessage.class);
     }
 
     // ── Дискаверi лоббі ───────────────────────────────────────────────────

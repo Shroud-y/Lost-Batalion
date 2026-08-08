@@ -25,6 +25,7 @@ import com.badlogic.gdx.utils.viewport.ScreenViewport;
 import com.badlogic.gdx.utils.viewport.Viewport;
 import io.jababa.lost_batalion.LostBatalion;
 import io.jababa.lost_batalion.Team;
+import io.jababa.lost_batalion.sim.PlayerRoster;
 import io.jababa.lost_batalion.capture.CaptureManager;
 import io.jababa.lost_batalion.capture.CapturePoint;
 import io.jababa.lost_batalion.audio.MusicManager;
@@ -32,7 +33,9 @@ import io.jababa.lost_batalion.commands.CurvedFormationCommand;
 import io.jababa.lost_batalion.math.Fixed;
 import io.jababa.lost_batalion.mobile.GameInputHandler;
 import io.jababa.lost_batalion.mobile.MobileTouchHandler;
+import io.jababa.lost_batalion.net.api.AvatarSource;
 import io.jababa.lost_batalion.net.api.MatchTransport;
+import io.jababa.lost_batalion.net.api.MultiplayerServices;
 import io.jababa.lost_batalion.economy.PendingSpawn;
 import io.jababa.lost_batalion.net.commands.AttackCommand;
 import io.jababa.lost_batalion.net.commands.CancelSpawnCommand;
@@ -173,6 +176,20 @@ public class GameScreen implements Screen {
     private Label scoreSelfLabel, scoreFoeLabel;
 
     /**
+     * Ряди аватарок обабіч рахунку: свої ліворуч, чужі праворуч.
+     *
+     * <p>Тримаються посиланнями, бо перескладаються ПІСЛЯ побудови HUD:
+     * аватарка приїжджає зі Steam за кілька кадрів після старту матчу, і
+     * приводу перемалювати HUD у гри при цьому немає жодного.
+     */
+    private Table selfFaces, foeFaces;
+    /** Джерело аватарок і версія набору, яку ми вже намалювали. */
+    private AvatarSource avatars;
+    private int avatarRevision = -1;
+    /** Спільний стиль літери в квадратику — один на всі аватарки (DESIGN §6). */
+    private Label.LabelStyle faceLetterStyle;
+
+    /**
      * Літери точок під рахунком, у порядку списку сценарію. Порядок сталий —
      * міняється лише колір, тож індекс тут відповідає індексу точки.
      */
@@ -264,6 +281,16 @@ public class GameScreen implements Screen {
 
     /** За кого грає ця копія гри. Визначає і виділення, і туман. */
     private Team localTeam = Team.PLAYER;
+
+    /** Склад матчу: хто за яку сторону. Задається конструктором, далі незмінний. */
+    private final PlayerRoster roster;
+    /** Номер локального гравця. Кешується: його питають щокадру. */
+    private int localPlayerId;
+
+    /** Номер локального гравця — потрібен вводу, який фільтрує свої юніти. */
+    public int getLocalPlayerId() { return localPlayerId; }
+    /** Індекс своєї сторони — ним індексуються рахунок, точки й втрати. */
+    private int localSide;
     /** Чи в матчі більше одного гравця — від цього залежить поведінка паузи. */
     private boolean multiplayer;
 
@@ -350,24 +377,27 @@ public class GameScreen implements Screen {
 
     /** Одиночна гра: seed довільний, відтворюваність нікому не потрібна. */
     public GameScreen(LostBatalion game, ScenarioCard scenario) {
-        this(game, scenario, System.nanoTime(), null);
+        this(game, scenario, System.nanoTime(), null, null);
     }
 
     public GameScreen(LostBatalion game, ScenarioCard scenario, long rngSeed) {
-        this(game, scenario, rngSeed, null);
+        this(game, scenario, rngSeed, null, null);
     }
 
     /**
      * @param transport канал матчу; null означає одиночну гру, і тоді
      *                  підставляється {@link LocalMatchTransport} — той самий
      *                  lockstep-цикл, тільки замкнений сам на себе
+     * @param roster    склад матчу з лоббі; null означає одиночну гру проти
+     *                  бота, і тоді береться {@link PlayerRoster#local()}
      */
     public GameScreen(LostBatalion game, ScenarioCard scenario, long rngSeed,
-                      MatchTransport transport) {
+                      MatchTransport transport, PlayerRoster roster) {
         this.game      = game;
         this.scenario  = scenario;
         this.rngSeed   = rngSeed;
         this.transport = transport;
+        this.roster    = roster != null ? roster : PlayerRoster.local();
 
         // Затримка вводу — параметр МАТЧУ, а не збірки: у мережевому матчі її
         // задає хост (див. NetConfig.getInputDelayTicks). Одиночна гра мусить
@@ -492,7 +522,46 @@ public class GameScreen implements Screen {
     }
 
     private void loadSimulation() {
-        sim = new GameSimulation(terrain, mapWidth, mapHeight, rngSeed, scenario.captureZones);
+        // Стартова армія — лише в одиночній грі. У мережевому матчі гравець
+        // отримує її вартість золотом (Economy.STARTING_GOLD_NO_ARMY) і сам
+        // вирішує, з чого зібрати армію й куди її висадити.
+        sim = new GameSimulation(terrain, mapWidth, mapHeight, rngSeed,
+                                 scenario.captureZones, roster, transport == null);
+    }
+
+    /**
+     * Мозки мережевих ботів — і віддати їх каналу, поки той ще не розігрівся.
+     *
+     * <p>Рахує їх ТІЛЬКИ хост, і це не оптимізація, а вимога: бот — такий самий
+     * учасник lockstep, як людина, і два джерела наказів на один {@code playerId}
+     * дали б два різні повідомлення на той самий тік. Гість отримує накази бота
+     * ретрансляцією й не відрізняє їх від людських.
+     *
+     * <p>Викликається саме тут, ПІСЛЯ {@code loadSimulation}: мозок читає стан
+     * симуляції з конструктора (сторону бере з ростера), а до створення
+     * {@code MatchRunner} — бо той одразу шле розігрів, і бот, підключений
+     * пізніше, пропустив би перші тіки й матч не зрушив би з місця.
+     */
+    private void attachNetworkBots(MatchTransport channel) {
+        if (!channel.isHost()) return;
+
+        int[] botIds = roster.bots();
+        if (botIds.length == 0) return;
+
+        BotPlayer[] bots = new BotPlayer[botIds.length];
+        for (int i = 0; i < botIds.length; i++) {
+            TacticalBrain brain = new TacticalBrain(sim, botIds[i],
+                                      Difficulty.byName(roster.botDifficulty(botIds[i])));
+            bots[i] = new BotPlayer(botIds[i], brain);
+            // Перший бот лишається «тим самим», якого показує оверлей намірів і
+            // якому дев-консоль міняє рівень: обидва писались під одного
+            // супротивника й нічого не знають про склад із кількох.
+            if (foeBrain == null) { foeBrain = brain; foeBot = bots[i]; }
+        }
+        channel.setBots(bots);
+
+        io.jababa.lost_batalion.net.NetLog.info(
+            "Матч: ботів під хостом " + bots.length + " (" + java.util.Arrays.toString(botIds) + ")");
     }
 
     /**
@@ -508,7 +577,7 @@ public class GameScreen implements Screen {
     }
 
     private void loadForces() {
-        sim.spawnInitialForces();
+        if (transport == null) sim.spawnInitialForces();
 
         // Одиночна гра — це матч проти бота. Він підключається як другий
         // учасник того самого lockstep-каналу (див. BotPlayer), тому нижче
@@ -516,14 +585,18 @@ public class GameScreen implements Screen {
         MatchTransport channel;
         if (transport != null) {
             channel = transport;
+            attachNetworkBots(channel);
         } else {
             foeBrain = new TacticalBrain(sim, BotPlayer.PLAYER_ID,
                            Difficulty.byName(LostBatalion.Settings.getBotDifficulty()));
-            foeBot   = new BotPlayer(foeBrain);
+            foeBot   = new BotPlayer(BotPlayer.PLAYER_ID, foeBrain);
             channel  = new LocalMatchTransport(foeBot);
         }
-        runner      = new MatchRunner(sim, channel);
-        localTeam   = Team.forPlayer(runner.getLocalPlayerId());
+        runner        = new MatchRunner(sim, channel);
+        localPlayerId = runner.getLocalPlayerId();
+        localTeam     = roster.team(localPlayerId);
+        if (localTeam == null) localTeam = Team.PLAYER;
+        localSide     = localTeam.index();
 
         // Саме «є віддалена людина», а НЕ «учасників більше одного»: з ботом
         // учасників теж двоє, але матч лишається локальним. Від цього залежить
@@ -544,6 +617,9 @@ public class GameScreen implements Screen {
 
     private void loadRenderers() {
         unitRenderer      = new UnitRenderer();
+        // Хто дивиться — щоб рендер міг відрізнити союзника від свого й чужого.
+        // Ставиться раз: і склад, і номер незмінні від старту матчу.
+        unitRenderer.setViewer(roster, localPlayerId);
         terrainIndicators = new TerrainIndicatorRenderer();
         topography        = new TopographyOverlay(terrain, mapWidth, mapHeight);
         moveMarker      = new MoveMarker();
@@ -744,7 +820,7 @@ public class GameScreen implements Screen {
         // Максимум перевищує TARGET: обидві сторони отримують очки ДО перевірки
         // на перемогу, тож останнє нарахування може перескочити межу на цілий
         // період утримання всіх точок.
-        int maxScore = VictoryTracker.TARGET
+        int maxScore = sim.getVictory().target()
                      + VictoryTracker.POINTS_PER_CAPTURE * Math.max(1, pts.size);
         GlyphLayout widest = new GlyphLayout(scoreStyle.font,
             String.valueOf(maxScore).replaceAll("\\d", "0"));
@@ -786,11 +862,28 @@ public class GameScreen implements Screen {
         scoreBox.add(scoreLine).row();
         if (pts.size > 0) scoreBox.add(pointsLine).padTop(1f);
 
+        // Ряди аватарок обабіч рахунку. Порожні таблиці створюються ЗАВЖДИ, а
+        // наповнює їх refreshFaces() — і воно ж вирішує, чи показувати їх узагалі.
+        avatars         = MultiplayerServices.current().avatars();
+        faceLetterStyle = UIFactory.createHintStyle();
+        selfFaces = new Table();
+        foeFaces  = new Table();
+
         Table scoreRow = new Table();
         scoreRow.setFillParent(true);
         scoreRow.top().padTop(2f);
+        // Обидва ряди в тій самій СТРОЦІ, що й плашка рахунку, і ростуть від неї
+        // назовні — так само, як самі цифри. Плашка через це лишається рівно по
+        // центру екрана незалежно від того, скільки в кого гравців.
+        // uniformX робить бічні комірки РІВНИМИ за шириною. Без цього плашка
+        // рахунку з'їжджала з центру екрана, щойно в командах різна кількість
+        // гравців: троє ліворуч і один праворуч тягнули б її вбік.
+        scoreRow.add(selfFaces).right().uniformX().padRight(8f);
         scoreRow.add(scoreBox);
+        scoreRow.add(foeFaces).left().uniformX().padLeft(8f);
         hudStage.addActor(scoreRow);
+
+        refreshFaces();
 
         // Підказка про очікування чужих наказів. У lockstep гра просто стоїть,
         // і без пояснення це виглядає як зависання.
@@ -835,6 +928,68 @@ public class GameScreen implements Screen {
             bottomBar.add(formationBtn).size(64f, 54f).expand().bottom().padBottom(48f);
             hudStage.addActor(bottomBar);
         }
+    }
+
+    /** Сторона квадратика з аватаркою в HUD. */
+    private static final float FACE_SIZE = 26f;
+    /** Проміжок між квадратиками в ряду. */
+    private static final float FACE_GAP  = 4f;
+
+    /**
+     * Скласти ряди аватарок наново.
+     *
+     * <p>Показуються ЛИШЕ там, де є що розрізняти: у грі проти бота сторін теж
+     * дві, але ряд із одного квадратика поруч із рахунком не повідомляє нічого,
+     * чого рахунок уже не сказав, — а місце вгорі по центру найдорожче в HUD.
+     *
+     * <p>Свої ліворуч, чужі праворуч — той самий порядок, що в цифр рахунку
+     * («свої перші»). Задачею було «ліворуч сині, праворуч червоні», але сторони
+     * тут не сині й червоні, а СВОЯ і ЧУЖА: гравець за червоних інакше бачив би
+     * свій рахунок ліворуч, а своїх людей праворуч.
+     */
+    private void refreshFaces() {
+        if (selfFaces == null || foeFaces == null) return;
+
+        avatarRevision = avatars.revision();
+        selfFaces.clear();
+        foeFaces.clear();
+
+        boolean show = multiplayer || roster.size() > 2;
+        selfFaces.setVisible(show);
+        foeFaces .setVisible(show);
+        if (!show) return;
+
+        fillFaces(selfFaces, roster.playersOf(localSide), true);
+        fillFaces(foeFaces,  roster.playersOf(1 - localSide), false);
+    }
+
+    private void fillFaces(Table row, int[] players, boolean allied) {
+        for (int i = 0; i < players.length; i++) {
+            row.add(face(players[i], allied))
+               .size(FACE_SIZE).padLeft(i == 0 ? 0f : FACE_GAP);
+        }
+    }
+
+    /**
+     * Квадратик одного учасника.
+     *
+     * <p>Колір обводки — ВЛАСНИКА, але лише в союзників. У чужих він був би
+     * брехнею: обводку кольором власника носять юніти, і бачать її теж лише
+     * союзники, тож у ворожому ряду тонові не було б відповідника на полі.
+     * Тому вороги позначені одним кольором сторони — рівно тим, чим вони й
+     * розрізняються для гравця.
+     */
+    private com.badlogic.gdx.scenes.scene2d.Actor face(int playerId, boolean allied) {
+        String nick = roster.nick(playerId);
+        boolean bot = roster.isBot(playerId);
+        if (nick == null || nick.isEmpty()) nick = bot ? "БОТ" : "?";
+
+        com.badlogic.gdx.graphics.Color outline = allied
+            ? UIFactory.playerColor(roster.colorIndex(playerId))
+            : UIFactory.COLOR_TEAM_FOE;
+
+        return new io.jababa.lost_batalion.ui.AvatarBox(
+            avatars.avatarFor(roster.steamId(playerId)), nick, faceLetterStyle, bot, outline);
     }
 
     @Override
@@ -889,6 +1044,10 @@ public class GameScreen implements Screen {
             renderAlpha = runner.getRenderAlpha();
         }
         if (dropNoticeTimer > 0f) dropNoticeTimer -= delta;
+        // Аватарка приїжджає зі Steam через кілька кадрів після старту матчу, і
+        // власного приводу перемалювати HUD у гри немає. Звірка щокадру — це
+        // порівняння двох чисел; перескладання трапляється рівно на прибуття.
+        if (avatars != null && avatars.revision() != avatarRevision) refreshFaces();
         updateWaitHint();
         updateModals(delta);
         if (disposed) return;
@@ -901,15 +1060,15 @@ public class GameScreen implements Screen {
             combatManager.updateVisuals(delta);
             combatManager.updatePopups(delta);
             selectionPanel.update(delta, unitManager.getSelectedUnits());
-            int me  = runner.getLocalPlayerId();
-            int foe = me == 0 ? 1 : 0;
+            // Золото — своє особисте (воно на гравця), рахунок — командний.
             commandPanel.update(
-                sim.getEconomy().gold(me),
-                sim.getEconomy().incomePerPeriod(me, sim.getCapturePoints()));
+                sim.getEconomy().gold(localPlayerId),
+                sim.getEconomy().incomePerPeriod(localPlayerId, sim.getCapturePoints()));
             // Свої очки завжди перші: рахунок читають про себе, а не про сторону
-            // з меншим номером гравця.
-            scoreSelfLabel.setText(Integer.toString(sim.getVictory().score(me)));
-            scoreFoeLabel .setText(Integer.toString(sim.getVictory().score(foe)));
+            // з меншим номером.
+            int foeSide = 1 - localSide;
+            scoreSelfLabel.setText(Integer.toString(sim.getVictory().score(localSide)));
+            scoreFoeLabel .setText(Integer.toString(sim.getVictory().score(foeSide)));
             updatePointTags(delta);
 
             if (formationBtn != null) {
@@ -955,7 +1114,7 @@ public class GameScreen implements Screen {
         batch.begin();
         // Привиди замовлень — під юнітами: військо, що вже прийшло, важливіше
         // за те, що тільки збирається.
-        spawnGhosts.drawPending(batch, sim.getSpawnQueue(), localTeam);
+        spawnGhosts.drawPending(batch, sim.getSpawnQueue(), localPlayerId, localTeam);
         unitRenderer.drawSprites(batch, unitManager.getAllUnits(), renderAlpha, localTeam);
         // Значки місцевості — поверх юнітів, але під бойовими попапами.
         terrainIndicators.draw(batch, unitManager.getSelectedUnits(), renderAlpha,
@@ -1204,9 +1363,9 @@ public class GameScreen implements Screen {
         if (noticeOverlay != null || resultOverlay != null) return;
 
         VictoryTracker v = sim.getVictory();
-        int  me   = runner.getLocalPlayerId();
-        int  foe  = me == 0 ? 1 : 0;
-        Team mine = Team.forPlayer(me);
+        int  me   = localSide;
+        int  foe  = 1 - localSide;
+        Team mine = localTeam;
 
         MatchResultOverlay.Summary s = new MatchResultOverlay.Summary();
         if (v.isDraw())                 s.title = "НІЧИЯ";
@@ -1224,7 +1383,7 @@ public class GameScreen implements Screen {
             case POINTS:
             default:
                 s.cause = "Рахунок за утримання стратегічних точок добіг "
-                        + VictoryTracker.TARGET + ".";
+                        + v.target() + ".";
                 break;
         }
 
@@ -1271,8 +1430,8 @@ public class GameScreen implements Screen {
         s.title      = "ПЕРЕМОГА";
         s.cause      = String.join(", ", runner.getDroppedNicks())
                      + " вийшов з матчу. Поле лишилось за вами.";
-        s.scoreSelf  = sim.getVictory().score(me);
-        s.scoreFoe   = sim.getVictory().score(foe);
+        s.scoreSelf  = sim.getVictory().score(localSide);
+        s.scoreFoe   = sim.getVictory().score(1 - localSide);
         s.statsKnown = false;
 
         modalStage.clear();
@@ -1348,11 +1507,10 @@ public class GameScreen implements Screen {
         @Override
         public void offsetArmy(int playerId, float dx, float dy) {
             Array<Unit> all = unitManager.getAllUnits();
-            Team side = Team.forPlayer(playerId);
             com.badlogic.gdx.utils.IntArray ids = new com.badlogic.gdx.utils.IntArray();
             for (int i = 0; i < all.size; i++) {
                 Unit u = all.get(i);
-                if (u.alive && u.team == side) ids.add(u.id);
+                if (u.alive && u.owner == playerId) ids.add(u.id);
             }
             if (ids.size == 0) { devConsole.print("нема кого зсувати"); return; }
             // Той самий наказ, що й від миші: консоль не чіпає стан повз
@@ -1365,7 +1523,7 @@ public class GameScreen implements Screen {
         public void pathMoveArmy(float x, float y) {
             // Виділяємо всю армію тією ж рамкою, що й миша, і віддаємо
             // звичайний наказ — консоль стан повз командний канал не чіпає.
-            unitManager.selectInRect(0f, 0f, mapWidth, mapHeight, false, localTeam);
+            unitManager.selectInRect(0f, 0f, mapWidth, mapHeight, false, localPlayerId);
             issuePathMove(x, y);
         }
 
@@ -1384,7 +1542,7 @@ public class GameScreen implements Screen {
                 // Виділити всю свою армію — інакше привидів не буде видно.
                 // Через ту саму рамку, що й миша: окремого «виділити все»
                 // немає, і заводити його заради дев-команди зайве.
-                unitManager.selectInRect(0f, 0f, mapWidth, mapHeight, false, localTeam);
+                unitManager.selectInRect(0f, 0f, mapWidth, mapHeight, false, localPlayerId);
                 offsetDrag.onRmbDown(x1, y1);
                 offsetDrag.update(x2, y2);
             }
@@ -1399,7 +1557,7 @@ public class GameScreen implements Screen {
             com.badlogic.gdx.utils.IntArray ids = new com.badlogic.gdx.utils.IntArray();
             for (int i = 0; i < all.size; i++) {
                 Unit u = all.get(i);
-                if (u.alive && u.team == localTeam && u instanceof Artillery) ids.add(u.id);
+                if (u.alive && u.owner == localPlayerId && u instanceof Artillery) ids.add(u.id);
             }
             if (ids.size < 2) { devConsole.print("своїх гармат менше двох"); return; }
             runner.issue(new MergeArtilleryCommand(runner.getLocalPlayerId(), ids.toArray()));
@@ -1407,7 +1565,7 @@ public class GameScreen implements Screen {
 
         @Override
         public void killArmy(int playerId) {
-            sim.removeArmy(Team.forPlayer(playerId));
+            sim.removeArmy(playerId);
         }
 
         @Override
@@ -1416,7 +1574,14 @@ public class GameScreen implements Screen {
             // так спрацьовує та сама умова, що й у справжньому матчі, і разом із
             // нею — підсумкові числа. Прямий запис показав би екран результату,
             // якого гра насправді не вміє виробляти.
-            killArmy(playerId == 0 ? 1 : 0);
+            //
+            // Знищується вся ПРОТИЛЕЖНА СТОРОНА, а не «гравець з іншим
+            // номером»: умова перемоги командна, і вбити одного з п'яти
+            // означало б лише покарати його союзників.
+            Team side = sim.getRoster().team(playerId);
+            if (side == null) return;
+            int[] foes = sim.getRoster().playersOf(side.opponent());
+            for (int i = 0; i < foes.length; i++) killArmy(foes[i]);
         }
 
         @Override
@@ -1438,12 +1603,12 @@ public class GameScreen implements Screen {
             return "тік " + sim.getTickNumber() + " · темп ×" + DevView.timeScale
                  + "\nви: золото " + sim.getEconomy().gold(me) + ", армія " + armyMe
                  + ", точок " + sim.getCapturePoints().countOwned(localTeam)
-                 + ", очок " + v.score(me)
+                 + ", очок " + v.score(localSide)
                  + "\nсуперник (" + (foeBrain == null ? "—" : foeBrain.getLevel().title)
                  + "): золото " + sim.getEconomy().gold(foe) + ", армія " + armyFoe
                  + ", точок " + sim.getCapturePoints().countOwned(
                        localTeam == Team.PLAYER ? Team.ENEMY : Team.PLAYER)
-                 + ", очок " + v.score(foe);
+                 + ", очок " + v.score(1 - localSide);
         }
 
         private UnitType parseType(String s) {
@@ -1666,7 +1831,7 @@ public class GameScreen implements Screen {
         Array<PendingSpawn> all = sim.getSpawnQueue().getPending();
         for (int i = 0; i < all.size; i++) {
             PendingSpawn s = all.get(i);
-            if (s.playerId != localTeam.playerId()) continue;
+            if (s.playerId != localPlayerId) continue;
             // Півосі окремо — привид легкої піхоти витягнутий, як і сам юніт.
             float halfW = s.type.sizePx()   / 2f;
             float halfH = s.type.heightPx() / 2f;
@@ -1780,7 +1945,7 @@ public class GameScreen implements Screen {
         if (!selecting) return;
         float rx = Math.min(selStartX, selCurX), ry = Math.min(selStartY, selCurY);
         float rw = Math.abs(selCurX - selStartX), rh = Math.abs(selCurY - selStartY);
-        if (rw > 6f && rh > 6f) unitManager.selectInRect(rx, ry, rw, rh, true, localTeam);
+        if (rw > 6f && rh > 6f) unitManager.selectInRect(rx, ry, rw, rh, true, localPlayerId);
         selecting = false;
     }
     public void setClickConsumedByUnit(boolean v)  { clickConsumedByUnit = v; }
@@ -2240,7 +2405,7 @@ public class GameScreen implements Screen {
                     if (curvedFormation.isDrawing()) return true;
                     if (unitManager == null) return false;
                     boolean shift = Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT)||Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT);
-                    clickConsumedByUnit = unitManager.trySelectAtPoint(w.x, w.y, shift, localTeam);
+                    clickConsumedByUnit = unitManager.trySelectAtPoint(w.x, w.y, shift, localPlayerId);
                     if (!clickConsumedByUnit) startSelecting(w.x, w.y);
                     return true;
                 }
@@ -2295,7 +2460,7 @@ public class GameScreen implements Screen {
                     float rx=Math.min(selStartX,selCurX), ry=Math.min(selStartY,selCurY);
                     float rw=Math.abs(selCurX-selStartX), rh=Math.abs(selCurY-selStartY);
                     boolean shift=Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT)||Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT);
-                    if (rw>6f&&rh>6f) unitManager.selectInRect(rx,ry,rw,rh,shift,localTeam);
+                    if (rw>6f&&rh>6f) unitManager.selectInRect(rx,ry,rw,rh,shift,localPlayerId);
                     else if (!clickConsumedByUnit&&!shift) unitManager.clearSelection();
                     selecting=false; return true;
                 }

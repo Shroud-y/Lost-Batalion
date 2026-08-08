@@ -18,9 +18,9 @@ import java.util.List;
  * всередині себе він вільний (float, колекції, будь-що), бо реплікується не
  * його думка, а її результат.
  *
- * <p>Наслідок, який дістається задарма: мережевий матч проти бота колись
- * запрацює без переробок — хост володітиме ботом, і його {@link TickCommands}
- * розійдуться, як від будь-якого іншого учасника.
+ * <p>Наслідок, який справдився: мережевий матч із ботом запрацював без переробок
+ * самого бота — хост володіє ним, і його {@link TickCommands} розходяться, як від
+ * будь-якого іншого учасника (див. {@code MatchTransport.setBots}).
  *
  * <h3>Ритм</h3>
  * Повідомлення від бота народжується РАЗОМ із флешем локального гравця (див.
@@ -41,8 +41,25 @@ import java.util.List;
  */
 public class BotPlayer {
 
-    /** Бот завжди грає за другого. Перший — людина за цим комп'ютером. */
+    /**
+     * Номер бота в одиночній грі: людина за цим комп'ютером — 0, бот — 1.
+     *
+     * <p>Це вже НЕ «номер бота взагалі». У мережевому матчі ботів може бути
+     * кілька, і кожен дістає свій номер у лоббі нарівні з людьми — тому номер
+     * тепер поле екземпляра ({@link #playerId}), а ця константа лишилась рівно
+     * тим, чим і мала бути: складом одиночної гри.
+     */
     public static final int PLAYER_ID = 1;
+
+    /**
+     * Чиїм іменем підписані накази цього бота.
+     *
+     * <p>Було константою, і це мовчки ламало мережевих ботів: усі вони
+     * підписувались номером 1, тобто на місце наказів ГОСТЯ, а власного номера
+     * не подавав жоден — lockstep чекав його вічно і матч не робив ані тіку.
+     * Зовні це виглядало як «гра не починається», без натяку на причину.
+     */
+    private final int playerId;
 
     /**
      * Запасний період, якщо мозок свого не називає.
@@ -75,9 +92,18 @@ public class BotPlayer {
      */
     private int lastDecisionTick = -DECISION_PERIOD_TICKS;
 
-    public BotPlayer(BotBrain brain) {
-        this.brain = brain;
+    /**
+     * @param playerId номер, яким підписуються накази; мусить збігатися з тим,
+     *                 за яким цього бота знає {@code PlayerRoster} — інакше його
+     *                 наказів чекатимуть від одного номера, а приходитимуть вони
+     *                 від іншого, і матч стане назавжди
+     */
+    public BotPlayer(int playerId, BotBrain brain) {
+        this.playerId = playerId;
+        this.brain    = brain;
     }
+
+    public int getPlayerId() { return playerId; }
 
     /**
      * Наказ бота на вказаний тік.
@@ -104,8 +130,8 @@ public class BotPlayer {
         ArrayList<GameCommand> batch = decided == null
                                      ? new ArrayList<>()
                                      : new ArrayList<>(decided);
-        for (int i = 0; i < batch.size(); i++) batch.get(i).playerId = PLAYER_ID;
+        for (int i = 0; i < batch.size(); i++) batch.get(i).playerId = playerId;
 
-        return new TickCommands(executeTick, PLAYER_ID, batch, generation);
+        return new TickCommands(executeTick, playerId, batch, generation);
     }
 }

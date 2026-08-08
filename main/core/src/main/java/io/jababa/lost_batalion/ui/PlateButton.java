@@ -30,7 +30,17 @@ public final class PlateButton extends Button {
         /** Пункт списку: планка ліворуч, підпис при лівому краї, зсув при наведенні. */
         PLATE,
         /** Разова дія: без планки, підпис по центру, без зсуву. */
-        ACTION
+        ACTION,
+        /**
+         * Те саме, що {@link #ACTION}, але з мінімальними полями обабіч підпису.
+         *
+         * <p>Для рядків, де кнопок кілька в ряд і місце рахується (місця в
+         * лоббі). Звичайні поля в 14 одиниць там з'їдають по 28 на кнопку, а
+         * трьох кнопок у рядку досить, щоб уся розкладка перестала вміщатись у
+         * ширину екрана — і Table, не вміючи стиснути вміст нижче мінімуму,
+         * просто вилазить за край.
+         */
+        COMPACT
     }
 
     /** Скільки секунд триває поява підсвітки. */
@@ -41,6 +51,10 @@ public final class PlateButton extends Button {
     /** Відступ назви від лівого краю плитки в спокої і під курсором. */
     private static final float TEXT_PAD_REST  = 18f;
     private static final float TEXT_PAD_HOVER = 24f;
+
+    /** Поля обабіч підпису на кнопці дії — і на її стисненому варіанті. */
+    private static final float ACTION_PAD  = 14f;
+    private static final float COMPACT_PAD = 7f;
 
     private final Drawable idle;
     private final Drawable hot;
@@ -83,6 +97,26 @@ public final class PlateButton extends Button {
     }
 
     /**
+     * Кнопка дії на спільних стилі І шрифті.
+     *
+     * <p>Потрібна там, де кнопки народжуються ПАЧКАМИ й перестворюються на кожну
+     * зміну стану (рядки місць у лоббі). {@code createActionLabelStyle()} щоразу
+     * пече новий атлас FreeType, і при перебудові двох десятків рядків на кожне
+     * мережеве повідомлення це десятки атласів, які живуть до наступної зміни
+     * розміру вікна. Одна кнопка такого не помічає, двадцять на секунду — цілком.
+     */
+    public static PlateButton action(ButtonStyle sharedStyle, Label.LabelStyle sharedLabel,
+                                     String title) {
+        return new PlateButton(sharedStyle, Variant.ACTION, title, sharedLabel);
+    }
+
+    /** Кнопка дії з мінімальними полями — для рядків, де їх кілька в ряд. */
+    public static PlateButton compact(ButtonStyle sharedStyle, Label.LabelStyle sharedLabel,
+                                      String title) {
+        return new PlateButton(sharedStyle, Variant.COMPACT, title, sharedLabel);
+    }
+
+    /**
      * @param style стиль від {@code UIFactory}. Не змінюється: базовому
      *              {@link Button} дістається копія лише з {@code up}, а стани
      *              малюються тут вручну
@@ -105,7 +139,8 @@ public final class PlateButton extends Button {
         if (variant == Variant.PLATE) {
             add(this.name).left().padLeft(TEXT_PAD_REST).expandX();
         } else {
-            add(this.name).center().pad(0f, 14f, 0f, 14f).expandX();
+            float pad = variant == Variant.COMPACT ? COMPACT_PAD : ACTION_PAD;
+            add(this.name).center().pad(0f, pad, 0f, pad).expandX();
         }
     }
 

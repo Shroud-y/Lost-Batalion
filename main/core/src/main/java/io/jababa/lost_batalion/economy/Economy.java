@@ -1,7 +1,8 @@
 package io.jababa.lost_batalion.economy;
 
-import io.jababa.lost_batalion.Team;
 import io.jababa.lost_batalion.capture.CaptureManager;
+import io.jababa.lost_batalion.net.NetConfig;
+import io.jababa.lost_batalion.sim.PlayerRoster;
 import io.jababa.lost_batalion.sim.StateChecksum;
 import io.jababa.lost_batalion.sim.TickRate;
 
@@ -30,7 +31,7 @@ public class Economy {
     public static final int INCOME_PERIOD_TICKS = TickRate.TICKS_PER_SECOND * 5;
 
     /**
-     * Скільки золота на старті.
+     * Скільки золота на старті, коли армія вже стоїть на полі.
      *
      * <p>Нуль означав би, що перші пів хвилини матчу гравець не може взагалі
      * нічого — а точки ще й треба встигнути зайняти. Сотні вистачає на дві
@@ -38,11 +39,38 @@ public class Economy {
      */
     public static final int STARTING_GOLD = 100;
 
-    /** Золото по номеру гравця. У 1v1 сторін рівно дві. */
-    private final int[] gold = { STARTING_GOLD, STARTING_GOLD };
+    /**
+     * Скільки золота на старті, коли стартової армії НЕМАЄ (мережевий матч).
+     *
+     * <p>Не кругле число з голови: це ціна тієї самої армії, яку одиночна гра
+     * ставить на поле готовою ({@code GameSimulation.spawnArmy} — шість піхоти,
+     * три кінноти, дві гармати = 840), плюс звичайна сотня на перший хід. Тобто
+     * гравець отримує рівно те саме, тільки склад обирає сам і висаджує туди,
+     * куди хоче.
+     */
+    public static final int STARTING_GOLD_NO_ARMY = 940;
+
+    /**
+     * Золото по номеру гравця.
+     *
+     * <p>Масив на всю стелю гравців, а не на учасників: playerId — це адреса, а
+     * не порядковий номер у складі, і при вибулих номерах у ньому бувають
+     * дірки. Не-учасники лишаються з нулем і в перевірку анігіляції не
+     * потрапляють, бо та питає ростер.
+     */
+    private final int[] gold = new int[NetConfig.MAX_PLAYERS];
+
+    /** Хто за яку сторону — потрібно, щоб знати, чиї точки дають цьому гравцеві дохід. */
+    private final PlayerRoster roster;
 
     /** Тіків від останнього нарахування. */
     private int sinceIncome;
+
+    public Economy(PlayerRoster roster, int startingGold) {
+        this.roster = roster;
+        int[] players = roster.players();
+        for (int i = 0; i < players.length; i++) gold[players[i]] = startingGold;
+    }
 
     // ── Крок симуляції ────────────────────────────────────────────────────
 
@@ -50,15 +78,26 @@ public class Economy {
         if (++sinceIncome < INCOME_PERIOD_TICKS) return;
         sinceIncome = 0;
 
-        for (int playerId = 0; playerId < gold.length; playerId++) {
-            gold[playerId] += incomePerPeriod(playerId, points);
+        // Обхід — за складом матчу, за зростанням номера: додавання цілих
+        // чисел від порядку не залежить, але порядок тут ще й документує, що
+        // дохід рахується рівно учасникам.
+        int[] players = roster.players();
+        for (int i = 0; i < players.length; i++) {
+            gold[players[i]] += incomePerPeriod(players[i], points);
         }
     }
 
-    /** Скільки сторона отримає наступного нарахування. Показує HUD. */
+    /**
+     * Скільки гравець отримає наступного нарахування. Показує HUD.
+     *
+     * <p>КОЖЕН гравець команди отримує повні {@link #GOLD_PER_POINT} за кожну
+     * точку команди — дохід не ділиться. Тому армія сторони росте пропорційно
+     * кількості гравців у ній, а рахунок — ні; саме це компенсує піднята межа
+     * перемоги у {@code VictoryTracker}.
+     */
     public int incomePerPeriod(int playerId, CaptureManager points) {
-        if (points == null) return 0;
-        return GOLD_PER_POINT * points.countOwned(Team.forPlayer(playerId));
+        if (points == null || !roster.has(playerId)) return 0;
+        return GOLD_PER_POINT * points.countOwned(roster.team(playerId));
     }
 
     public int gold(int playerId) {

@@ -78,8 +78,8 @@ public class Cavalry extends Unit {
      */
     private static final long CAV_MORALE_SHOCK = Fixed.fromFloat(1.5f);
 
-    public Cavalry(Team team, long rawX, long rawY) {
-        super(team);
+    public Cavalry(Team team, int owner, long rawX, long rawY) {
+        super(team, owner);
         this.maxHp               = CAV_HP;
         this.hp                  = CAV_HP;
         this.maxMorale           = CAV_MORALE;

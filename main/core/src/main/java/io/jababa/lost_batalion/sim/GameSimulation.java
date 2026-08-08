@@ -49,7 +49,13 @@ public class GameSimulation implements CommandContext {
     private final MoraleSystem      moraleSystem;
     private final Economy           economy;
     private final SpawnQueue        spawnQueue;
-    private final VictoryTracker    victory = new VictoryTracker();
+    private final VictoryTracker    victory;
+
+    /**
+     * Хто за яку сторону грає. Незмінний склад матчу — не стан, а умова задачі,
+     * тому ні в checksum, ні в знімок не входить.
+     */
+    private final PlayerRoster roster;
 
     /**
      * Єдиний генератор випадкових чисел матчу. Seed приходить від хоста,
@@ -86,25 +92,36 @@ public class GameSimulation implements CommandContext {
     private PathFinder pathFinder;
 
     /**
-     * @param zones зони захоплення сценарію — авторські дані, однакові на всіх
-     *              клієнтах; {@code null} означає карту без точок
+     * @param zones  зони захоплення сценарію — авторські дані, однакові на всіх
+     *               клієнтах; {@code null} означає карту без точок
+     * @param roster склад матчу: хто за яку сторону
+     * @param fieldStartingArmies чи ставити армії на поле готовими. Одиночна
+     *        гра — так; мережевий матч — ні, там гравець отримує їхню вартість
+     *        золотом і будує склад сам (див. {@code Economy.STARTING_GOLD_NO_ARMY}).
+     *        Прапорець мусить бути однаковий у всіх: від нього залежить і
+     *        розстановка, і скарбниця, тобто весь подальший стан.
      */
     public GameSimulation(TerrainQuery terrain, float mapWidth, float mapHeight,
-                          long rngSeed, CaptureZone[] zones) {
+                          long rngSeed, CaptureZone[] zones,
+                          PlayerRoster roster, boolean fieldStartingArmies) {
         this.terrain   = terrain;
         this.mapWidth  = mapWidth;
         this.mapHeight = mapHeight;
         this.mapW      = Fixed.fromFloat(mapWidth);
         this.mapH      = Fixed.fromFloat(mapHeight);
         this.random    = new DeterministicRandom(rngSeed);
+        this.roster    = roster;
 
         this.unitManager      = new UnitManager();
         this.combatManager    = new CombatManager(unitManager, terrain, random);
         this.visibilitySystem = new VisibilitySystem(terrain);
         this.captureManager   = new CaptureManager(zones);
         this.moraleSystem     = new MoraleSystem(mapW, mapH);
-        this.economy          = new Economy();
+        this.economy          = new Economy(roster, fieldStartingArmies
+                                    ? Economy.STARTING_GOLD
+                                    : Economy.STARTING_GOLD_NO_ARMY);
         this.spawnQueue       = new SpawnQueue();
+        this.victory          = new VictoryTracker(roster);
 
         // Артилерія стріляє лише по тому, що бачить САМА, і сама йде на
         // позицію по наказу — для обох речей їй потрібні видимість і навігація.
@@ -124,15 +141,28 @@ public class GameSimulation implements CommandContext {
      * інакше матч розійшовся б ще до першого наказу. Ніякого RNG тут поки що
      * немає навмисно: розстановка від карти, а не від випадку.
      *
-     * <p>Армії дзеркальні: хост ({@code playerId 0}) ліворуч, гість
-     * ({@code playerId 1}) праворуч, склад однаковий.
+     * <p>Армії дзеркальні: сині ліворуч, червоні праворуч, склад однаковий.
+     * Кожен гравець отримує СВОЮ армію — у матчі 1 на 1 це рівно те, що було
+     * досі.
      *
      * <p>Порядок додавання юнітів визначає їхні id, тому переставляти рядки
-     * місцями не можна: id їздять у командах.
+     * місцями не можна: id їздять у командах. Обхід — за зростанням номера
+     * гравця ({@code roster.players()} гарантує саме такий порядок), інакше
+     * id роздались би по-різному в різних клієнтів.
      */
     public void spawnInitialForces() {
-        spawnArmy(Team.forPlayer(0), Fixed.mul(mapW, Fixed.fromFloat(0.22f)));
-        spawnArmy(Team.forPlayer(1), Fixed.mul(mapW, Fixed.fromFloat(0.78f)));
+        int[] players = roster.players();
+        for (int i = 0; i < players.length; i++) {
+            int  playerId = players[i];
+            Team team     = roster.team(playerId);
+            // Своя смуга кожному гравцеві команди: інакше п'ятеро поставили б
+            // армії одна в одну.
+            long lane     = Fixed.fromFloat(0.06f * roster.seatInTeam(playerId));
+            long fraction = team == Team.PLAYER
+                          ? Fixed.fromFloat(0.22f) + lane
+                          : Fixed.fromFloat(0.78f) - lane;
+            spawnArmy(team, playerId, Fixed.mul(mapW, fraction));
+        }
 
         // Стартовий стан теж має бути «як після тіку»: без цього перший кадр
         // інтерполював би юнітів від нуля координат до їхніх справжніх місць.
@@ -144,17 +174,17 @@ public class GameSimulation implements CommandContext {
         visibilitySystem.update(all);
     }
 
-    private void spawnArmy(Team team, long baseX) {
-        unitManager.spawnSquad(team, baseX, mapH >> 1);
-        unitManager.spawnSquad(team, baseX, Fixed.div(mapH, Fixed.fromFloat(1.7f)));
+    private void spawnArmy(Team team, int owner, long baseX) {
+        unitManager.spawnSquad(team, owner, baseX, mapH >> 1);
+        unitManager.spawnSquad(team, owner, baseX, Fixed.div(mapH, Fixed.fromFloat(1.7f)));
         // Третє відділення — кіннота: стартова армія має чим наздогнати, а не
         // лише чим стріляти.
-        unitManager.spawnSquad(team, baseX, Fixed.div(mapH, Fixed.fromFloat(1.5f)),
+        unitManager.spawnSquad(team, owner, baseX, Fixed.div(mapH, Fixed.fromFloat(1.5f)),
                                UnitType.CAVALRY);
 
         long artY = (mapH >> 1) - Fixed.fromInt(60);
-        unitManager.addUnit(new Artillery(team, baseX - Fixed.fromInt(80), artY));
-        unitManager.addUnit(new Artillery(team, baseX + Fixed.fromInt(80), artY));
+        unitManager.addUnit(new Artillery(team, owner, baseX - Fixed.fromInt(80), artY));
+        unitManager.addUnit(new Artillery(team, owner, baseX + Fixed.fromInt(80), artY));
     }
 
     /**
@@ -207,11 +237,23 @@ public class GameSimulation implements CommandContext {
     private static final long SPAWN_MARGIN = Fixed.fromInt(40);
 
     /**
+     * Наскільки рознесені точки виходу гравців ОДНІЄЇ команди.
+     *
+     * <p>Кут у команди спільний, і без розносу п'ятеро висаджували б роти в
+     * один піксель — розштовхування розкидало б їх ривком. Зсув уздовж нижнього
+     * (для синіх) чи верхнього (для червоних) краю: перший у команді стоїть
+     * рівно там, де стояв єдиний гравець до 5 на 5, тож матч 1 на 1 не
+     * змінюється ні на одиницю.
+     */
+    private static final long SPAWN_LANE = Fixed.fromInt(70);
+
+    /**
      * Випустити підкріплення, чий час вийшов.
      *
-     * <p>Виходить воно з кута свого гравця (хост — лівий нижній, гість — правий
-     * верхній) і одразу вирушає в замовлену точку з пошуком шляху: інакше свіжа
-     * рота йшла б навпростець через річку, поки гравець дивиться в інший бік.
+     * <p>Виходить воно з кута своєї КОМАНДИ (сині — лівий нижній, червоні —
+     * правий верхній) і одразу вирушає в замовлену точку з пошуком шляху:
+     * інакше свіжа рота йшла б навпростець через річку, поки гравець дивиться
+     * в інший бік.
      *
      * <p>Порядок обходу — порядок замовлень, і це важливо: він визначає id нових
      * юнітів, а id їздять у наказах.
@@ -220,12 +262,15 @@ public class GameSimulation implements CommandContext {
         Array<PendingSpawn> ready = spawnQueue.tick();
         for (int i = 0; i < ready.size; i++) {
             PendingSpawn s = ready.get(i);
-            Team team = Team.forPlayer(s.playerId);
+            Team team = roster.team(s.playerId);
+            if (team == null) continue;   // наказ від того, кого немає в складі
 
-            long fromX = team == Team.PLAYER ? SPAWN_MARGIN : mapW - SPAWN_MARGIN;
-            long fromY = team == Team.PLAYER ? SPAWN_MARGIN : mapH - SPAWN_MARGIN;
+            long lane  = SPAWN_LANE * roster.seatInTeam(s.playerId);
+            long fromX = team == Team.PLAYER ? SPAWN_MARGIN + lane : mapW - SPAWN_MARGIN - lane;
+            long fromY = team == Team.PLAYER ? SPAWN_MARGIN        : mapH - SPAWN_MARGIN;
+            fromX = Fixed.clamp(fromX, SPAWN_MARGIN, mapW - SPAWN_MARGIN);
 
-            Unit unit = s.type.create(team, fromX, fromY);
+            Unit unit = s.type.create(team, s.playerId, fromX, fromY);
             unitManager.addUnit(unit);
             // Стартова позиція має бути «як після тіку», інакше перший кадр
             // інтерполював би юніта від нуля координат до кута карти.
@@ -238,7 +283,7 @@ public class GameSimulation implements CommandContext {
     }
 
     /**
-     * Прибрати з поля армію сторони, яка вибула з матчу.
+     * Прибрати з поля армію ГРАВЦЯ, який вибув із матчу.
      *
      * <p>Юніти не видаляються зі списку, а позначаються мертвими: id мусять
      * лишитись валідними. Наказ, відданий перед самим вибуттям, ще може
@@ -248,12 +293,14 @@ public class GameSimulation implements CommandContext {
      * <p>Викликається строго з {@code MatchRunner} на призначеному тіку
      * вибуття, однаковому в усіх, — тому це детермінована зміна стану.
      */
-    public void removeArmy(Team team) {
+    public void removeArmy(int playerId) {
         Array<Unit> all = unitManager.getAllUnits();
         Array<Unit> fallen = new Array<>();
         for (int i = 0; i < all.size; i++) {
             Unit u = all.get(i);
-            if (u.team != team || !u.alive) continue;
+            // Саме власника, а не сторону: у команді п'ятеро, і вихід одного не
+            // має розпускати армії його союзників.
+            if (u.owner != playerId || !u.alive) continue;
             fallen.add(u);
         }
         if (fallen.size == 0) return;
@@ -409,7 +456,9 @@ public class GameSimulation implements CommandContext {
         Unit target = unitManager.findById(targetUnitId);
         // Ціль могла загинути, поки наказ їхав, — це не помилка, просто наказ
         // втратив сенс. Атака по своїх не існує як механіка.
-        if (target == null || !target.alive || target.team == Team.forPlayer(playerId)) return;
+        // Атаки по своїх немає — і по СОЮЗНИКАХ теж: перевірка по стороні,
+        // а не по власнику.
+        if (target == null || !target.alive || target.team == roster.team(playerId)) return;
 
         combatManager.orderAttack(units, target);
     }
@@ -616,12 +665,13 @@ public class GameSimulation implements CommandContext {
     }
 
     private Array<Unit> own(int playerId, int[] unitIds) {
-        return unitManager.collectOwned(unitIds, Team.forPlayer(playerId), commandScratch);
+        return unitManager.collectOwned(unitIds, playerId, commandScratch);
     }
 
     // ── Доступ ────────────────────────────────────────────────────────────
 
     public int getTickNumber()                { return tickNumber; }
+    public PlayerRoster getRoster()           { return roster; }
 
     /**
      * Перевести симуляцію на тік зі знімка. Єдиний легальний викликач —

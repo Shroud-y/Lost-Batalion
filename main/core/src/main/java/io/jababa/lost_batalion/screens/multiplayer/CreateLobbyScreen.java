@@ -145,8 +145,9 @@ public class CreateLobbyScreen extends BaseScreen {
 
     private Table buildPlayersRow() {
         Table row = new Table();
-        row.add(new Label(maxPlayers + " (1 на 1)", UIFactory.createBodyStyle())).left();
-        row.add(new Label("режим на більше гравців ще не підтримується симуляцією",
+        row.add(new Label(maxPlayers + " (" + NetConfig.TEAM_SIZE + " на " + NetConfig.TEAM_SIZE + ")",
+                          UIFactory.createBodyStyle())).left();
+        row.add(new Label("зайві місця хост закриває в лоббі",
                           UIFactory.createHintStyle())).left().expandX().padLeft(12f);
         return row;
     }

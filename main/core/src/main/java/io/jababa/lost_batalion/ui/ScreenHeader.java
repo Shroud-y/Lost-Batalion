@@ -18,6 +18,15 @@ import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
  */
 public final class ScreenHeader extends Table {
 
+    /**
+     * Заголовок окремим полем — щоб його можна було замінити ПІСЛЯ побудови.
+     *
+     * <p>Потрібно там, де назва екрана приходить по мережі: гість відкриває
+     * лоббі раніше, ніж хост присилає його стан, і перший кадр не має чого
+     * написати. Без цього назва кімнати лишалась би заглушкою «ЛОББІ» назавжди.
+     */
+    private final Label titleLabel;
+
     private static final float BACK_WIDTH  = 128f;
     private static final float BACK_HEIGHT = 36f;
     /** Проміжок між кнопкою повернення і заголовком. */
@@ -43,9 +52,15 @@ public final class ScreenHeader extends Table {
             row.add(back).size(BACK_WIDTH, BACK_HEIGHT).left().padRight(TITLE_GAP);
         }
 
-        row.add(new Label(title, UIFactory.createScreenTitleStyle())).left().expandX();
+        titleLabel = new Label(title, UIFactory.createScreenTitleStyle());
+        row.add(titleLabel).left().expandX();
 
         add(row).growX().row();
         add(new Image(UIFactory.createRuleDrawable())).height(1f).growX().padTop(RULE_GAP).row();
+    }
+
+    /** Замінити заголовок — коли назва екрана приходить пізніше за сам екран. */
+    public void setTitle(String title) {
+        titleLabel.setText(title);
     }
 }

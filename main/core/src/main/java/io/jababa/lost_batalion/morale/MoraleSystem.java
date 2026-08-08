@@ -343,7 +343,7 @@ public class MoraleSystem {
             // Ніхто поруч (мораль догоріла від артилерії з-за пагорба) —
             // тікаємо в тил своєї сторони, тобто до свого кута карти.
             dir[0] = 0;
-            dir[1] = u.team.playerId() == 0 ? -Fixed.ONE : Fixed.ONE;
+            dir[1] = u.team.index() == 0 ? -Fixed.ONE : Fixed.ONE;
         }
 
         long tx = Fixed.clamp(u.x + Fixed.mul(dir[0], ROUT_DISTANCE), 0, mapW);

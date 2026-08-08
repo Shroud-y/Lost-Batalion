@@ -54,6 +54,17 @@ public final class MultiplayerServices {
         if (current == null) current = backend;
     }
 
+    /**
+     * Звільнити аватарки ВСІХ бекендів, а не лише обраного.
+     *
+     * <p>Гравець міг перемкнути мережу посеред сеансу, і текстури, набрані
+     * попереднім бекендом, лишились би висіти. Кличеться один раз, з
+     * {@code LostBatalion.dispose()}.
+     */
+    public static void disposeAvatars() {
+        for (int i = 0; i < backends.size(); i++) backends.get(i).avatars().dispose();
+    }
+
     /** Усі зареєстровані, у порядку реєстрації. Локальна мережа завжди перша. */
     public static List<NetBackend> getBackends() {
         return java.util.Collections.unmodifiableList(backends);

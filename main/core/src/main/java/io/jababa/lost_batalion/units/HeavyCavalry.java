@@ -61,8 +61,8 @@ public class HeavyCavalry extends Unit {
     /** Лякає сильніше за легку (1.5): на тебе їде те, що вже зім'яло сусіда. */
     private static final long HCAV_MORALE_SHOCK = Fixed.fromFloat(1.8f);
 
-    public HeavyCavalry(Team team, long rawX, long rawY) {
-        super(team);
+    public HeavyCavalry(Team team, int owner, long rawX, long rawY) {
+        super(team, owner);
         this.maxHp               = HCAV_HP;
         this.hp                  = HCAV_HP;
         this.maxMorale           = HCAV_MORALE;

@@ -145,6 +145,10 @@ public final class StateChecksum {
             }
 
             visible = mix(visible, u.id);
+            // Власник — теж стан: від нього залежить, чий наказ юніт виконає.
+            // Розбіжність тут означала б, що в двох клієнтів різні армії при
+            // однакових позиціях, і виявилась би вона аж на першому наказі.
+            visible = mix(visible, u.owner);
             visible = mix(visible, u.isVisibleTo(Team.PLAYER));
             visible = mix(visible, u.isVisibleTo(Team.ENEMY));
 

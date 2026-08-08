@@ -46,12 +46,12 @@ public class UnitManager {
      * методів контексту рано чи пізно десь би не з'явилась — і саме тому
      * наказом, який пролазить до втікача, виявився б найрідший.
      */
-    public Array<Unit> collectOwned(int[] ids, Team owner, Array<Unit> out) {
+    public Array<Unit> collectOwned(int[] ids, int owner, Array<Unit> out) {
         out.clear();
         if (ids == null) return out;
         for (int i = 0; i < ids.length; i++) {
             Unit u = byId.get(ids[i]);
-            if (u == null || !u.alive || u.team != owner || u.isBroken()) continue;
+            if (u == null || !u.alive || u.owner != owner || u.isBroken()) continue;
             out.add(u);
         }
         return out;
@@ -68,8 +68,8 @@ public class UnitManager {
      */
     private static final long GRID_SPACING  = Infantry.INF_SIZE_FIXED + Fixed.fromInt(12);
 
-    public void spawnSquad(Team team, long centerX, long centerY) {
-        spawnSquad(team, centerX, centerY, UnitType.INFANTRY);
+    public void spawnSquad(Team team, int owner, long centerX, long centerY) {
+        spawnSquad(team, owner, centerX, centerY, UnitType.INFANTRY);
     }
 
     /**
@@ -79,10 +79,10 @@ public class UnitManager {
      * юніта, і другого місця з таким знанням у грі бути не має — інакше новий
      * рід військ доводилось би вписувати ще й сюди.
      */
-    public void spawnSquad(Team team, long centerX, long centerY, UnitType type) {
-        addUnit(type.create(team, centerX - SQUAD_SPACING, centerY));
-        addUnit(type.create(team, centerX, centerY));
-        addUnit(type.create(team, centerX + SQUAD_SPACING, centerY));
+    public void spawnSquad(Team team, int owner, long centerX, long centerY, UnitType type) {
+        addUnit(type.create(team, owner, centerX - SQUAD_SPACING, centerY));
+        addUnit(type.create(team, owner, centerX, centerY));
+        addUnit(type.create(team, owner, centerX + SQUAD_SPACING, centerY));
     }
 
     /**
@@ -137,12 +137,18 @@ public class UnitManager {
     // їздить і в симуляцію не входить. Тому тут координати приймаються у float
     // (вони приходять від камери) — жодного впливу на стан гри це не має.
 
-    /** Клік по юніту. Обирати можна лише своїх — чужа армія не слухається. */
-    public boolean trySelectAtPoint(float x, float y, boolean shift, Team owner) {
+    /**
+     * Клік по юніту. Обирати можна лише ВЛАСНИХ — не «своєї сторони».
+     *
+     * <p>Союзник намальований як свій і воює за те саме, але його рота слухає
+     * свого гравця. Тому фільтр по {@code owner}, а не по {@code team}: інакше
+     * рамкою виділення можна було б забрати керування половиною чужої армії.
+     */
+    public boolean trySelectAtPoint(float x, float y, boolean shift, int owner) {
         Unit found = null;
         for (int i = 0; i < allUnits.size; i++) {
             Unit u = allUnits.get(i);
-            if (u == null || !u.alive || u.team != owner) continue;
+            if (u == null || !u.alive || u.owner != owner) continue;
             // Хітбокс, а не розмір спрайту: у частини юнітів (артилерія) фігура
             // займає лише середину картинки.
             float halfW = u.getHalfWidthPx(), halfH = u.getHalfHeightPx();
@@ -164,12 +170,12 @@ public class UnitManager {
         return false;
     }
 
-    /** Виділення рамкою — теж лише своїх. */
-    public void selectInRect(float rx, float ry, float rw, float rh, boolean shift, Team owner) {
+    /** Виділення рамкою — теж лише власних. */
+    public void selectInRect(float rx, float ry, float rw, float rh, boolean shift, int owner) {
         if (!shift) clearSelection();
 
         for (Unit u : allUnits) {
-            if (!u.alive || u.team != owner) continue;
+            if (!u.alive || u.owner != owner) continue;
             float ux = u.worldX(), uy = u.worldY();
             if (ux >= rx && ux <= rx + rw && uy >= ry && uy <= ry + rh) {
                 if (!selectedUnits.contains(u, true)) {
@@ -327,6 +333,10 @@ public class UnitManager {
                         : u instanceof LightInfantry ? KIND_LIGHT_INF
                                                      : KIND_INFANTRY);
             out.writeInt(u.team.ordinal());
+            // Власник — окремим числом: сторону з нього не вивести, ростер у
+            // знімок не їде, а без власника юніт після ресинку перестав би
+            // слухати свого гравця.
+            out.writeInt(u.owner);
             u.writeSnapshot(out);
         }
     }
@@ -355,13 +365,14 @@ public class UnitManager {
 
         for (int i = 0; i < count; i++) {
             byte kind = in.readByte();
-            Team team = teams[in.readInt()];
+            Team team  = teams[in.readInt()];
+            int  owner = in.readInt();
 
-            Unit u = kind == KIND_ARTILLERY ? new Artillery(team, 0, 0)
-                   : kind == KIND_HEAVY_CAV ? new HeavyCavalry(team, 0, 0)
-                   : kind == KIND_CAVALRY   ? new Cavalry(team, 0, 0)
-                   : kind == KIND_LIGHT_INF ? new LightInfantry(team, 0, 0)
-                                            : new Infantry(team, 0, 0);
+            Unit u = kind == KIND_ARTILLERY ? new Artillery(team, owner, 0, 0)
+                   : kind == KIND_HEAVY_CAV ? new HeavyCavalry(team, owner, 0, 0)
+                   : kind == KIND_CAVALRY   ? new Cavalry(team, owner, 0, 0)
+                   : kind == KIND_LIGHT_INF ? new LightInfantry(team, owner, 0, 0)
+                                            : new Infantry(team, owner, 0, 0);
             u.readSnapshot(in);
 
             allUnits.add(u);
